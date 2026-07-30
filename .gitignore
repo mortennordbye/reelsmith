@@ -1,0 +1,35 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.ruff_cache/
+.pytest_cache/
+
+# Pipeline output and persistent state.
+# NOTE: `data/*` not `data/` -- git cannot re-include a file inside an ignored
+# directory, so the negation below only works if the directory itself is not
+# ignored.
+build/
+data/*
+!data/.gitkeep
+
+# TTS + Whisper model weights (~350 MB)
+models/
+
+# Node / Remotion
+node_modules/
+video/out/
+video/.remotion/
+
+# Assets the renderer stages for Remotion. Regenerated from build/ on every
+# run, so tracking them means a churning binary diff per render.
+video/public/*
+!video/public/.gitkeep
+
+# macOS
+.DS_Store

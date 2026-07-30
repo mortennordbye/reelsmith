@@ -1,0 +1,35 @@
+[project]
+name = "tech-ig"
+version = "0.1.0"
+description = "Automated Instagram Reels pipeline for trending AI/dev tooling"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "httpx>=0.28",            # GitHub + Hacker News APIs
+    "pydantic>=2.9",          # data contracts between every pipeline stage
+    "pydantic-settings>=2.6", # .env loading + validation
+    "tenacity>=9.0",          # retry/backoff for API rate limits
+    "edge-tts>=7.0",          # voiceover synthesis
+    "faster-whisper>=1.1",    # word-level timestamps without PyTorch
+    "playwright>=1.49",       # screenshots the GitHub page for the opening shot
+    "kokoro-onnx>=0.4",       # default TTS: local, Apache-2.0, distinctive voices
+    "soundfile>=0.12",        # writes Kokoro output
+    "typer>=0.15",            # CLI
+    "rich>=13.9",             # readable pipeline output
+]
+
+[project.scripts]
+tech-ig = "main:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pipeline", "sources"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
