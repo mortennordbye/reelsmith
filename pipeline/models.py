@@ -6,8 +6,11 @@ isolation against the previous run's artifacts. That matters a lot when
 iterating on visuals -- you should never have to re-scrape GitHub and re-run
 Whisper just to nudge a font size.
 
-`VideoSpec` is mirrored one-to-one as a zod schema in video/src/schema.ts.
-Keep the two in sync; a mismatch fails loudly at render time.
+`VideoSpec` is mirrored one-to-one as a zod schema in video/src/schema.ts, and
+the renderer parses video.json through it in `calculateMetadata` before the
+first frame. Keep the two in sync: a field renamed here and not there fails the
+render immediately, naming the field, instead of painting an `undefined` into
+the middle of a finished MP4.
 """
 
 from __future__ import annotations
@@ -16,6 +19,12 @@ from datetime import date, datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
+
+from config import get_settings
+
+# Read once, at import, so the JSON Schema description handed to Claude and the
+# validator that checks his answer can never disagree about the number.
+MAX_HOOK_CHARS = get_settings().max_hook_chars
 
 # --------------------------------------------------------------------------
 # Step 1 -- topic research
@@ -115,7 +124,10 @@ class VideoScript(BaseModel):
     """
 
     hook: str = Field(
-        description="Text overlay for the first 3 seconds. Max 60 characters, no period."
+        description=(
+            f"Text overlay for the first 3 seconds. "
+            f"Max {MAX_HOOK_CHARS} characters, no period."
+        )
     )
     spoken_script: str = Field(description="The voiceover. Under 80 words.")
     visual_cues: list[VisualCue] = Field(
@@ -130,8 +142,10 @@ class VideoScript(BaseModel):
     @classmethod
     def _hook_length(cls, v: str) -> str:
         v = v.strip().rstrip(".")
-        if len(v) > 80:
-            raise ValueError(f"hook is {len(v)} chars; keep it under 80 so it fits on screen")
+        if len(v) > MAX_HOOK_CHARS:
+            raise ValueError(
+                f"hook is {len(v)} chars; keep it under {MAX_HOOK_CHARS} so it fits on screen"
+            )
         return v
 
     @property

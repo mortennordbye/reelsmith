@@ -1,0 +1,104 @@
+"""Contracts that used to be able to drift.
+
+The hook limit lived as one number in the prompt and a different one in the
+validator; the staged-asset directory had no rule about what it was allowed to
+delete. Both are cheap to pin down and expensive to notice by eye.
+"""
+
+from __future__ import annotations
+
+import pytest
+from pydantic import ValidationError
+
+from config import get_settings
+from pipeline.models import MAX_HOOK_CHARS, VideoScript
+from pipeline.renderer import prune_staged_assets, stage_asset
+
+
+def make_script(hook: str) -> VideoScript:
+    return VideoScript(hook=hook, spoken_script="Words.", visual_cues=[])
+
+
+# --------------------------------------------------------------------------
+# Hook length
+# --------------------------------------------------------------------------
+
+
+def test_the_validator_uses_the_configured_limit():
+    assert get_settings().max_hook_chars == MAX_HOOK_CHARS
+
+
+def test_a_hook_at_the_limit_is_accepted():
+    assert make_script("x" * MAX_HOOK_CHARS).hook == "x" * MAX_HOOK_CHARS
+
+
+def test_a_hook_over_the_limit_is_rejected():
+    with pytest.raises(ValidationError, match=str(MAX_HOOK_CHARS)):
+        make_script("x" * (MAX_HOOK_CHARS + 1))
+
+
+def test_the_prompt_schema_states_the_same_limit():
+    # This is the description handed to `claude --json-schema`, so if it says a
+    # different number than the validator, Claude is being asked to fail.
+    description = VideoScript.model_json_schema()["properties"]["hook"]["description"]
+    assert f"Max {MAX_HOOK_CHARS} characters" in description
+
+
+def test_a_trailing_period_is_stripped_before_measuring():
+    hook = "x" * MAX_HOOK_CHARS + "."
+    assert make_script(hook).hook == "x" * MAX_HOOK_CHARS
+
+
+# --------------------------------------------------------------------------
+# Staged assets
+# --------------------------------------------------------------------------
+
+
+def video_dir(tmp_path, *names):
+    public = tmp_path / "public"
+    public.mkdir()
+    for name in names:
+        (public / name).write_text("x")
+    return tmp_path
+
+
+def test_other_runs_assets_are_pruned(tmp_path):
+    root = video_dir(tmp_path, "old-repo-voice.mp3", "old-repo-repo.png", "new-repo-voice.wav")
+
+    assert prune_staged_assets(root, "new-repo") == 2
+    assert {p.name for p in (root / "public").iterdir()} == {"new-repo-voice.wav"}
+
+
+def test_the_current_runs_assets_survive(tmp_path):
+    root = video_dir(tmp_path, "a-b-voice.wav", "a-b-repo.png")
+
+    assert prune_staged_assets(root, "a-b") == 0
+    assert len(list((root / "public").iterdir())) == 2
+
+
+def test_files_we_did_not_stage_are_never_touched(tmp_path):
+    # public/ is ours to manage, but not to the point of deleting a font or a
+    # .gitkeep someone put there on purpose.
+    root = video_dir(tmp_path, ".gitkeep", "logo.svg", "notes.txt", "old-voice.mp3")
+
+    prune_staged_assets(root, "current")
+
+    assert {p.name for p in (root / "public").iterdir()} == {".gitkeep", "logo.svg", "notes.txt"}
+
+
+def test_pruning_a_missing_public_dir_is_a_no_op(tmp_path):
+    assert prune_staged_assets(tmp_path, "anything") == 0
+
+
+def test_staging_produces_a_name_pruning_recognises(tmp_path):
+    # The two halves of the contract: whatever stage_asset writes must be
+    # something prune_staged_assets is willing to clean up later.
+    source = tmp_path / "voice.wav"
+    source.write_text("audio")
+    root = tmp_path / "video"
+    (root / "public").mkdir(parents=True)
+
+    staged = stage_asset(source, root, "owner-repo")
+
+    assert staged == "owner-repo-voice.wav"
+    assert prune_staged_assets(root, "some-other-slug") == 1

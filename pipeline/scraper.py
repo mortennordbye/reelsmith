@@ -126,6 +126,16 @@ class UsedRepos:
         self._data[full_name] = (on or date.today()).isoformat()
         self.save()
 
+    def clear(self, full_name: str) -> str | None:
+        """Drop a repo's cooldown. Returns the date it was set, or None."""
+        used_on = self._data.pop(full_name, None)
+        if used_on is not None:
+            self.save()
+        return used_on
+
+    def used_on(self, full_name: str) -> str | None:
+        return self._data.get(full_name)
+
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".json.tmp")
@@ -348,6 +358,47 @@ def collect_candidates(
     return score_candidates(list(seen.values()), used, today)
 
 
+def snapshot_stars(cfg: Settings, *, on: date | None = None) -> int:
+    """Record today's star counts for every repo the discovery queries return.
+
+    Deliberately search-and-record only: no README fetches, no Hacker News, no
+    scoring. Velocity is 55% of the candidate score but it is only *measured*
+    when a snapshot exists from an earlier day, so this needs to run daily --
+    including on days we never generate a video. Two search requests, a couple
+    of seconds, and from the second day onward every ranking uses real deltas
+    instead of the damped stars/day proxy.
+    """
+    today = on or date.today()
+    token = require_github_token(cfg)
+    history = StarHistory(cfg.star_history_path)
+
+    seen: set[str] = set()
+    with GitHubClient(token) as gh:
+        for query in _build_queries(cfg, today):
+            for item in gh.search_repositories(query, limit=cfg.candidates_per_query):
+                history.record(item["full_name"], item.get("stargazers_count", 0), today)
+                seen.add(item["full_name"])
+        quota = gh.rate_limit_remaining
+
+    history.save()
+    log.info(
+        "Snapshotted %d repos for %s (GitHub quota left: %s)", len(seen), today.isoformat(), quota
+    )
+    return len(seen)
+
+
+def record_snapshot(cfg: Settings, repo: RepoCandidate, *, on: date | None = None) -> None:
+    """Snapshot one repo's stars, for paths that skip discovery.
+
+    `--repo` bypasses `collect_candidates` entirely, so without this the repo we
+    just spent a whole pipeline run on contributes nothing to tomorrow's
+    velocity measurement.
+    """
+    history = StarHistory(cfg.star_history_path)
+    history.record(repo.full_name, repo.stars, on or date.today())
+    history.save()
+
+
 def find_trending_repo(cfg: Settings | None = None, *, on: date | None = None) -> RepoCandidate:
     """The single entry point main.py calls. Returns today's winner."""
     cfg = cfg or get_settings()
@@ -366,9 +417,19 @@ def find_trending_repo(cfg: Settings | None = None, *, on: date | None = None) -
     return winner
 
 
-def mark_featured(cfg: Settings, repo: RepoCandidate, on: date | None = None) -> None:
-    """Record that we shipped a video about this repo, starting its cooldown."""
-    UsedRepos(cfg.used_repos_path, cfg.repo_cooldown_days).mark_used(repo.full_name, on)
+def mark_featured(cfg: Settings, full_name: str, on: date | None = None) -> None:
+    """Record that we *posted* a video about this repo, starting its cooldown.
+
+    Deliberately not called by the render step. A rendered video you looked at
+    and rejected should not burn the repo for a month; only a posted one should.
+    `main.py --posted owner/repo` is what calls this.
+    """
+    UsedRepos(cfg.used_repos_path, cfg.repo_cooldown_days).mark_used(full_name, on)
+
+
+def unmark_featured(cfg: Settings, full_name: str) -> str | None:
+    """Escape hatch: clear a repo's cooldown. Returns the date it was set."""
+    return UsedRepos(cfg.used_repos_path, cfg.repo_cooldown_days).clear(full_name)
 
 
 # --------------------------------------------------------------------------
@@ -376,13 +437,16 @@ def mark_featured(cfg: Settings, repo: RepoCandidate, on: date | None = None) ->
 # --------------------------------------------------------------------------
 
 
-def _main() -> None:
+def inspect_candidates(cfg: Settings | None = None, *, top: int = 15) -> list[RepoCandidate]:
+    """Rank today's repos and print the table. Returns the full ranking.
+
+    Used by `python main.py --candidates` and by `python -m pipeline.scraper`.
+    """
     from rich.console import Console
     from rich.table import Table
 
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     console = Console()
-    cfg = get_settings()
+    cfg = cfg or get_settings()
 
     with console.status("Searching GitHub..."):
         ranked = collect_candidates(cfg)
@@ -397,7 +461,7 @@ def _main() -> None:
     table.add_column("HN", justify="right")
     table.add_column("Score", justify="right", style="bold")
 
-    for i, c in enumerate(ranked[:15], 1):
+    for i, c in enumerate(ranked[:top], 1):
         gained = f"+{c.stars_gained_today}" if c.velocity_is_measured else f"~{c.velocity:.0f}"
         table.add_row(
             str(i),
@@ -418,6 +482,9 @@ def _main() -> None:
         )
         console.print(f"[bold green]Winner:[/] {ranked[0].full_name} — {ranked[0].description}")
 
+    return ranked
+
 
 if __name__ == "__main__":
-    _main()
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    inspect_candidates()

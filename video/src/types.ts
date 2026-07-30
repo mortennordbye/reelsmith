@@ -1,72 +1,26 @@
 /**
- * Mirror of pipeline/models.py VideoSpec.
+ * Types for the render spec.
  *
- * Keep these in sync. Python writes video.json; this file is what Remotion
- * expects to read. A field renamed on one side without the other will surface
- * as a TypeScript error or an undefined at render time.
+ * Every one of these is inferred from the zod schemas in schema.ts, which are
+ * in turn the mirror of pipeline/models.py VideoSpec. Editing a shape means
+ * editing schema.ts; this file only re-exports, so the compile-time types and
+ * the runtime validation can never disagree.
  */
 
-export type CueKind =
-  | "repo_card"
-  | "code"
-  | "stat"
-  | "bullets"
-  | "terminal"
-  | "screenshot";
+import type { z } from "zod";
 
-/** One Shiki-highlighted token. Produced in calculateMetadata, never by Python. */
-export type CodeToken = {
-  content: string;
-  color: string;
-};
+import type {
+  captionSchema,
+  codeTokenSchema,
+  cueKindSchema,
+  repoMetaSchema,
+  sceneSchema,
+  videoSpecSchema,
+} from "./schema";
 
-export type Scene = {
-  kind: CueKind;
-  fromFrame: number;
-  durationInFrames: number;
-  title?: string | null;
-  subtitle?: string | null;
-  bullets: string[];
-  code?: string | null;
-  codeLanguage?: string | null;
-  statValue?: string | null;
-  statLabel?: string | null;
-  /** Path relative to video/public/, for screenshot scenes. */
-  imageSrc?: string | null;
-  /** Injected by calculateMetadata; absent in the JSON Python writes. */
-  tokens?: CodeToken[][];
-};
-
-export type Caption = {
-  text: string;
-  startMs: number;
-  endMs: number;
-  timestampMs?: number | null;
-  confidence?: number | null;
-};
-
-export type RepoMeta = {
-  fullName: string;
-  owner: string;
-  name: string;
-  stars: number;
-  starsGainedToday?: number | null;
-  language?: string | null;
-  license?: string | null;
-  url: string;
-};
-
-export type VideoSpec = {
-  version: number;
-  slug: string;
-  createdOn: string;
-  width: number;
-  height: number;
-  fps: number;
-  durationInFrames: number;
-  hook: string;
-  audioSrc: string;
-  repo: RepoMeta;
-  scenes: Scene[];
-  captions: Caption[];
-};
+export type CueKind = z.infer<typeof cueKindSchema>;
+export type CodeToken = z.infer<typeof codeTokenSchema>;
+export type Scene = z.infer<typeof sceneSchema>;
+export type Caption = z.infer<typeof captionSchema>;
+export type RepoMeta = z.infer<typeof repoMetaSchema>;
+export type VideoSpec = z.infer<typeof videoSpecSchema>;

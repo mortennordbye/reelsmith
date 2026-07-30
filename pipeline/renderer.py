@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -17,6 +18,10 @@ from config import Settings
 from pipeline.models import VideoSpec
 
 log = logging.getLogger(__name__)
+
+# The filenames stage_asset() produces: "<slug>-<original name>". Slugs are
+# lowercase alphanumerics and hyphens (see RepoCandidate.slug).
+STAGED_ASSET_RE = re.compile(r"[a-z0-9-]+-(?:voice\.(?:wav|mp3)|repo\.png)")
 
 
 class RenderError(RuntimeError):
@@ -44,8 +49,36 @@ def stage_asset(asset_path: Path, video_dir: Path, slug: str) -> str:
     return target.name
 
 
-def stage_audio(audio_path: Path, video_dir: Path, slug: str) -> str:
-    return stage_asset(audio_path, video_dir, slug)
+def prune_staged_assets(video_dir: Path, keep_slug: str) -> int:
+    """Delete staged assets belonging to other slugs. Returns the count removed.
+
+    public/ is a staging area, not a store: everything in it was copied from
+    build/ and is re-staged on demand, so a stale copy is pure waste. Left alone
+    it accumulates an audio file and a screenshot per video, forever.
+
+    Matching is deliberately narrow -- only the exact filenames this pipeline
+    stages -- so anything a human drops into public/ by hand survives. Adding a
+    new staged asset type means adding it here, or its old copies just linger.
+    """
+    public = video_dir / "public"
+    if not public.is_dir():
+        return 0
+
+    removed = 0
+    for path in public.iterdir():
+        if not path.is_file() or not STAGED_ASSET_RE.fullmatch(path.name):
+            continue
+        if path.name.startswith(f"{keep_slug}-"):
+            continue
+        try:
+            path.unlink()
+            removed += 1
+        except OSError as exc:  # a locked file is not worth failing a render over
+            log.debug("Could not prune %s (%s)", path, exc)
+
+    if removed:
+        log.info("Pruned %d stale staged asset(s) from %s", removed, public)
+    return removed
 
 
 def render(

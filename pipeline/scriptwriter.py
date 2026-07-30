@@ -110,7 +110,8 @@ this trending repository.
 ## What to produce
 
 hook
-    The text overlay for the first 3 seconds. Under 60 characters. It must make
+    The text overlay for the first 3 seconds. Under {cfg.max_hook_chars} \
+characters -- this is validated, and a longer hook fails the run. It must make
     a specific claim or pose a real question -- not "This tool is amazing". No
     trailing period.
 

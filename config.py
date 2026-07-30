@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     claude_research: bool = True
     claude_timeout_s: int = 420
     max_script_words: int = 80
+    # One source for both the prompt and the VideoScript validator. Past ~60 the
+    # hook wraps to a third line on a 1080-wide frame and stops reading as a
+    # headline. Raise it only if you also loosen the type size in the renderer.
+    max_hook_chars: int = 60
     readme_char_budget: int = 12_000
 
     # --- Voiceover ---------------------------------------------------------

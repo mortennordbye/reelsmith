@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Daily star snapshot.
+
+  Velocity is 55% of the candidate score, but it can only be *measured* against
+  a snapshot from an earlier day. Without this job that only happens on days a
+  full pipeline run happened, and every other day falls back to the damped
+  stars/day proxy, which systematically favours large established repos over
+  real breakouts.
+
+  This costs two GitHub search requests and a couple of seconds. Run it daily,
+  including on days you do not make a video.
+
+  Install (replace __REPO__ with the absolute path to this checkout):
+
+    sed "s|__REPO__|$PWD|g" launchd/it.nordbye.tech-ig.snapshot.plist \
+      > ~/Library/LaunchAgents/it.nordbye.tech-ig.snapshot.plist
+    launchctl bootstrap gui/$UID ~/Library/LaunchAgents/it.nordbye.tech-ig.snapshot.plist
+
+  Run it once by hand to confirm it works:
+
+    launchctl kickstart -p gui/$UID/it.nordbye.tech-ig.snapshot
+    tail -f __REPO__/data/snapshot.log
+
+  Uninstall:
+
+    launchctl bootout gui/$UID/it.nordbye.tech-ig.snapshot
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>it.nordbye.tech-ig.snapshot</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO__/.venv/bin/python</string>
+    <string>__REPO__/main.py</string>
+    <string>--snapshot</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+
+  <!-- 06:00 local. Any hour works as long as it is consistent: the delta is
+       normalised per day, so a wandering run time just adds noise. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>6</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+
+  <!-- Laptops sleep. Without this a snapshot missed at 06:00 is simply lost,
+       and a missing day is exactly what degrades tomorrow's velocity. -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>__REPO__/data/snapshot.log</string>
+  <key>StandardErrorPath</key>
+  <string>__REPO__/data/snapshot.log</string>
+
+  <!-- launchd starts agents with a near-empty PATH. The snapshot only needs
+       Python and the network, but keep this honest in case the script grows. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+</dict>
+</plist>

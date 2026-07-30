@@ -56,11 +56,43 @@ python main.py --repo astral-sh/uv    # skip discovery, use a specific repo
 python main.py --stop-after script    # stop early to inspect an artifact
 python main.py --no-research          # skip Claude's web search (faster)
 python main.py --resume 2026-07-30/astral-sh-uv   # re-render from artifacts
+
+python main.py --snapshot                 # record star counts only (see below)
+python main.py --posted astral-sh/uv      # start the 30-day cooldown
+python main.py --unmark astral-sh/uv      # undo that
 ```
 
 `--repo` does **not** need a `GITHUB_TOKEN` — fetching one named repo costs a
 single core request, which fits inside the anonymous budget. Only discovery
 needs the token.
+
+When the render finishes, the Instagram caption is copied to your clipboard and
+the run folder opens. Drop `out.mp4` into Instagram, paste, post.
+
+**Rendering does not start the cooldown; `--posted` does.** A video you looked
+at and rejected should not burn that repo for a month, so the last step is
+manual on purpose:
+
+```bash
+python main.py --posted astral-sh/uv
+```
+
+### The daily snapshot
+
+Star *velocity* is 55% of the candidate score, and it can only be measured
+against a snapshot from an earlier day. On days with no snapshot the scorer
+falls back to a damped stars-per-day proxy, which systematically favours large
+established repos over genuine breakouts.
+
+So snapshot every day, including days you make no video:
+
+```bash
+python main.py --snapshot     # two search requests, a couple of seconds
+```
+
+`launchd/it.nordbye.tech-ig.snapshot.plist` runs it at 06:00 daily; its header
+comment has the install commands. From day two onward every ranking uses
+measured deltas.
 
 Every stage writes to `build/<date>/<owner-repo>/` before the next one runs,
 and re-uses what is already there. A failure at render time never costs you the
@@ -102,8 +134,12 @@ between stages. Each stage reads one model and writes another, which is what
 makes stages independently re-runnable.
 
 `VideoSpec` is deliberately renderer-agnostic — no React, no CSS, no Remotion
-types. `video/src/types.ts` mirrors it. If you rename a field on one side,
-rename it on the other; TypeScript will catch most of the fallout.
+types. `video/src/schema.ts` mirrors it as a zod schema, and the renderer parses
+`video.json` through it in `calculateMetadata` before the first frame. TypeScript
+only checks the code we wrote, not the JSON another process handed us — without
+the runtime check, a field renamed on the Python side shows up as an `undefined`
+painted into a finished MP4. `video/src/types.ts` infers its types from those
+same schemas, so there is one definition per shape.
 
 Scene boundaries are placed at the moment each cue is **actually spoken**:
 `spec.py` matches every cue's `spoken_excerpt` against the Whisper transcript
@@ -201,6 +237,11 @@ rather than failing the run.
   `pipeline/scraper.py` for this reason.
 - **The cooldown store is what makes this runnable daily.** Star velocity is
   sticky; without `data/used_repos.json` the same three repos win all month.
+  It is written by `--posted`, not by the render, so rejected videos cost
+  nothing. `--unmark` is the escape hatch.
+- **`video/public/` is a staging area, not a store.** Remotion can only load
+  assets from there, so each render copies its audio and screenshot in and
+  prunes the previous run's. Everything in it is regenerated from `build/`.
 
 ---
 
@@ -213,8 +254,23 @@ reach for:
   150 wpm, so 80 words ≈ 32s. Raise it for longer videos rather than changing
   `TTS_RATE`.
 - `REPO_COOLDOWN_DAYS` — lower it if you run out of candidates.
+- `MAX_HOOK_CHARS` — the on-screen hook. Read by both the prompt handed to
+  Claude and the validator that checks his answer, so the two cannot drift.
+
+## Tests
+
+```bash
+pip install -e ".[dev]" && pytest
+```
+
+Covers the deterministic logic only — scene allocation, caption alignment,
+scoring, the star-history and cooldown stores, caption gap repair. No network,
+no fixtures. The stages that call GitHub, Claude, Whisper, or Remotion are not
+tested here; `--stop-after` is how you inspect those.
 
 ## Not built yet
 
 Auto-posting to Instagram (the Graph API needs a Business account and a
-publicly reachable video URL), scheduling, and a second render backend.
+publicly reachable video URL, so it means standing up object storage and a Meta
+app to avoid one drag-and-drop), scheduling the full run, and a second render
+backend.

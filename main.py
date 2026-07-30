@@ -5,6 +5,11 @@
     python main.py --repo astral-sh/uv  skip discovery, use a specific repo
     python main.py --resume 2026-07-30/astral-sh-uv   re-render from artifacts
 
+    python main.py --candidates         rank today's repos, generate nothing
+    python main.py --snapshot           record star counts only (run daily)
+    python main.py --posted astral-sh/uv    start the 30-day cooldown
+    python main.py --unmark astral-sh/uv    undo that
+
 Every stage writes its output to build/<date>/<owner-repo>/ before the next
 one starts, so a failure late in the pipeline never costs you the earlier work.
 """
@@ -23,7 +28,7 @@ from rich.logging import RichHandler
 
 from config import ConfigError, get_settings, require_github_token, resolve_claude_cli
 from pipeline import captions as captions_mod
-from pipeline import renderer, scraper, screenshot, tts
+from pipeline import publisher, renderer, scraper, screenshot, tts
 from pipeline import spec as spec_mod
 from pipeline.models import Caption, RepoCandidate, VideoScript, VideoSpec
 from pipeline.scriptwriter import write_script
@@ -56,13 +61,21 @@ def _setup_logging(verbose: bool) -> None:
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
-def _preflight(need_github: bool, need_claude: bool) -> None:
-    """Fail on missing prerequisites before spending any time or tokens."""
+def _preflight(*, need_github: bool, need_claude: bool) -> None:
+    """Fail on missing prerequisites before spending any time or tokens.
+
+    Exits rather than raising: every caller wants the same readable message and
+    a non-zero status, not a traceback.
+    """
     cfg = get_settings()
-    if need_github:
-        require_github_token(cfg)
-    if need_claude:
-        resolve_claude_cli()
+    try:
+        if need_github:
+            require_github_token(cfg)
+        if need_claude:
+            resolve_claude_cli()
+    except ConfigError as exc:
+        console.print(f"[bold red]Setup problem[/]\n{exc}")
+        raise typer.Exit(1) from exc
 
 
 @app.command()
@@ -71,6 +84,18 @@ def run(
         bool,
         typer.Option("--candidates", help="Only rank today's repos; generate nothing"),
     ] = False,
+    snapshot: Annotated[
+        bool,
+        typer.Option("--snapshot", help="Record star counts only; generate nothing"),
+    ] = False,
+    posted: Annotated[
+        str | None,
+        typer.Option("--posted", help="Mark a repo as posted, starting its cooldown"),
+    ] = None,
+    unmark: Annotated[
+        str | None,
+        typer.Option("--unmark", help="Clear a repo's cooldown"),
+    ] = None,
     repo_full_name: Annotated[
         str | None,
         typer.Option("--repo", help="Skip discovery, e.g. 'astral-sh/uv'"),
@@ -97,8 +122,32 @@ def run(
     if no_research:
         cfg.claude_research = False
 
+    # --- Bookkeeping commands: do one thing, then stop. --------------------
+    if posted:
+        scraper.mark_featured(cfg, posted)
+        console.print(
+            f"[bold green]Marked posted:[/] {posted} "
+            f"[dim](on cooldown for {cfg.repo_cooldown_days} days)[/]"
+        )
+        return
+
+    if unmark:
+        was = scraper.unmark_featured(cfg, unmark)
+        if was:
+            console.print(f"[bold green]Cooldown cleared:[/] {unmark} [dim](was set {was})[/]")
+        else:
+            console.print(f"[yellow]{unmark} was not on cooldown.[/]")
+        return
+
     if candidates:
-        scraper._main()
+        _preflight(need_github=True, need_claude=False)
+        scraper.inspect_candidates(cfg)
+        return
+
+    if snapshot:
+        _preflight(need_github=True, need_claude=False)
+        count = scraper.snapshot_stars(cfg)
+        console.print(f"[bold green]Snapshotted[/] {count} repos")
         return
 
     if preview_voice:
@@ -111,14 +160,10 @@ def run(
         console.print(f"[bold green]Preview:[/] {out}")
         return
 
-    try:
-        _preflight(
-            need_github=resume is None and repo_full_name is None,
-            need_claude=stop_after != Stage.SCRAPE,
-        )
-    except ConfigError as exc:
-        console.print(f"[bold red]Setup problem[/]\n{exc}")
-        raise typer.Exit(1) from exc
+    _preflight(
+        need_github=resume is None and repo_full_name is None,
+        need_claude=stop_after != Stage.SCRAPE,
+    )
 
     run_dir = cfg.build_dir / resume if resume else None
     if resume and not (run_dir and run_dir.exists()):
@@ -153,6 +198,9 @@ def run(
                     raise typer.Exit(1) from exc
                 repo = scraper._to_candidate(item)
                 repo.readme = gh.fetch_readme(repo.full_name, cfg.readme_char_budget)
+            # Discovery snapshots every repo it sees; this path skips discovery,
+            # so record it by hand or a later run has no history for this repo.
+            scraper.record_snapshot(cfg, repo)
         else:
             repo = scraper.find_trending_repo(cfg)
 
@@ -226,6 +274,11 @@ def run(
     # ---- 5. Render ------------------------------------------------------
     console.rule("[bold]5/5  Rendering")
 
+    # public/ is a staging area, not a store. Clear out other runs' copies
+    # before adding ours, so it doesn't grow an audio file and a screenshot per
+    # video forever.
+    renderer.prune_staged_assets(cfg.video_dir, repo.slug)
+
     # Opening shot: the real GitHub page. Cached across re-runs, and entirely
     # optional -- a capture failure just means the video opens on a card.
     shot_path = run_dir / "repo.png"
@@ -251,17 +304,29 @@ def run(
     with console.status("Remotion is rendering..."):
         renderer.render(video_spec, out_path, cfg)
 
-    # Only start the cooldown once we actually have a video to post.
-    scraper.mark_featured(cfg, repo)
-
     console.rule("[bold green]Done")
     console.print(f"  [bold]{out_path}[/]")
     console.print(f"  [dim]{video_spec.durationInFrames / video_spec.fps:.1f}s · "
                   f"{video_spec.width}x{video_spec.height}[/]")
+
+    # Everything from here is about making the one remaining manual step --
+    # dropping the file into Instagram -- as short as possible.
     if script.caption_text:
         console.print(f"\n[bold]Instagram caption[/]\n{script.caption_text}")
+        if publisher.copy_to_clipboard(script.caption_text):
+            console.print("[dim]  (copied to the clipboard)[/]")
+    publisher.reveal(run_dir)
+
     console.print(
-        f"\n[dim]Iterate on the look:  cd video && npm run studio  "
+        f"\n[bold]Once it is actually posted:[/]  "
+        f"python main.py --posted {repo.full_name}"
+    )
+    console.print(
+        f"[dim]That is what starts the {cfg.repo_cooldown_days}-day cooldown. "
+        f"Rendering alone does not, so a video you reject costs you nothing.[/]"
+    )
+    console.print(
+        f"[dim]Iterate on the look:  cd video && npm run studio  "
         f"(then load {run_dir / 'video.json'})[/]"
     )
 

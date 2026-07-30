@@ -5,6 +5,7 @@ import { Composition, type CalculateMetadataFunction } from "remotion";
 
 import { Reel } from "./Reel";
 import { highlightScenes } from "./highlight";
+import { parseVideoSpec } from "./schema";
 import { theme } from "./theme";
 import type { VideoSpec } from "./types";
 
@@ -70,19 +71,23 @@ const PLACEHOLDER: VideoSpec = {
 };
 
 /**
- * Runs in Node before rendering. Two jobs:
- *   1. Adopt the dimensions/duration from the loaded spec rather than the
+ * Runs in Node before rendering. Three jobs:
+ *   1. Validate the incoming spec against the zod contract, so a drift between
+ *      pipeline/models.py and this side fails in the first second rather than
+ *      painting `undefined` into a finished MP4.
+ *   2. Adopt the dimensions/duration from the loaded spec rather than the
  *      Composition defaults, so one composition serves every video.
- *   2. Syntax-highlight code once, instead of per frame in the browser.
+ *   3. Syntax-highlight code once, instead of per frame in the browser.
  */
 const calculateMetadata: CalculateMetadataFunction<VideoSpec> = async ({ props }) => {
-  const scenes = await highlightScenes(props.scenes);
+  const spec = parseVideoSpec(props);
+  const scenes = await highlightScenes(spec.scenes);
   return {
-    durationInFrames: props.durationInFrames,
-    fps: props.fps,
-    width: props.width,
-    height: props.height,
-    props: { ...props, scenes },
+    durationInFrames: spec.durationInFrames,
+    fps: spec.fps,
+    width: spec.width,
+    height: spec.height,
+    props: { ...spec, scenes },
   };
 };
 
