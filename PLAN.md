@@ -25,9 +25,13 @@ Done this session, so do not redo it:
 
 Not done, and known true on this machine as of today:
 
-- **The working tree of record is still `~/Documents/local-git/tech-ig`.**
-  The clone at `~/Documents/github/reelsmith` was made before the first push:
-  it has zero commits and its `origin/main` shows as gone. A fetch fixes it.
+- **The private assets still live only in `~/Documents/local-git/tech-ig`.**
+  The clone at `~/Documents/github/reelsmith` has `main` checked out
+  (migration step 1 was done at the end of the planning session, so this
+  document is readable from there), but nothing gitignored has been copied:
+  no `.env`, no `data/`, no models, no voice recording, no venvs. Steps 2
+  through 5 below are all still to do, and the pipeline is not runnable from
+  the new location until they are.
 - **No pipeline launchd jobs are installed.** `launchctl list` shows only an
   unrelated `com.nordbye.jarvis-bridge`. The snapshot job that INSTAGRAM.md
   assumes is running is not; nothing to uninstall, but also no token refresh
@@ -360,6 +364,70 @@ Designed in from day one, activated later:
 - [ ] `--account` profiles in the pipeline.
 - [ ] App Review + Business Verification if comment webhooks or non-owned
       accounts become worth it.
+
+## Appendix: API reference for the builder
+
+Everything the gateway calls, so the build session does not have to re-derive
+it. Verified against Meta docs 2026-07-31, Graph API v25.0, product
+"Instagram API with Instagram Login". Base host `graph.instagram.com`.
+No Facebook Page required.
+
+**Scopes** (the old `business_basic` style names died January 2025):
+
+| Scope | Grants |
+|---|---|
+| `instagram_business_basic` | required for everything |
+| `instagram_business_manage_comments` | read comments, reply, **private replies**, comment webhooks |
+| `instagram_business_manage_messages` | DMs both ways, `messages` webhooks, User Profile API |
+| `instagram_business_content_publish` | publishing (the pipeline already uses it) |
+
+**Token flow** (matches what `pipeline/publisher.py` already does):
+authorize at `www.instagram.com/oauth/authorize` → short-lived token via
+`POST api.instagram.com/oauth/access_token` → long-lived via
+`GET /access_token?grant_type=ig_exchange_token&client_secret=...` (60 days)
+→ refresh via `GET /refresh_access_token?grant_type=ig_refresh_token`, only
+while the token is older than 24h and not yet expired.
+
+**Calls the gateway makes:**
+
+| Purpose | Call |
+|---|---|
+| Private reply to a comment | `POST /<IG_ID>/messages` body `{"recipient": {"comment_id": "..."}, "message": {"text": "..."}}`. One per comment ever, within 7 days of the comment. |
+| DM inside the 24h window | same endpoint, `{"recipient": {"id": "<IGSID>"}}` |
+| Follower check | `GET /<IGSID>?fields=username,is_user_follow_business,is_business_follow_user,follower_count`. Errors with "user consent is required" until the user has messaged the account. |
+| Poll comments | `GET /<MEDIA_ID>/comments` |
+| Enable webhooks for an account | `POST /me/subscribed_apps?subscribed_fields=messages` with that account's token |
+
+**Webhooks:** app-level config in the dashboard (callback URL + verify
+token), classic `hub.mode`/`hub.verify_token`/`hub.challenge` GET handshake,
+then POSTs signed with `X-Hub-Signature-256` (HMAC-SHA256 of the raw body
+with the app secret; verify before parsing). Entries batch up to 1000 per
+POST and missed events are never replayed, which is another reason the
+comment poller is the source of truth for comments. App must be **Live** to
+receive any webhooks; `comments` and `live_comments` fields additionally
+need Advanced Access, `messages` does not.
+
+**Rate limits** (from Meta's rate-limit page as surfaced in search; the page
+itself 404'd on direct fetch, re-verify before hardcoding): private replies
+750/hour/account, text message sends 100/sec/account, conversation reads
+2/sec/account.
+
+**Policy constraints for the copy:** disclose automation at conversation
+start where law requires it (California and Germany named), respond within
+30 seconds (trivially met), never use the `human_agent` tag from automation,
+promotional content only inside the 24h window.
+
+**Sources:**
+
+- <https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/>
+- <https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/business-login>
+- <https://developers.facebook.com/docs/instagram-platform/webhooks>
+- <https://developers.facebook.com/docs/instagram-platform/private-replies/>
+- <https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/messaging-api/>
+- <https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/messaging-api/user-profile>
+- <https://developers.facebook.com/docs/instagram-platform/overview/> (access levels)
+- <https://developers.facebook.com/docs/graph-api/overview/rate-limiting/>
+- <https://developers.facebook.com/documentation/business-messaging/messenger-platform/policy>
 
 ## Risks worth naming
 
