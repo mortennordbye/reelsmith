@@ -28,7 +28,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -82,6 +82,43 @@ _MIGRATIONS: tuple[str, ...] = (
         updated_at      TEXT NOT NULL,
         PRIMARY KEY (igsid, ig_user_id)
     );
+    """,
+    # v2. Conversion was a property of the person, so `converted` was a dead
+    # end: a returning commenter got the private reply and then silence,
+    # because one conversation row per person cannot represent "converted on
+    # post 1, still waiting on post 2". Which failed the most engaged part of
+    # the audience while every counter looked healthy.
+    #
+    # A delivery is now per person and per post. `conversations` keeps only the
+    # live state.
+    """
+    CREATE TABLE deliveries (
+        igsid      TEXT NOT NULL,
+        ig_user_id TEXT NOT NULL,
+        media_id   TEXT NOT NULL,
+        sent_at    TEXT NOT NULL,
+        PRIMARY KEY (igsid, ig_user_id, media_id)
+    );
+
+    -- Backfill, so nobody who already has a link is sent it a second time the
+    -- moment this ships.
+    INSERT OR IGNORE INTO deliveries (igsid, ig_user_id, media_id, sent_at)
+    SELECT igsid, ig_user_id, media_id, COALESCE(link_sent_at, updated_at)
+    FROM conversations
+    WHERE link_sent_at IS NOT NULL AND media_id IS NOT NULL;
+    """,
+    # v3. Meta's one-reply-per-comment rule is per comment, not per person, so
+    # someone who writes "SEND" and then "send pls" on the same Reel was owed
+    # two private replies and got two identical DMs. The commenter's id lets
+    # the second one be declined.
+    #
+    # Kept separate from the IGSID on the same row on purpose: they are
+    # different id spaces. `author_id` is who wrote the comment,
+    # `igsid` is who the DM went to, and only Meta knows they are the same
+    # person.
+    """
+    ALTER TABLE comments_handled ADD COLUMN author_id TEXT;
+    CREATE INDEX comments_by_author ON comments_handled (media_id, author_id);
     """,
 )
 
@@ -309,8 +346,34 @@ async def mark_polled(conn: aiosqlite.Connection, media_id: str) -> None:
 # --------------------------------------------------------------------------
 
 
+async def already_replied_to_author(
+    conn: aiosqlite.Connection, *, media_id: str, author_id: str
+) -> bool:
+    """Has this person already had a private reply on this post?
+
+    Meta's one-per-comment rule does not stop two comments by the same person
+    producing two identical DMs, which reads as a broken bot rather than a
+    prompt one.
+    """
+    row = await _one(
+        conn,
+        """
+        SELECT 1 FROM comments_handled
+        WHERE media_id = ? AND author_id = ? AND replied_at IS NOT NULL
+        LIMIT 1
+        """,
+        (media_id, author_id),
+    )
+    return row is not None
+
+
 async def claim_comment(
-    conn: aiosqlite.Connection, *, comment_id: str, media_id: str, ig_user_id: str
+    conn: aiosqlite.Connection,
+    *,
+    comment_id: str,
+    media_id: str,
+    ig_user_id: str,
+    author_id: str | None = None,
 ) -> bool:
     """Take exclusive ownership of a comment. True means this caller may reply.
 
@@ -320,10 +383,11 @@ async def claim_comment(
     """
     async with conn.execute(
         """
-        INSERT OR IGNORE INTO comments_handled (comment_id, media_id, ig_user_id, claimed_at)
-        VALUES (?, ?, ?, ?)
+        INSERT OR IGNORE INTO comments_handled
+            (comment_id, media_id, ig_user_id, author_id, claimed_at)
+        VALUES (?, ?, ?, ?, ?)
         """,
-        (comment_id, media_id, ig_user_id, iso(now())),
+        (comment_id, media_id, ig_user_id, author_id, iso(now())),
     ) as cur:
         won = cur.rowcount == 1
     await conn.commit()
@@ -365,12 +429,20 @@ async def comment_row(conn: aiosqlite.Connection, comment_id: str) -> Mapping[st
 async def start_conversation(
     conn: aiosqlite.Connection, *, igsid: str, ig_user_id: str, media_id: str
 ) -> None:
-    """Open a conversation at private reply time.
+    """Open, or reopen, a conversation at private reply time.
 
     The send response carries the commenter's IGSID, which is the only moment
-    the link they asked for can be tied to the person who will answer. An
-    existing conversation is left in whatever state it reached, so a repeat
-    commenter does not get walked back through the funnel.
+    the link they asked for can be tied to the person who will answer.
+
+    A new comment always reopens. This used to refuse to touch a `converted`
+    row, on the theory that a repeat commenter should not be walked back through
+    the funnel, which sounded reasonable and was wrong: it meant someone who
+    converted on one post could never receive any later post's link. The state
+    is about the current ask, not about the person's history, and `deliveries`
+    is what stops a link being sent twice.
+
+    The nudge count resets too. It bounds reminders for one ask, not for a
+    lifetime.
     """
     stamp = iso(now())
     await conn.execute(
@@ -379,12 +451,61 @@ async def start_conversation(
         VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(igsid, ig_user_id) DO UPDATE SET
             media_id = excluded.media_id,
+            state = excluded.state,
+            nudges_sent = 0,
             updated_at = excluded.updated_at
-        WHERE conversations.state <> ?
         """,
-        (igsid, ig_user_id, media_id, STATE_REPLIED, stamp, stamp, STATE_CONVERTED),
+        (igsid, ig_user_id, media_id, STATE_REPLIED, stamp, stamp),
     )
     await conn.commit()
+
+
+async def record_delivery(
+    conn: aiosqlite.Connection, *, igsid: str, ig_user_id: str, media_id: str
+) -> None:
+    """Remember that this person has this post's link, so it is never resent."""
+    await conn.execute(
+        """
+        INSERT OR IGNORE INTO deliveries (igsid, ig_user_id, media_id, sent_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (igsid, ig_user_id, media_id, iso(now())),
+    )
+    await conn.commit()
+
+
+async def pending_ask(
+    conn: aiosqlite.Connection, *, igsid: str, ig_user_id: str
+) -> str | None:
+    """The most recent post this person asked about and has not been sent.
+
+    An "ask" is a comment we sent a private reply to. That is what separates
+    someone waiting for a link from someone just talking, and answering the
+    second with "you need to follow" would be obnoxious.
+
+    Most recent first, because if several are outstanding the one they just
+    commented on is the one they mean.
+    """
+    row = await _one(
+        conn,
+        """
+        SELECT c.media_id
+        FROM comments_handled c
+        WHERE c.igsid = ?
+          AND c.ig_user_id = ?
+          AND c.replied_at IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM deliveries d
+              WHERE d.igsid = c.igsid
+                AND d.ig_user_id = c.ig_user_id
+                AND d.media_id = c.media_id
+          )
+        ORDER BY c.claimed_at DESC
+        LIMIT 1
+        """,
+        (igsid, ig_user_id),
+    )
+    return row[0] if row else None
 
 
 async def get_conversation(

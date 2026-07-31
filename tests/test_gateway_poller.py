@@ -57,9 +57,9 @@ async def conn(cfg):
 
 async def test_only_matching_comments_get_a_reply(conn, graph, cfg, metrics, meta):
     meta.comments = [
-        comment("c1", "SEND"),
-        comment("c2", "nice video"),
-        comment("c3", "send please"),
+        comment("c1", "SEND", author="person-a"),
+        comment("c2", "nice video", author="person-b"),
+        comment("c3", "send please", author="person-c"),
     ]
 
     sent = await poller.poll_once(conn, graph, cfg, metrics)
@@ -79,9 +79,9 @@ async def test_a_second_sweep_replies_to_nothing_twice(conn, graph, cfg, metrics
 
 
 async def test_a_new_comment_between_sweeps_is_picked_up(conn, graph, cfg, metrics, meta):
-    meta.comments = [comment("c1", "send")]
+    meta.comments = [comment("c1", "send", author="person-a")]
     await poller.poll_once(conn, graph, cfg, metrics)
-    meta.comments.append(comment("c2", "send"))
+    meta.comments.append(comment("c2", "send", author="person-b"))
     meta.sends.clear()
 
     await poller.poll_once(conn, graph, cfg, metrics)
@@ -221,3 +221,44 @@ def test_settings_reject_a_trailing_slash_on_the_public_url(tmp_path):
 def test_the_graph_base_matches_the_publishers_shape():
     cfg = GatewaySettings(app_secret="x", verify_token="y", api_token="z", _env_file=None)
     assert cfg.graph_base == "https://graph.instagram.com/v23.0"
+
+
+async def test_migrating_a_v1_database_does_not_resend_existing_links(cfg):
+    """The live database is v1 and holds a converted conversation. Shipping the
+    deliveries table must not make that person's link outstanding again, which
+    would DM them the moment the new pod starts."""
+    import aiosqlite
+
+    from gateway.db import _MIGRATIONS
+
+    path = cfg.db_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = await aiosqlite.connect(path)
+    conn.row_factory = aiosqlite.Row
+    try:
+        # A database exactly as v1 left it.
+        await conn.executescript(_MIGRATIONS[0])
+        await conn.execute("PRAGMA user_version=1")
+        await conn.execute(
+            """
+            INSERT INTO conversations
+                (igsid, ig_user_id, media_id, state, link_sent_at, created_at, updated_at)
+            VALUES ('1028439703126642', ?, 'media-1', 'converted', '2026-07-31T20:01:43+00:00',
+                    '2026-07-31T20:00:00+00:00', '2026-07-31T20:01:43+00:00')
+            """,
+            (ACCOUNT,),
+        )
+        await conn.commit()
+
+        assert await db.migrate(conn) == db.SCHEMA_VERSION
+
+        rows = list(await (await conn.execute("SELECT * FROM deliveries")).fetchall())
+        assert len(rows) == 1, "the already-delivered link must be recorded"
+        assert rows[0]["media_id"] == "media-1"
+
+        # And so it is not outstanding.
+        assert (
+            await db.pending_ask(conn, igsid="1028439703126642", ig_user_id=ACCOUNT) is None
+        )
+    finally:
+        await conn.close()

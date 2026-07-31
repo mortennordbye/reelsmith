@@ -1,12 +1,26 @@
 """The DM state machine, and the three rules Meta will not bend on.
 
     comment "SEND"
-      └─► private reply, one per comment ever
+      └─► private reply, one per comment ever      (this creates the "ask")
           └─► they reply anything            (opens the 24h window, and only
               │                               then can we read their profile)
-              └─► do they follow?
-                  ├─ yes ─► send the link, mark converted
-                  └─ no  ─► nudge, re-check on the next message
+              └─► is there an outstanding ask?
+                  ├─ no  ─► stay quiet, they are just talking
+                  └─ yes ─► do they follow?
+                            ├─ yes ─► send that post's link, record delivery
+                            └─ no  ─► nudge, re-check on the next message
+
+An **ask** is a comment we private-replied to whose link has not been delivered.
+That is deliberately per post rather than per person. Conversion used to be a
+property of the person, which made `converted` terminal: someone who got one
+link could never receive a later post's, and nothing logged an error, so the
+most engaged part of the audience failed silently while every counter looked
+healthy. `deliveries` now records person plus post, and a new comment reopens
+the conversation.
+
+It is also what keeps the gate honest in the other direction. Someone who
+follows, converts, unfollows and then comments again is told to follow, because
+the ask is new even though the person is not.
 
 The rules, and where each is enforced:
 
@@ -106,11 +120,25 @@ async def handle_comment(
         return SKIPPED
 
     if not await db.claim_comment(
-        conn, comment_id=comment_id, media_id=post["media_id"], ig_user_id=ig_user_id
+        conn,
+        comment_id=comment_id,
+        media_id=post["media_id"],
+        ig_user_id=ig_user_id,
+        author_id=author_id,
     ):
         return SKIPPED
 
     metrics.comments_matched.inc()
+
+    # Meta's one-reply-per-comment rule is per comment, not per person, so
+    # "SEND" followed by "send pls" on the same Reel earns two identical DMs.
+    # That reads as a broken bot rather than a prompt one. The claim is kept so
+    # the poller stops reconsidering this comment.
+    if author_id and await db.already_replied_to_author(
+        conn, media_id=post["media_id"], author_id=author_id
+    ):
+        await db.mark_comment_failed(conn, comment_id, "already replied to this commenter here")
+        return Outcome("skipped", "duplicate ask from the same commenter")
 
     if not _dm_allowed(account):
         await db.mark_comment_failed(conn, comment_id, "dm_enabled is off")
@@ -201,15 +229,23 @@ async def handle_inbound_message(
     conversation = await db.get_conversation(conn, igsid=igsid, ig_user_id=ig_user_id)
     assert conversation is not None
 
-    if conversation["state"] == db.STATE_CONVERTED:
-        return Outcome("skipped", "already converted")
+    # Is there an outstanding ask, meaning a comment we private-replied to whose
+    # link has not been delivered? That is the difference between someone
+    # waiting for a link and someone saying thanks, and it is what stops the
+    # follow gate answering a plain conversation with "you need to follow".
+    #
+    # This replaced a check on a `converted` state, which was terminal per
+    # person and so silently failed every returning commenter.
+    media_id = await db.pending_ask(conn, igsid=igsid, ig_user_id=ig_user_id)
+    if media_id is None:
+        return Outcome("skipped", "nothing outstanding")
 
     if not _dm_allowed(account):
         return Outcome("skipped", "kill switch")
 
-    post = await db.get_post(conn, conversation["media_id"]) if conversation["media_id"] else None
+    post = await db.get_post(conn, media_id)
     if post is None:
-        log.warning("Conversation with %s points at no post", igsid)
+        log.warning("Ask from %s points at post %s, which is not registered", igsid, media_id)
         return Outcome("skipped", "no post")
 
     follows = await _follow_state(
@@ -242,6 +278,9 @@ async def handle_inbound_message(
             metrics.graph_errors.inc()
             return Outcome("failed", str(exc))
 
+        # Per person and per post, so this exact link is never sent twice while
+        # a later post can still be asked for.
+        await db.record_delivery(conn, igsid=igsid, ig_user_id=ig_user_id, media_id=media_id)
         await db.update_conversation(
             conn,
             igsid=igsid,

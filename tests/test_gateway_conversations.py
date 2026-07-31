@@ -337,7 +337,19 @@ def test_the_dm_copy_obeys_the_repo_text_rules(name):
 
 
 def test_the_first_message_discloses_the_automation():
+    """Meta's messaging policy asks for this where law requires it, naming
+    California and Germany. It is one clause and easy to lose to a copy edit
+    that is only thinking about tone."""
     assert "automated" in copy.PRIVATE_REPLY.lower()
+
+
+def test_the_copy_never_pretends_to_be_a_person():
+    """The other half of the same policy line, and the one a well-meaning copy
+    edit is most likely to break."""
+    for name, template in copy.TEMPLATES.items():
+        lowered = template.lower()
+        for pretence in ("i am typing", "one moment", "let me check", "hang on", "brb"):
+            assert pretence not in lowered, f"{name} implies a human is answering"
 
 
 def test_a_link_with_a_hyphen_survives_the_template():
@@ -347,3 +359,188 @@ def test_a_link_with_a_hyphen_survives_the_template():
 
 def test_the_harness_comment_helper_is_shaped_like_metas():
     assert comment("c1", "send")["from"]["id"] == "commenter-1"
+
+
+# --- Returning commenters ---------------------------------------------------
+#
+# Conversion used to be a property of the person, which made `converted` a dead
+# end: someone who got one link could never receive another, and nothing logged
+# an error. It failed the most engaged part of the audience while every counter
+# looked healthy. A delivery is now per person and per post.
+
+
+LINK2 = "https://github.com/xai-org/grok-build"
+
+
+async def _second_post(conn):
+    await db.register_post(
+        conn, media_id="media-2", ig_user_id=ACCOUNT, keyword="grok", link=LINK2
+    )
+    return await db.get_post(conn, "media-2")
+
+
+async def test_a_returning_commenter_gets_the_second_posts_link(
+    conn, graph, cfg, metrics, meta
+):
+    """The bug this file exists to prevent coming back."""
+    meta.follows = True
+    await reply_to(conn, graph, cfg, metrics, cid="c1")
+    await inbound(conn, graph, cfg, metrics)
+    assert LINK in meta.texts[-1]
+
+    post2 = await _second_post(conn)
+    meta.sends.clear()
+    await conversations.handle_comment(
+        conn, graph, cfg, metrics,
+        account=await account_row(conn), post=post2,
+        comment_id="c2", author_id="commenter-1",
+    )
+    meta.sends.clear()
+
+    outcome = await inbound(conn, graph, cfg, metrics)
+
+    assert outcome.action == "link_sent"
+    assert LINK2 in meta.texts[0], "the second post's link, not the first"
+
+
+async def test_a_link_is_never_sent_twice_for_the_same_post(conn, graph, cfg, metrics, meta):
+    meta.follows = True
+    await reply_to(conn, graph, cfg, metrics, cid="c1")
+    await inbound(conn, graph, cfg, metrics)
+    meta.sends.clear()
+
+    outcome = await inbound(conn, graph, cfg, metrics)
+
+    assert outcome.action == "skipped"
+    assert meta.sends == []
+
+
+async def test_someone_who_unfollows_and_asks_again_is_told_to_follow(
+    conn, graph, cfg, metrics, meta
+):
+    """The gate has to hold both ways, or the follow it bought is not kept."""
+    meta.follows = True
+    await reply_to(conn, graph, cfg, metrics, cid="c1")
+    await inbound(conn, graph, cfg, metrics)
+
+    meta.follows = False  # they unfollow
+    post2 = await _second_post(conn)
+    await conversations.handle_comment(
+        conn, graph, cfg, metrics,
+        account=await account_row(conn), post=post2,
+        comment_id="c2", author_id="commenter-1",
+    )
+    meta.sends.clear()
+
+    outcome = await inbound(conn, graph, cfg, metrics)
+
+    assert outcome.action == "nudged"
+    assert LINK2 not in "".join(meta.texts)
+
+
+async def test_chatting_with_nothing_outstanding_gets_no_reply(conn, graph, cfg, metrics, meta):
+    """Answering a plain thank-you with "you need to follow" would be obnoxious,
+    and the account would deserve the unfollow."""
+    meta.follows = True
+    await reply_to(conn, graph, cfg, metrics, cid="c1")
+    await inbound(conn, graph, cfg, metrics)
+
+    meta.follows = False  # unfollowed, but has not asked for anything new
+    meta.sends.clear()
+
+    outcome = await inbound(conn, graph, cfg, metrics)
+
+    assert outcome.action == "skipped"
+    assert outcome.detail == "nothing outstanding"
+    assert meta.sends == []
+
+
+async def test_the_nudge_budget_resets_for_a_new_ask(conn, graph, cfg, metrics, meta):
+    """The cap bounds reminders for one ask, not for a lifetime. Without the
+    reset, someone who ignored the first post could never be nudged again."""
+    await reply_to(conn, graph, cfg, metrics, cid="c1")
+    for _ in range(cfg.max_nudges + 1):
+        await inbound(conn, graph, cfg, metrics)
+
+    post2 = await _second_post(conn)
+    await conversations.handle_comment(
+        conn, graph, cfg, metrics,
+        account=await account_row(conn), post=post2,
+        comment_id="c2", author_id="commenter-1",
+    )
+    meta.sends.clear()
+
+    outcome = await inbound(conn, graph, cfg, metrics)
+
+    assert outcome.action == "nudged"
+
+
+async def test_the_backfill_does_not_resend_to_someone_already_converted(cfg):
+    """Shipping this must not blast a link at everyone who already has one."""
+    conn = await db.connect(cfg.db_path)
+    try:
+        await db.upsert_account(conn, ig_user_id=ACCOUNT, access_token="tok")
+        await db.register_post(
+            conn, media_id="media-1", ig_user_id=ACCOUNT, keyword="send", link=LINK
+        )
+        await db.claim_comment(
+            conn, comment_id="c1", media_id="media-1", ig_user_id=ACCOUNT
+        )
+        await db.mark_comment_replied(conn, "c1", igsid=IGSID)
+        await db.start_conversation(
+            conn, igsid=IGSID, ig_user_id=ACCOUNT, media_id="media-1"
+        )
+        await db.record_delivery(
+            conn, igsid=IGSID, ig_user_id=ACCOUNT, media_id="media-1"
+        )
+
+        assert await db.pending_ask(conn, igsid=IGSID, ig_user_id=ACCOUNT) is None
+    finally:
+        await conn.close()
+
+
+async def test_two_comments_by_one_person_earn_one_dm(conn, graph, cfg, metrics, meta):
+    """Meta's one-reply-per-comment rule is per comment, not per person. Two
+    identical DMs about the same Reel reads as a broken bot."""
+    await reply_to(conn, graph, cfg, metrics, cid="c1")
+    meta.sends.clear()
+
+    outcome = await reply_to(conn, graph, cfg, metrics, cid="c2")
+
+    assert outcome.action == "skipped"
+    assert "duplicate" in outcome.detail
+    assert meta.sends == []
+    # The claim is kept, or the poller reconsiders it every sweep.
+    assert await db.comment_row(conn, "c2") is not None
+
+
+async def test_two_different_people_both_get_a_reply(conn, graph, cfg, metrics, meta):
+    await conversations.handle_comment(
+        conn, graph, cfg, metrics, account=await account_row(conn),
+        post=await post_row(conn), comment_id="c1", author_id="person-a",
+    )
+    await conversations.handle_comment(
+        conn, graph, cfg, metrics, account=await account_row(conn),
+        post=await post_row(conn), comment_id="c2", author_id="person-b",
+    )
+
+    assert len(meta.sends) == 2
+
+
+async def test_the_same_person_commenting_on_a_second_post_still_gets_a_reply(
+    conn, graph, cfg, metrics, meta
+):
+    """The guard is per post. A new Reel is a new ask."""
+    await reply_to(conn, graph, cfg, metrics, cid="c1")
+    await db.register_post(
+        conn, media_id="media-2", ig_user_id=ACCOUNT, keyword="grok", link=LINK2
+    )
+    meta.sends.clear()
+
+    outcome = await conversations.handle_comment(
+        conn, graph, cfg, metrics, account=await account_row(conn),
+        post=await db.get_post(conn, "media-2"), comment_id="c9", author_id="commenter-1",
+    )
+
+    assert outcome.action == "replied"
+    assert len(meta.sends) == 1

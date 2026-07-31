@@ -57,11 +57,22 @@ async def client(cfg, meta):
 
 
 async def seed(app) -> None:
+    """A conversation as it really arises: a comment, a private reply, then a
+    row keyed to the person who will answer.
+
+    The claimed and replied comment is not decoration. An inbound message is
+    only answered when there is an outstanding ask behind it, which is what
+    keeps the follow gate from replying to someone who is just talking.
+    """
     conn = app.state.db
     await db.upsert_account(conn, ig_user_id=ACCOUNT, access_token="tok")
     await db.register_post(
         conn, media_id="media-1", ig_user_id=ACCOUNT, keyword="send", link=LINK
     )
+    await db.claim_comment(
+        conn, comment_id="c1", media_id="media-1", ig_user_id=ACCOUNT, author_id="commenter-1"
+    )
+    await db.mark_comment_replied(conn, "c1", igsid=IGSID)
     await db.start_conversation(conn, igsid=IGSID, ig_user_id=ACCOUNT, media_id="media-1")
 
 

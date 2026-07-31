@@ -21,26 +21,39 @@ than the finished string.
 
 from __future__ import annotations
 
-# Sent as the private reply to the comment. One shot, ever, so it has to do
-# three jobs at once: confirm the link is real, disclose the automation, and
-# say exactly what to do next.
+# Sent as the private reply to the comment. One shot, ever, so it has to be
+# worth receiving and say exactly what to do next.
+#
+# The follow is asked for as support rather than as a toll. "Follow to unlock"
+# is the phrasing every growth-hack account uses and this audience has seen it
+# a thousand times.
+#
+# The automation is disclosed, but last rather than first. It used to open with
+# "This is an automated reply", which led with the least interesting fact in the
+# message and read like a bounce notification. Phrased as speed at the end it is
+# equally honest and does not cost the opening line. Meta's messaging policy
+# asks for the disclosure where law requires it, naming California and Germany.
 PRIVATE_REPLY = (
-    "Thanks for asking. This is an automated reply. "
-    "Follow the account and send me any message here, and the link comes straight back."
+    "Thanks for the interest. "
+    "Follow the account to support the work, then reply here and I will send the link. "
+    "It is automated, so it comes straight back."
 )
 
 # They messaged but do not follow yet. Said once per inbound message, capped, so
-# a follow that never arrives goes quiet instead of nagging.
+# a follow that never arrives goes quiet instead of nagging. No guilt, no
+# urgency: they owe nothing and the tone should say so.
 NUDGE = (
-    "Almost there. I cannot see a follow on the account yet. "
-    "Tap follow, then send one more message and the link is yours."
+    "Not showing as a follower yet, so I cannot send it. "
+    "Tap follow and reply once more and it is yours."
 )
 
-# The payoff.
-LINK = "Here it is. {link}\n\nThanks for following."
+# The payoff. Short, because the link is the point and anything wrapped around
+# it is in the way.
+LINK = "Here you go. {link}\n\nThanks for the follow, it genuinely helps."
 
-# The follow arrived after the nudge cap was spent, or they came back later.
-LINK_LATE = "Got it, the follow is showing now. {link}"
+# The follow arrived after a nudge, so acknowledge it rather than repeating the
+# whole greeting.
+LINK_LATE = "That did it. {link}\n\nThanks for the follow."
 
 # Everything the module offers as outgoing text, so tests can sweep it.
 TEMPLATES: dict[str, str] = {
