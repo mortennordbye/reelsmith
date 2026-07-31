@@ -304,18 +304,29 @@ def run(
     with console.status("Remotion is rendering..."):
         renderer.render(video_spec, out_path, cfg)
 
+    with console.status("Rendering cover stills..."):
+        covers = renderer.render_covers(video_spec, run_dir, cfg)
+
     console.rule("[bold green]Done")
     console.print(f"  [bold]{out_path}[/]")
     console.print(f"  [dim]{video_spec.durationInFrames / video_spec.fps:.1f}s · "
                   f"{video_spec.width}x{video_spec.height}[/]")
+    if covers:
+        console.print(f"  [dim]covers: {', '.join(p.name for p in covers)}[/]")
 
     # Everything from here is about making the one remaining manual step --
     # dropping the file into Instagram -- as short as possible.
     if script.caption_text:
+        # On the clipboard for an immediate post, and on disk because the
+        # clipboard is gone the moment anything else copies, and a run you come
+        # back to tomorrow still needs its caption.
+        caption_path = run_dir / "caption.txt"
+        caption_path.write_text(script.caption_text.strip() + "\n")
         console.print(f"\n[bold]Instagram caption[/]\n{script.caption_text}")
         if publisher.copy_to_clipboard(script.caption_text):
             console.print("[dim]  (copied to the clipboard)[/]")
-    publisher.reveal(run_dir)
+        console.print(f"[dim]  (also written to {caption_path.name})[/]")
+    publisher.reveal(run_dir / "out.mp4")
 
     console.print(
         f"\n[bold]Once it is actually posted:[/]  "

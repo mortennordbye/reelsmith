@@ -53,15 +53,28 @@ def copy_to_clipboard(text: str) -> bool:
 
 
 def reveal(path: Path) -> bool:
-    """Open `path` in the desktop file manager. Returns whether it worked."""
+    """Open `path` in the desktop file manager. Returns whether it worked.
+
+    Given a file, reveal it selected inside its folder rather than opening it.
+    The next action is dragging the MP4 into Instagram, so a Finder window with
+    the file already highlighted saves a step; `open` without -R would launch
+    QuickTime instead, which is not what anyone wants here.
+    """
     system = platform.system()
-    opener = {"Darwin": "open", "Linux": "xdg-open", "Windows": "explorer"}.get(system)
-    if not opener:
+    if system == "Darwin":
+        cmd = ["open", "-R", str(path)] if path.is_file() else ["open", str(path)]
+    elif system == "Linux":
+        # xdg-open has no reveal equivalent, so fall back to the parent folder.
+        target = path.parent if path.is_file() else path
+        cmd = ["xdg-open", str(target)]
+    elif system == "Windows":
+        cmd = ["explorer", f"/select,{path}"] if path.is_file() else ["explorer", str(path)]
+    else:
         return False
 
     try:
         subprocess.run(  # noqa: S603 - argv list, no shell
-            [opener, str(path)], check=True, timeout=10, capture_output=True
+            cmd, check=True, timeout=10, capture_output=True
         )
     except (OSError, subprocess.SubprocessError) as exc:
         log.debug("Could not open %s (%s)", path, exc)

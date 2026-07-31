@@ -98,6 +98,13 @@ export const CodeBlock: React.FC<Props> = ({ tokens, terminal = false, filename 
                 fontSize,
                 lineHeight: 1.62,
                 whiteSpace: "pre",
+                // JetBrains Mono ligatures fuse operators into single glyphs,
+                // which is pleasant in an editor and wrong here: `<!--` renders
+                // as an arrow and `-->` as a long dash, so an HTML comment stops
+                // looking like one. The viewer has ~2 seconds to recognise the
+                // snippet, and it has to match what they would type.
+                fontVariantLigatures: "none",
+                fontFeatureSettings: '"liga" 0, "calt" 0',
                 opacity: appear,
                 transform: `translateX(${interpolate(appear, [0, 1], [-14, 0])}px)`,
               }}

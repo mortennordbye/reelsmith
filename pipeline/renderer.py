@@ -23,6 +23,11 @@ log = logging.getLogger(__name__)
 # lowercase alphanumerics and hyphens (see RepoCandidate.slug).
 STAGED_ASSET_RE = re.compile(r"[a-z0-9-]+-(?:voice\.(?:wav|mp3)|repo\.png)")
 
+# Frame of the opening scene to grab the cover from. The hero entrance is a
+# spring that settles well inside a second; 90 frames (3s at 30fps) is past it
+# with room to spare, and still inside the scene's 7-second hold.
+COVER_FRAME = 90
+
 
 class RenderError(RuntimeError):
     pass
@@ -118,6 +123,64 @@ def render(
 
     log.info("Rendered %s (%.1f MB)", out_path.name, out_path.stat().st_size / 1_048_576)
     return out_path
+
+
+def render_covers(spec: VideoSpec, out_dir: Path, cfg: Settings) -> list[Path]:
+    """Render the Reels cover stills.
+
+    Every frame of the video carries the hook or a burned-in caption, so
+    Instagram's cover picker has nothing clean to offer. Two variants come out
+    of the same composition:
+
+      cover.png        hook set inside the crop-safe band, ready to upload
+      cover-clean.png  the README hero alone, to design over by hand
+
+    Best effort. A cover that fails to render must never fail a run that already
+    produced a video, so this logs and returns whatever it managed.
+    """
+    video_dir = cfg.video_dir
+    _ensure_node_deps(video_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Scenes animate in from their own frame 0, so frame 0 of the opening scene
+    # is the hero at zero opacity. Far enough in for the entrance to have
+    # settled, clamped so a very short opening scene still lands in range.
+    opening_frames = spec.scenes[0].durationInFrames if spec.scenes else 1
+    frame = max(0, min(COVER_FRAME, opening_frames - 1))
+
+    written: list[Path] = []
+    for name, show_hook in (("cover.png", True), ("cover-clean.png", False)):
+        out_path = out_dir / name
+        props = json.loads(spec.model_dump_json())
+        props["showHook"] = show_hook
+        props_path = video_dir / f".props-cover-{spec.slug}.json"
+        props_path.write_text(json.dumps(props))
+
+        cmd = [
+            "npx", "remotion", "still", "Cover", str(out_path.resolve()),
+            f"--props={props_path.resolve()}",
+            f"--frame={frame}",
+            "--log=error",
+        ]
+        try:
+            proc = subprocess.run(  # noqa: S603 - argv list, no shell
+                cmd, cwd=video_dir, capture_output=True, text=True, check=False, timeout=600
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            log.warning("Cover render failed for %s (%s)", name, exc)
+            continue
+        finally:
+            props_path.unlink(missing_ok=True)
+
+        if proc.returncode != 0 or not out_path.exists():
+            tail = (proc.stderr or proc.stdout)[-800:]
+            log.warning("Cover render failed for %s:\n%s", name, tail)
+            continue
+        written.append(out_path)
+
+    if written:
+        log.info("Wrote %s", ", ".join(p.name for p in written))
+    return written
 
 
 def write_spec(spec: VideoSpec, path: Path) -> Path:

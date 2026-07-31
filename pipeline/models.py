@@ -18,13 +18,17 @@ from __future__ import annotations
 from datetime import date, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 from config import get_settings
 
 # Read once, at import, so the JSON Schema description handed to Claude and the
 # validator that checks his answer can never disagree about the number.
 MAX_HOOK_CHARS = get_settings().max_hook_chars
+
+# Colons and every dash variant Claude reaches for, including the ones a model
+# emits without being asked (en dash, em dash, non-breaking hyphen).
+_BANNED_PUNCTUATION = frozenset(":-‐‑‒–—―−")
 
 # --------------------------------------------------------------------------
 # Step 1 -- topic research
@@ -126,10 +130,13 @@ class VideoScript(BaseModel):
     hook: str = Field(
         description=(
             f"Text overlay for the first 3 seconds. "
-            f"Max {MAX_HOOK_CHARS} characters, no period."
+            f"Max {MAX_HOOK_CHARS} characters, no period, "
+            f"no colons and no hyphens or dashes."
         )
     )
-    spoken_script: str = Field(description="The voiceover. Under 80 words.")
+    spoken_script: str = Field(
+        description="The voiceover. Under 80 words, no colons, hyphens or dashes."
+    )
     visual_cues: list[VisualCue] = Field(
         description="3-6 ordered beats describing what to show behind the voiceover."
     )
@@ -145,6 +152,26 @@ class VideoScript(BaseModel):
         if len(v) > MAX_HOOK_CHARS:
             raise ValueError(
                 f"hook is {len(v)} chars; keep it under {MAX_HOOK_CHARS} so it fits on screen"
+            )
+        return v
+
+    @field_validator("hook", "spoken_script")
+    @classmethod
+    def _no_colons_or_dashes(cls, v: str, info: ValidationInfo) -> str:
+        """Colons and dashes are invisible to a listener and clutter the screen.
+
+        The captions burned into the video are generated from `spoken_script`,
+        so punctuation that does nothing aloud still costs screen legibility.
+        Rejecting here rather than stripping keeps the rewrite with Claude,
+        which can find a phrasing that reads naturally without them; silently
+        deleting a hyphen would turn "seven-word" into "sevenword".
+        """
+        found = sorted({c for c in v if c in _BANNED_PUNCTUATION})
+        if found:
+            raise ValueError(
+                f"{info.field_name} contains {', '.join(repr(c) for c in found)}; "
+                f"rewrite without colons or dashes "
+                f'("92k stars" not "92k-star", split a colon into two sentences)'
             )
         return v
 

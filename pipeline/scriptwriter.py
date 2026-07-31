@@ -27,10 +27,16 @@ import logging
 import subprocess
 from typing import Any
 
+from pydantic import ValidationError
+
 from config import Settings, resolve_claude_cli
 from pipeline.models import RepoCandidate, VideoScript
 
 log = logging.getLogger(__name__)
+
+# One generation plus two corrections. Past that the model is not going to get
+# there and the run should fail loudly rather than keep spending.
+_MAX_SCRIPT_ATTEMPTS = 3
 
 
 class ScriptGenerationError(RuntimeError):
@@ -42,6 +48,15 @@ You write scripts for short-form vertical videos aimed at working software \
 engineers, IT consultants, and AI practitioners. Your audience is technical: \
 they can read code, they know what an API is, and they resent being talked \
 down to.
+
+But technical is not the same as already familiar. Assume the viewer has never \
+heard of this specific project, does not work in its ecosystem, and does not \
+know its jargon. A backend engineer scrolling past a frontend tool should still \
+understand what it is for. So: expand every acronym and term of art the first \
+time you use it, in the sentence itself rather than as an aside. Never put an \
+unexplained acronym in the hook. Write so that someone outside the niche \
+follows it and someone inside it does not feel patronised. Those are the same \
+script when you lead with the problem instead of the vocabulary.
 
 Rules you never break:
 - No hype words: "game-changer", "revolutionary", "insane", "mind-blowing", \
@@ -115,13 +130,46 @@ characters -- this is validated, and a longer hook fails the run. It must make
     a specific claim or pose a real question -- not "This tool is amazing". No
     trailing period.
 
+    It must be understandable to someone who has never heard of this project or
+    its ecosystem. No unexplained acronyms or terms of art. "92k stars for a
+    rewrite of YAGNI" fails, because a viewer who does not know the acronym is
+    told nothing at all.
+
+    No colons and no hyphens or dashes anywhere in the hook. This is validated
+    and a violation fails the run. Rewrite around them: "92k stars" not
+    "92k-star", "seven words" not "seven-word", and split a colon into two
+    sentences or drop it. Hyphenated compounds almost always have a plain
+    equivalent that reads better on screen.
+
 spoken_script
     The voiceover, UNDER {cfg.max_script_words} WORDS. This is a hard limit: at
     normal speaking pace it becomes roughly 30-45 seconds of audio, and going
     over means the video runs long. Structure it as: what it is -> the specific
     problem it solves -> one concrete detail a developer would care about ->
-    what to do next. Write for the ear: no semicolons, no parentheses, expand
-    symbols ("about 20 percent", not "~20%").
+    what to do next. Write for the ear. No semicolons, no parentheses, and
+    expand symbols ("about 20 percent", not "~20%").
+
+    Open on the PROBLEM, not on the project. The first two sentences must
+    describe a frustration the viewer has actually felt, in plain language,
+    before the project is named. "Your coding agent builds a custom date picker
+    when the browser already has one" earns attention. "Ponytail is a skill
+    that applies a decision ladder" does not, because nobody cares what a thing
+    is until they know why it exists.
+
+    Then answer, in this order and explicitly: what does it change, why would I
+    use it, and who is it for. A viewer should be able to say "I would use this
+    when X" after watching. Naming a feature is not the same as explaining what
+    it solves.
+
+    Do not assume familiarity with the project's ecosystem or vocabulary. If a
+    term like YAGNI, RAG or MCP is load bearing, say what it means in the same
+    breath ("the rule that you should not build what you do not yet need")
+    rather than using it bare.
+
+    No colons and no hyphens or dashes anywhere in the spoken script either.
+    This is validated and a violation fails the run. They are invisible to a
+    listener, and the captions burned onto the video are generated from this
+    text, so a hyphen that helps nobody aloud still clutters the screen.
 
     This is read aloud by a synthetic voice, which flattens whatever prosody
     your punctuation implies. It cannot rescue a limp sentence, so the momentum
@@ -206,16 +254,52 @@ def write_script(repo: RepoCandidate, cfg: Settings) -> tuple[VideoScript, dict[
     cost, which is how you verify research actually happened."""
     # Generated from the model so the prompt contract and parser cannot drift.
     schema = VideoScript.model_json_schema()
-    envelope = _run_claude(_build_prompt(repo, cfg), schema, cfg)
+    prompt = _build_prompt(repo, cfg)
 
-    payload = envelope.get("structured_output")
-    if payload is None:
-        raise ScriptGenerationError(
-            "Claude Code returned no structured_output. This usually means the "
-            "installed CLI predates --json-schema support; check `claude --version`."
-        )
+    # The constraints the model most often trips on -- hook length, and the ban
+    # on colons and dashes -- are pydantic validators, which JSON Schema cannot
+    # express, so the CLI cannot enforce them for us. Handing the failure back
+    # and asking for a fix costs one extra call; failing the run throws away the
+    # whole generation over a hyphen.
+    envelope: dict[str, Any] = {}
+    script: VideoScript | None = None
+    for attempt in range(_MAX_SCRIPT_ATTEMPTS):
+        envelope = _run_claude(prompt, schema, cfg)
 
-    script = VideoScript.model_validate(payload)
+        payload = envelope.get("structured_output")
+        if payload is None:
+            raise ScriptGenerationError(
+                "Claude Code returned no structured_output. This usually means the "
+                "installed CLI predates --json-schema support; check `claude --version`."
+            )
+
+        try:
+            script = VideoScript.model_validate(payload)
+            break
+        except ValidationError as exc:
+            if attempt == _MAX_SCRIPT_ATTEMPTS - 1:
+                raise ScriptGenerationError(
+                    f"Script still invalid after {_MAX_SCRIPT_ATTEMPTS} attempts: {exc}"
+                ) from exc
+            log.warning(
+                "Script failed validation (attempt %d/%d), asking for a fix: %s",
+                attempt + 1, _MAX_SCRIPT_ATTEMPTS,
+                "; ".join(e["msg"] for e in exc.errors()),
+            )
+            prompt = (
+                f"{_build_prompt(repo, cfg)}\n\n"
+                f"## Your previous answer was rejected\n\n"
+                f"{json.dumps(payload, indent=2)}\n\n"
+                f"It failed validation:\n\n"
+                + "\n".join(
+                    f"- {'.'.join(str(p) for p in e['loc'])}: {e['msg']}"
+                    for e in exc.errors()
+                )
+                + "\n\nProduce a corrected version. Fix only what was rejected; "
+                "keep everything else as close to the original as you can."
+            )
+
+    assert script is not None  # loop either breaks with a script or raises
 
     if script.word_count > cfg.max_script_words:
         # Worth surfacing but not worth failing over -- the TTS step reports

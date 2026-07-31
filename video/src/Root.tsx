@@ -3,6 +3,7 @@ import { loadFont as loadMono } from "@remotion/google-fonts/JetBrainsMono";
 import React from "react";
 import { Composition, type CalculateMetadataFunction } from "remotion";
 
+import { Cover, type CoverProps } from "./Cover";
 import { Reel } from "./Reel";
 import { highlightScenes } from "./highlight";
 import { parseVideoSpec } from "./schema";
@@ -91,15 +92,48 @@ const calculateMetadata: CalculateMetadataFunction<VideoSpec> = async ({ props }
   };
 };
 
+/**
+ * Same validation and highlighting as the reel.
+ *
+ * The duration is the opening scene's, not 1. Scenes animate in from their own
+ * frame 0, so a single-frame composition can only ever capture the first frame
+ * of the entrance -- which for the README hero means fully transparent. Keeping
+ * the real duration lets the renderer ask for a frame where the animation has
+ * settled (see COVER_FRAME in pipeline/renderer.py).
+ */
+const calculateCoverMetadata: CalculateMetadataFunction<CoverProps> = async ({ props }) => {
+  const spec = parseVideoSpec(props);
+  const scenes = await highlightScenes(spec.scenes);
+  return {
+    durationInFrames: Math.max(1, scenes[0]?.durationInFrames ?? 1),
+    fps: spec.fps,
+    width: spec.width,
+    height: spec.height,
+    props: { ...spec, scenes, showHook: props.showHook ?? true },
+  };
+};
+
 export const RemotionRoot: React.FC = () => (
-  <Composition
-    id="Reel"
-    component={Reel}
-    durationInFrames={PLACEHOLDER.durationInFrames}
-    fps={PLACEHOLDER.fps}
-    width={PLACEHOLDER.width}
-    height={PLACEHOLDER.height}
-    defaultProps={PLACEHOLDER}
-    calculateMetadata={calculateMetadata}
-  />
+  <>
+    <Composition
+      id="Reel"
+      component={Reel}
+      durationInFrames={PLACEHOLDER.durationInFrames}
+      fps={PLACEHOLDER.fps}
+      width={PLACEHOLDER.width}
+      height={PLACEHOLDER.height}
+      defaultProps={PLACEHOLDER}
+      calculateMetadata={calculateMetadata}
+    />
+    <Composition
+      id="Cover"
+      component={Cover}
+      durationInFrames={1}
+      fps={PLACEHOLDER.fps}
+      width={PLACEHOLDER.width}
+      height={PLACEHOLDER.height}
+      defaultProps={{ ...PLACEHOLDER, showHook: true }}
+      calculateMetadata={calculateCoverMetadata}
+    />
+  </>
 );
