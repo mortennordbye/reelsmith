@@ -105,10 +105,17 @@ Publishing needs `IG_USER_ID` and `IG_ACCESS_TOKEN` in `.env`; see
 Review, and it does **not** need the MP4 hosted anywhere: the container is
 created with `upload_type=resumable` and the file goes up as raw bytes.
 
-The one thing that still wants a public URL is a custom cover image. Without
-`--cover-url` the Reel's thumbnail falls back to `thumb_offset`, which picks the
-same frame `cover.png` is rendered from, minus the hook band. If you host the
-cover somewhere, pass it:
+The cover image is the one thing that does want a public URL, because Meta
+fetches `cover_url` from its own servers when the container is created and
+cannot read a local path. There are three ways that resolves, in the order the
+publisher tries them:
+
+1. **`--cover-url`**, if you pass one, always wins.
+2. **The gateway**, if `GATEWAY_URL` is set. `cover.png` is uploaded and the
+   returned URL is used. This is best effort: a gateway that is down logs and
+   moves on.
+3. **`thumb_offset`**, the fallback, which picks the same frame `cover.png` is
+   rendered from, minus the hook band.
 
 ```bash
 python main.py --publish 2026-07-30/astral-sh-uv \
@@ -178,6 +185,47 @@ cd video && npm run studio
 Then load `build/<date>-<slug>/video.json` as props. Hot reload, ~1s feedback.
 
 ---
+
+## How the two halves fit together
+
+There are two machines, and the split is deliberate rather than incidental.
+
+```
+ Mac (laptop)                             Homelab cluster
+ ────────────                             ───────────────
+ scrape ─► script ─► voice ─► captions    gateway (one container)
+        └► screenshot ─► render             • Meta webhook receiver (DMs)
+              │                             • comment poller (keyword watch)
+              │  1. upload cover.png ─────►  • cover host, public URL
+              │  2. publish the Reel  ──►  Instagram
+              │  3. register the post ────►  • starts watching its comments
+              │                             • SQLite state on a PVC
+              └─ the voice never leaves ─┘
+```
+
+**What lives where, and why.**
+
+| On the Mac | Why it cannot simply move |
+|---|---|
+| The voice | The reference recording is biometric. The cluster deliberately holds nothing that could reproduce it. |
+| Script generation | Runs on a Claude Code subscription, so it costs nothing per run. An API key would. |
+| Rendering | Remotion plus a headless browser, and the artifacts are already here. |
+
+The cluster holds the half that has to be awake when the laptop is not: Meta
+delivers a DM webhook whenever someone replies, and comments have to be polled
+every minute for seven days after a post.
+
+**The dependency runs one way.** The pipeline works with the gateway down: the
+cover falls back to a video frame, post registration logs and moves on, and any
+comment missed meanwhile is still inside Meta's seven day reply window when the
+gateway returns. A dead cluster can never block a publish. That is why
+`pipeline/gateway.py` returns rather than raises, the same rule `render_covers`
+follows and the opposite of `publish_reel`.
+
+**What the viewer sees.** The caption says "comment SEND and I will send you the
+link". The gateway's poller spots the comment, sends the one private reply Meta
+allows per comment, asks the person to follow, and sends the link once they
+have. Measured end to end on a real post: 31 seconds from comment to link.
 
 ## Architecture
 
@@ -341,8 +389,13 @@ tested here; `--stop-after` is how you inspect those.
 
 ## Not built yet
 
-The gateway is written and tested but not yet deployed, so cover hosting is
-still on the `thumb_offset` fallback and the publisher does not call it. That
-needs the Meta dashboard setup, then the cluster deployment. A second render
-backend. Anything that reads the account's own insights and feeds performance
-back into repo selection.
+An admin UI, so the whole thing can be driven and approved from a phone rather
+than a terminal, and the job queue plus Mac-side agent that would need. Anything
+that reads the account's own insights and feeds performance back into repo
+selection. A second render backend.
+
+The largest open question is how much of the pipeline could move off the laptop
+entirely. Research and publishing would move easily; script generation would
+start costing money, because it runs on a Claude Code subscription today rather
+than an API key; and the voice cannot move at all, because the reference
+recording is biometric and stays off the cluster on purpose.

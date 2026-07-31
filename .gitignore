@@ -22,7 +22,6 @@
 # backup:start
 PROFILE.md
 PLAN.md
-INSTAGRAM.md
 .env
 data/star_history.json
 data/used_repos.json

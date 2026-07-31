@@ -49,6 +49,53 @@ they are the reasons people give up on this:
 If you are also running the DM gateway, add its scopes in the same trip rather
 than making two: see `gateway/README.md`.
 
+## Webhooks, if you run the gateway
+
+Same app, same visit. In **Instagram → API setup with Instagram business
+login → Configure webhooks**, set the callback to your gateway's `/webhook`,
+set a verify token that matches `GATEWAY_VERIFY_TOKEN`, and subscribe the
+**`messages`** field. Saving it makes Meta call the URL immediately, so the
+service has to be reachable first.
+
+Then flip the app to **Live**. Webhooks are delivered only to Live apps, and
+Live does not require App Review.
+
+`comments` and `live_comments` can be subscribed too, but they need Advanced
+Access to be delivered in most cases, which is exactly why the gateway polls
+comments instead. Leaving them subscribed is harmless: the gateway answers 200
+and ignores anything that is not a message.
+
+## Four things that will cost you an hour each
+
+Learned the hard way, and none of them are obvious from the dashboard.
+
+1. **The Instagram app secret is not the app secret.** On this login path the
+   webhook signature is HMAC'd with the *Instagram* app secret shown on the API
+   setup panel, not the one under App settings → Basic. Using the wrong one
+   fails every delivery with a 403 that looks exactly like a broken service.
+2. **Live is gated on a privacy policy URL.** Meta refuses to leave Development
+   without one, and refuses webhooks while in Development, so this blocks
+   everything. App settings → Basic.
+3. **Generate the token before the subscription toggle.** The per-account
+   webhook toggle stays disabled until a token exists, and the tooltip only
+   says so if you hover it.
+4. **The tester invite has two halves.** Adding the Instagram Tester role in
+   the app leaves it `Pending`. It has to be accepted from the Instagram side
+   under Apps and websites → Tester invites, signed in as *that* account.
+
+## Verify it by API, not by the green ticks
+
+The dashboard will show a subscription as configured that is not actually
+attached to the account. One call settles it:
+
+```bash
+curl -s "https://graph.instagram.com/v23.0/me/subscribed_apps?access_token=$TOKEN"
+# {"data":[{"id":"...","subscribed_fields":["messages"]}]}
+```
+
+An empty `data` array means no webhook will ever arrive, which is
+indistinguishable from nobody messaging you.
+
 ## Two operational facts
 
 - **Tokens last 60 days and an expired one cannot be refreshed.** Recovering

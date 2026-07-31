@@ -36,9 +36,10 @@ Ranked by value. Check items off as they land.
   `upload_type=resumable` takes the MP4 as raw bytes, so there is no object
   storage. Both claims were wrong in this file and in the account notes, and
   both are corrected now. See `docs/instagram-api-setup.md`.
-  Left over: `cover_url` is still fetched by Meta, so a designed cover needs
-  hosting. Without `--cover-url` the thumbnail falls back to `thumb_offset` at
-  the same frame `cover.png` uses, minus the hook band.
+  Cover hosting, the one thing genuinely left over, is now handled by the
+  gateway: the publisher uploads `cover.png` and passes the returned URL. It is
+  best effort, so without a gateway the thumbnail still falls back to
+  `thumb_offset` at the same frame `cover.png` uses, minus the hook band.
 
 - [x] **Schedule the full run.** `launchd/it.nordbye.reelsmith.daily.plist`,
   07:00, an hour behind the snapshot job so the ranking has today's stars.

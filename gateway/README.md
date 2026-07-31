@@ -17,6 +17,12 @@ comment "SEND" on the Reel
 It runs in the homelab cluster. The pipeline, the voice and the rendering stay
 on the Mac, and nothing here could reproduce the voice.
 
+**Deployed since 2026-07-31.** Manifests live in the Homelab repo under
+`k8s/talos/apps/reelsmith/`, promoted by Kargo from the `0.0.<run>` tags this
+repo's `build-gateway.yml` publishes. One replica, `strategy: Recreate`, because
+the state is a single SQLite file and the comment poller is a singleton: two
+pods would race for the one private reply Meta allows per comment.
+
 ## Why it polls comments but receives DMs
 
 Real-time `comments` webhooks need Advanced Access, which means App Review plus
@@ -55,8 +61,9 @@ uvicorn gateway.app:app --reload
 Or `docker compose -f gateway/docker-compose.yml up --build`, which is the same
 thing in the shape the cluster will run it.
 
-Webhooks need a public URL. For iterating, a quick tunnel is enough and needs no
-account:
+Webhooks need a public URL. The deployed instance already has one, so a tunnel
+is only for iterating on the code locally against a second Meta app. For that, a
+quick tunnel is enough and needs no account:
 
 ```bash
 brew install cloudflared
