@@ -3,8 +3,104 @@
 Written 2026-07-31. The repo grows from a render pipeline into a system with
 three parts: automated posting (built), a self-hosted comment-to-DM gateway
 (new), and a deployment of that gateway on the homelab cluster (new). The repo
-gets a private GitHub remote named **reelsmith** and the container images
+has a private GitHub remote named **reelsmith** and the container images
 follow (`ghcr.io/mortennordbye/reelsmith-gateway`).
+
+This document is the contract for the sessions that build it. Phase 0 is a
+migration with no code in it; do it first and completely, because half the
+facts in it were verified against the live machine and will go stale.
+
+## State as of 2026-07-31
+
+Done this session, so do not redo it:
+
+- Last session's automated-posting work is committed (`19949a6`).
+- `mortennordbye/reelsmith` exists on GitHub, **private** (it was briefly
+  created public and flipped before anything was pushed), and `main` is
+  pushed from the old working tree.
+- Repo and image naming decided: repo `reelsmith`, gateway image
+  `ghcr.io/mortennordbye/reelsmith-gateway`.
+- Cover hosting decided: the gateway serves covers (homelab cluster).
+- `HANDOVER.md` deleted; its open items are resolved.
+
+Not done, and known true on this machine as of today:
+
+- **The working tree of record is still `~/Documents/local-git/tech-ig`.**
+  The clone at `~/Documents/github/reelsmith` was made before the first push:
+  it has zero commits and its `origin/main` shows as gone. A fetch fixes it.
+- **No pipeline launchd jobs are installed.** `launchctl list` shows only an
+  unrelated `com.nordbye.jarvis-bridge`. The snapshot job that INSTAGRAM.md
+  assumes is running is not; nothing to uninstall, but also no token refresh
+  and no star history accumulating until it is installed.
+- The one-time Meta dashboard setup (INSTAGRAM.md §3 plus B4 below) is not
+  done. `.env` has no `IG_USER_ID`.
+
+## Phase 0: migrate to ~/Documents/github/reelsmith
+
+Everything tracked arrives by git; the migration is the gitignored residue
+plus the jobs. Old tree stays untouched until the checklist at the end
+passes.
+
+1. **Bring the clone up to date.**
+
+   ```bash
+   cd ~/Documents/github/reelsmith
+   git fetch origin
+   git checkout -B main origin/main
+   ```
+
+2. **Copy the private assets across.** All gitignored, so the pull brings
+   none of them:
+
+   ```bash
+   OLD=~/Documents/local-git/tech-ig
+   rsync -a "$OLD/.env" .
+   rsync -a "$OLD/data/" data/                    # token store, star history, cooldowns
+   rsync -a "$OLD/models/" models/                # Kokoro weights, or re-download
+   rsync -a "$OLD/tools/chatterbox/ref/" tools/chatterbox/ref/   # THE VOICE. Exists nowhere else.
+   rsync -a "$OLD/build/" build/                  # optional, past run artifacts
+   ```
+
+   The voice recording is the one irreplaceable file on this list. Copy it,
+   do not move it, and do not let any step of this end up tracked by git
+   (`.gitignore` already excludes `tools/chatterbox/ref/*` deliberately;
+   the recordings are biometric).
+
+3. **Recreate the environments, do not copy them.** Venvs bake absolute
+   paths and are not relocatable:
+
+   ```bash
+   uv venv --python 3.13 && uv pip install -r requirements.txt
+   uv pip install -e ".[dev]"
+   .venv/bin/playwright install chromium
+   cd video && npm install && cd ..            # TypeScript already pinned 5.x
+   # Chatterbox venv: follow tools/chatterbox/README.md (its own venv, ~3 GB)
+   ```
+
+4. **Rename the launchd labels while nothing is installed.** The plists in
+   `launchd/` are templates installed via `sed "s|__REPO__|$PWD|g"`, so they
+   are path-agnostic already. Since no job is installed yet, this is the free
+   moment to rename `it.nordbye.tech-ig.*` to `it.nordbye.reelsmith.*`
+   (filenames, `Label` keys, and the install commands in their headers), then
+   install both from the new checkout per those headers. The snapshot job is
+   the load-bearing one (token refresh rides it); install it even if the
+   daily render job waits.
+
+5. **Verify before retiring the old tree.** From the new checkout:
+   - `pytest` (expect 118 passed) and `ruff check` clean
+   - `python main.py --preview-voice` proves the Chatterbox venv and the
+     copied reference recording work from the new path
+   - `python main.py --candidates` proves `.env` and the GitHub token came
+     across
+   - `launchctl list | grep reelsmith` shows the snapshot job
+
+   Then rename `~/Documents/local-git/tech-ig` to `tech-ig.retired` (keep it
+   for a while, do not delete). Two side facts for whoever does this: Claude
+   Code's per-project memory and settings are keyed to the directory path,
+   so the new location starts fresh; and the `.gitignore` was reviewed this
+   session and needs no changes for the migration. When Phase 1 starts, add
+   the gateway's local dev database (e.g. `gateway/dev.sqlite3`) to it, and
+   nothing else.
 
 Every Meta API fact below was verified against Meta's developer docs on
 2026-07-31 (Graph API v25.0). Where a claim comes from community reports
@@ -236,10 +332,10 @@ Designed in from day one, activated later:
 
 ## Phases
 
-**Phase 0, plumbing (half an hour, mostly you)**
-- [ ] Create private repo `mortennordbye/reelsmith`, add remote, push.
+**Phase 0, migration and plumbing (no code)**
+- [ ] The migration steps at the top of this document, in order.
 - [ ] Meta dashboard: publishing setup (INSTAGRAM.md §3) + messaging scopes
-      + webhook config + Live (B4). The only part I cannot do.
+      + webhook config + Live (B4). Human-only, the AI cannot click this.
 
 **Phase 1, gateway core (code, testable offline)**
 - [ ] `gateway/` FastAPI app: webhook verify + signature check, DM state
