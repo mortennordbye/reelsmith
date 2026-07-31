@@ -279,6 +279,27 @@ async def test_old_media_is_pruned_on_upload(client, cfg):
     assert not old.exists(), "a month-old video should not survive an upload"
 
 
+async def test_pruning_only_ever_touches_media(client, cfg):
+    """The guard that matters. If covers_dir were ever pointed at /state, an
+    age sweep would delete gateway.sqlite3 and every conversation in it."""
+    import os
+    import time
+
+    http, _ = client
+    directory = Path(cfg.covers_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    database = directory / "gateway.sqlite3"
+    database.write_bytes(b"pretend database")
+    ancient = time.time() - 365 * 86_400
+    os.utime(database, (ancient, ancient))
+
+    await http.post(
+        "/api/media", files={"file": ("out.mp4", MP4, "video/mp4")}, headers=AUTH
+    )
+
+    assert database.exists(), "a year-old database must survive a media prune"
+
+
 async def test_an_empty_upload_is_refused(client):
     http, _ = client
     response = await http.post(

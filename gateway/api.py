@@ -165,6 +165,12 @@ def _prune_media(directory: Path) -> int:
     cutoff = db.now() - timedelta(days=_MEDIA_TTL_DAYS)
     removed = 0
     for path in directory.glob("*"):
+        # Extension check first, and it is not cosmetic. If this directory were
+        # ever pointed at /state itself, an age sweep would delete
+        # gateway.sqlite3 and every conversation in it. Only files this service
+        # put here are eligible.
+        if path.suffix.lower() not in _MEDIA_TYPES:
+            continue
         try:
             if path.is_file() and datetime.fromtimestamp(path.stat().st_mtime, UTC) < cutoff:
                 path.unlink()
