@@ -174,3 +174,39 @@ def test_the_cta_obeys_the_repo_text_rules(cfg):
 def test_the_keyword_is_configurable_and_shown_uppercase(cfg):
     cfg = cfg.model_copy(update={"gateway_keyword": "link"})
     assert "Comment LINK and I will send you the link." in gateway.add_caption_cta("B.", cfg)
+
+
+def test_a_per_post_keyword_overrides_the_default(cfg):
+    out = gateway.add_caption_cta("B.", cfg, keyword="GROK")
+    assert "Comment GROK and I will send you the link." in out
+
+
+# --- Per-post keywords ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("repo", "expected"),
+    [
+        ("xai-org/grok-build", "GROK"),       # first segment, not GROKBUILD
+        ("DietrichGebert/ponytail", "PONYTAIL"),
+        ("baidu/Unlimited-OCR", "UNLIMITED"),
+        ("affaan-m/ECC", "ECC"),
+        ("img2threejs/img2threejs", "IMG2THREEJS"),
+        ("owner/some_tool", "SOME"),          # underscores split too
+    ],
+)
+def test_the_keyword_comes_from_the_repo_name(cfg, repo, expected):
+    assert gateway.keyword_for(repo, cfg) == expected
+
+
+def test_a_name_too_short_to_type_falls_back_to_the_default(cfg):
+    # Two letters is not a word anyone comments deliberately, and it collides
+    # with ordinary text.
+    assert gateway.keyword_for("some/go", cfg) == "SEND"
+
+
+def test_the_keyword_is_always_a_single_typable_word(cfg):
+    for repo in ("a-b/c.d-e_f", "owner/UPPER-lower", "owner/with.dots"):
+        word = gateway.keyword_for(repo, cfg)
+        assert word.isalnum(), f"{word} would not survive the API's one-word rule"
+        assert word == word.upper()

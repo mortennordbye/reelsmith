@@ -37,7 +37,32 @@ def _configured(cfg: Settings) -> bool:
     return bool(cfg.gateway_url and cfg.gateway_token)
 
 
-def add_caption_cta(caption: str, cfg: Settings) -> str:
+def keyword_for(repo_name: str, cfg: Settings) -> str:
+    """The word this post asks people to comment, derived from the repo.
+
+    Not required for correctness: the gateway maps a comment to its post and the
+    post to its link, so one shared keyword would already return the right URL
+    per Reel. It is worth doing anyway because "Comment GROK" reads as specific
+    to this video where "Comment SEND" reads as a template, and this audience
+    can tell the difference.
+
+    The first segment of the repo name, so `grok-build` becomes GROK rather than
+    GROKBUILD. Short enough to type from memory, which is the whole point of
+    asking for it.
+    """
+    bare = repo_name.rsplit("/", 1)[-1]
+    first = "".join(c for c in bare.split("-")[0].split("_")[0] if c.isalnum())
+    whole = "".join(c for c in bare if c.isalnum())
+
+    for candidate in (first, whole):
+        # Two letters is not a word anyone will type deliberately, and it
+        # collides with ordinary comment text.
+        if len(candidate) >= 3:
+            return candidate.upper()[:14]
+    return cfg.gateway_keyword.upper()
+
+
+def add_caption_cta(caption: str, cfg: Settings, *, keyword: str | None = None) -> str:
     """Insert the "comment the keyword" line, above the hashtags.
 
     Only when the gateway is configured. Telling people to comment a word that
@@ -54,8 +79,8 @@ def add_caption_cta(caption: str, cfg: Settings) -> str:
     if not _configured(cfg):
         return caption
 
-    keyword = cfg.gateway_keyword.strip().upper()
-    cta = f"Comment {keyword} and I will send you the link."
+    word = (keyword or cfg.gateway_keyword).strip().upper()
+    cta = f"Comment {word} and I will send you the link."
     if cta in caption:
         return caption
 

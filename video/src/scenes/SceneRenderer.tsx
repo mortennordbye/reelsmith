@@ -264,7 +264,12 @@ const ScreenshotScene: React.FC<{ scene: Scene; repo: RepoMeta }> = ({ scene, re
   if (!scene.imageSrc) return null;
   return (
     <Stage>
-      <BrowserFrame src={scene.imageSrc} url={`github.com/${repo.fullName}`} />
+      {/* The repo name, not the full URL. The link is what the comment-to-DM
+          mechanic trades for a follow, so the video should not hand it over in
+          the address bar. It names the project plainly instead, which is the
+          honest version: anyone determined can search it, and the offer in the
+          caption is convenience rather than secrecy. */}
+      <BrowserFrame src={scene.imageSrc} url={repo.name} />
     </Stage>
   );
 };

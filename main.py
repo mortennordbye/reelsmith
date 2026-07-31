@@ -376,7 +376,11 @@ def run(
     # The caption is written either way: --post needs it to send, and a run you
     # come back to tomorrow needs it because the clipboard is long gone.
     if script.caption_text:
-        caption_out = gateway.add_caption_cta(script.caption_text.strip(), cfg)
+        # The same derivation runs again at publish time, so the word burned
+        # into the caption and the word the poller watches for cannot drift.
+        caption_out = gateway.add_caption_cta(
+            script.caption_text.strip(), cfg, keyword=gateway.keyword_for(repo.full_name, cfg)
+        )
         (run_dir / "caption.txt").write_text(caption_out.rstrip() + "\n")
 
     if post:
@@ -485,11 +489,9 @@ def _publish_run(cfg: Settings, run_dir: Path, *, cover_url: str | None = None) 
         # earlier. A failure here costs the keyword mechanic on one post and is
         # recoverable by hand for the seven days Meta allows a reply to a
         # comment.
-        if gateway.register_post(result.media_id, repo.url, cfg):
-            console.print(
-                f"[dim]Gateway is watching for comments matching "
-                f"'{cfg.gateway_keyword}'.[/]"
-            )
+        keyword = gateway.keyword_for(repo.full_name, cfg)
+        if gateway.register_post(result.media_id, repo.url, cfg, keyword=keyword):
+            console.print(f"[dim]Gateway is watching for comments matching '{keyword}'.[/]")
         scraper.mark_featured(cfg, repo.full_name)
         console.print(
             f"[dim]{repo.full_name} is on cooldown for {cfg.repo_cooldown_days} days.[/]"
