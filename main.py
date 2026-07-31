@@ -1,4 +1,4 @@
-"""tech-ig -- automated Instagram Reels for trending AI/dev tooling.
+"""reelsmith -- automated Instagram Reels for trending AI/dev tooling.
 
     python main.py                      full run
     python main.py --stop-after script  stop early to inspect an artifact
@@ -48,7 +48,7 @@ from pipeline.scriptwriter import write_script
 
 app = typer.Typer(add_completion=False, help=__doc__)
 console = Console()
-log = logging.getLogger("tech-ig")
+log = logging.getLogger("reelsmith")
 
 
 class Stage(StrEnum):

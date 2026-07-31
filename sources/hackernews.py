@@ -26,7 +26,7 @@ class HackerNewsClient:
     def __init__(self, timeout: float = 10.0):
         self._client = httpx.Client(
             timeout=timeout,
-            headers={"User-Agent": "tech-ig-pipeline"},
+            headers={"User-Agent": "reelsmith-pipeline"},
         )
 
     def __enter__(self) -> HackerNewsClient:

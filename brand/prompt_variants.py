@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import os
 from pathlib import Path
 
 from playwright.async_api import async_playwright
@@ -9,6 +10,13 @@ from playwright.async_api import async_playwright
 HERE = Path(__file__).parent
 OUT = HERE / "avatars"
 OUT.mkdir(exist_ok=True)
+
+# The contact sheet mocks up a feed row, because an avatar can only really be
+# judged at the size it will be seen next to a handle and a tagline. Both are
+# account identity, which lives outside this repo, so they come from the
+# environment and fall back to placeholders.
+HANDLE = os.environ.get("BRAND_HANDLE", "yourhandle")
+TAGLINE = os.environ.get("BRAND_TAGLINE", "What the account posts, in one line")
 
 BG = "#0D1117"
 DEEP = "#010409"
@@ -81,8 +89,8 @@ async def main() -> None:
                 <div class="label">{n}{tag}</div>
                 <img class="big" src="{src}">
                 <div class="feed"><img class="sm" src="{src}">
-                  <div><div class="fname">thenightlybuild</div>
-                  <div class="fsub">Trending dev + AI tools, daily</div></div>
+                  <div><div class="fname">{HANDLE}</div>
+                  <div class="fsub">{TAGLINE}</div></div>
                 </div></div>"""
         sheet = f"""<html><head><style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');

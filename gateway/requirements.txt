@@ -1,0 +1,14 @@
+# What the gateway image installs, and nothing else.
+#
+# Deliberately not the project's requirements.txt. That one carries playwright,
+# faster-whisper and the Kokoro runtime, which is several hundred megabytes of
+# things a webhook receiver will never call. The gateway imports nothing from
+# `pipeline/` or `config.py` precisely so this list can stay short.
+httpx>=0.28
+pydantic>=2.9
+pydantic-settings>=2.6
+fastapi>=0.115
+uvicorn[standard]>=0.32
+aiosqlite>=0.20
+prometheus-client>=0.21
+python-multipart>=0.0.9

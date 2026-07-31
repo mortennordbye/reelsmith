@@ -29,27 +29,30 @@
   token that has been refreshed inside the last 60 days. The snapshot job does
   that refresh, so install that one too or this eventually stops working.
 
-  Install (replace __REPO__ with the absolute path to this checkout):
+  Install (__REPO__ becomes this checkout, __HOME__ your home directory; the
+  second one is there because `claude` installs under ~/.local/bin and launchd
+  will not expand a ~ inside a PATH string):
 
-    sed "s|__REPO__|$PWD|g" launchd/it.nordbye.tech-ig.daily.plist \
-      > ~/Library/LaunchAgents/it.nordbye.tech-ig.daily.plist
-    launchctl bootstrap gui/$UID ~/Library/LaunchAgents/it.nordbye.tech-ig.daily.plist
+    sed -e "s|__REPO__|$PWD|g" -e "s|__HOME__|$HOME|g" \
+      launchd/it.nordbye.reelsmith.daily.plist \
+      > ~/Library/LaunchAgents/it.nordbye.reelsmith.daily.plist
+    launchctl bootstrap gui/$UID ~/Library/LaunchAgents/it.nordbye.reelsmith.daily.plist
 
   Run it once by hand to confirm it works:
 
-    launchctl kickstart -p gui/$UID/it.nordbye.tech-ig.daily
+    launchctl kickstart -p gui/$UID/it.nordbye.reelsmith.daily
     tail -f __REPO__/data/daily.log
 
   Uninstall:
 
-    launchctl bootout gui/$UID/it.nordbye.tech-ig.daily
+    launchctl bootout gui/$UID/it.nordbye.reelsmith.daily
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>it.nordbye.tech-ig.daily</string>
+  <string>it.nordbye.reelsmith.daily</string>
 
   <key>ProgramArguments</key>
   <array>
@@ -82,13 +85,15 @@
   <string>__REPO__/data/daily.log</string>
 
   <!-- launchd starts agents with a near-empty PATH, and this run genuinely
-       needs more than Python: `claude` writes the script, npx/node render, and
-       ffprobe reads the audio duration. Homebrew paths first for Apple silicon.
-       If the script stage fails with "claude not found", this is why. -->
+       needs more than Python: `claude` writes the script and npx/node render.
+       Homebrew paths for Apple silicon, and __HOME__/.local/bin because that
+       is where the Claude Code installer puts the binary. That last entry was
+       missing once and the whole job died in preflight with "claude not found"
+       before it reached a single stage, so it is not decoration. -->
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>__REPO__/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>__REPO__/.venv/bin:__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
 
   <!-- A render that hangs should not still be holding the machine tomorrow. -->

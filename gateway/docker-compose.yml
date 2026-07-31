@@ -1,0 +1,26 @@
+# Local development, in roughly the shape the cluster will run it.
+#
+# The image itself is Phase 2 and does not exist yet, so this builds from the
+# repo root with an inline Dockerfile stage rather than pretending otherwise.
+# The state file is a bind mount for one reason: `rm` on a container should not
+# be how a conversation history disappears.
+
+services:
+  gateway:
+    build:
+      context: ..
+      dockerfile: gateway/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      GATEWAY_APP_SECRET: ${GATEWAY_APP_SECRET:?set this to the Meta app secret}
+      GATEWAY_VERIFY_TOKEN: ${GATEWAY_VERIFY_TOKEN:?any random string, must match the dashboard}
+      GATEWAY_API_TOKEN: ${GATEWAY_API_TOKEN:?what the Mac presents on /api/*}
+      GATEWAY_DB_PATH: /state/gateway.sqlite3
+      GATEWAY_COVERS_DIR: /state/covers
+      # Meta fetches the cover from here, so in local dev this has to be the
+      # tunnel URL rather than localhost.
+      GATEWAY_PUBLIC_BASE_URL: ${GATEWAY_PUBLIC_BASE_URL:-http://localhost:8000}
+    volumes:
+      - ./state:/state
+    restart: unless-stopped

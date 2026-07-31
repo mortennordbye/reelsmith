@@ -12,7 +12,7 @@ Ranked by value. Check items off as they land.
   skip enrichment/scoring) and run it daily via launchd. Result: from day two
   onward every ranking uses measured deltas.
   Landed as `scraper.snapshot_stars` + `main.py --snapshot`, with
-  `launchd/it.nordbye.tech-ig.snapshot.plist` (06:00 daily, `RunAtLoad` so a
+  `launchd/it.nordbye.reelsmith.snapshot.plist` (06:00 daily, `RunAtLoad` so a
   sleeping laptop catches up). Install commands are in the plist header.
 
 - [x] **Test suite for the pure logic.**
@@ -34,13 +34,13 @@ Ranked by value. Check items off as they land.
   Review only gates acting on accounts you do not own, so an app in development
   mode with your own account as a tester publishes fine; and
   `upload_type=resumable` takes the MP4 as raw bytes, so there is no object
-  storage. Both claims were wrong in this file and in `INSTAGRAM.md`, and both
-  are corrected there now.
+  storage. Both claims were wrong in this file and in the account notes, and
+  both are corrected now. See `docs/instagram-api-setup.md`.
   Left over: `cover_url` is still fetched by Meta, so a designed cover needs
   hosting. Without `--cover-url` the thumbnail falls back to `thumb_offset` at
   the same frame `cover.png` uses, minus the hook band.
 
-- [x] **Schedule the full run.** `launchd/it.nordbye.tech-ig.daily.plist`,
+- [x] **Schedule the full run.** `launchd/it.nordbye.reelsmith.daily.plist`,
   07:00, an hour behind the snapshot job so the ranking has today's stars.
   Ships *without* `--post` on purpose: the reviewed path renders overnight and
   waits for a `--publish`. Adding one line makes it unattended.

@@ -13,25 +13,25 @@
 
   Install (replace __REPO__ with the absolute path to this checkout):
 
-    sed "s|__REPO__|$PWD|g" launchd/it.nordbye.tech-ig.snapshot.plist \
-      > ~/Library/LaunchAgents/it.nordbye.tech-ig.snapshot.plist
-    launchctl bootstrap gui/$UID ~/Library/LaunchAgents/it.nordbye.tech-ig.snapshot.plist
+    sed "s|__REPO__|$PWD|g" launchd/it.nordbye.reelsmith.snapshot.plist \
+      > ~/Library/LaunchAgents/it.nordbye.reelsmith.snapshot.plist
+    launchctl bootstrap gui/$UID ~/Library/LaunchAgents/it.nordbye.reelsmith.snapshot.plist
 
   Run it once by hand to confirm it works:
 
-    launchctl kickstart -p gui/$UID/it.nordbye.tech-ig.snapshot
+    launchctl kickstart -p gui/$UID/it.nordbye.reelsmith.snapshot
     tail -f __REPO__/data/snapshot.log
 
   Uninstall:
 
-    launchctl bootout gui/$UID/it.nordbye.tech-ig.snapshot
+    launchctl bootout gui/$UID/it.nordbye.reelsmith.snapshot
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>it.nordbye.tech-ig.snapshot</string>
+  <string>it.nordbye.reelsmith.snapshot</string>
 
   <key>ProgramArguments</key>
   <array>

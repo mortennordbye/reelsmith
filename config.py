@@ -32,8 +32,9 @@ class Settings(BaseSettings):
 
     # --- Instagram publishing ----------------------------------------------
     # Optional: everything except `--post` and `--publish` runs without these.
-    # Setup is in INSTAGRAM.md; the short version is a Meta app in development
-    # mode with your own account added as a tester, which needs no App Review.
+    # Setup is docs/instagram-api-setup.md; the short version is a Meta app in
+    # development mode with your own account added as a tester, which needs no
+    # App Review.
     ig_user_id: str = ""
     # The seed token only. The live one lives in data/ig_token.json, because a
     # refreshed token has to be written back somewhere and rewriting .env from
@@ -260,7 +261,7 @@ def require_instagram(settings: Settings) -> None:
     if missing:
         raise ConfigError(
             f"Instagram publishing is not configured ({', '.join(missing)} missing).\n"
-            "Setup is section 3 of INSTAGRAM.md: a Meta app in development mode, your "
+            "Setup is docs/instagram-api-setup.md: a Meta app in development mode, your "
             "own account added as an Instagram tester, then a long-lived token.\n"
             "No App Review is needed to publish to an account that holds a role on "
             "your own app."

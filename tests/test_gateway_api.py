@@ -1,0 +1,225 @@
+"""The routes the Mac calls, and the two the cluster calls.
+
+The cover route is the one with teeth: it is unauthenticated by necessity,
+because Meta fetches it from its own servers, so the filename it serves has to
+be impossible to steer.
+"""
+
+from __future__ import annotations
+
+import httpx
+import pytest
+
+from gateway import api, db
+from gateway.app import create_app
+from tests.gateway_harness import ACCOUNT, API_TOKEN, FakeMeta, settings
+
+AUTH = {"authorization": f"Bearer {API_TOKEN}"}
+LINK = "https://github.com/DietrichGebert/ponytail"
+PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+
+
+@pytest.fixture
+def cfg(tmp_path):
+    return settings(tmp_path)
+
+
+@pytest.fixture
+def meta():
+    return FakeMeta()
+
+
+@pytest.fixture
+async def client(cfg, meta):
+    async with meta.client() as fake_meta:
+        app = create_app(cfg, http=fake_meta, background=False)
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://gateway"
+            ) as http,
+        ):
+            yield http, app
+
+
+# --- Liveness and metrics ---------------------------------------------------
+
+
+async def test_healthz_needs_no_auth(client):
+    http, _ = client
+    assert (await http.get("/healthz")).text == "ok"
+
+
+async def test_metrics_serves_prometheus_text(client):
+    http, _ = client
+    response = await http.get("/metrics")
+
+    assert response.status_code == 200
+    assert "reelsmith_links_sent_total" in response.text
+
+
+# --- Auth -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [{}, {"authorization": "Bearer wrong"}, {"authorization": API_TOKEN}],
+)
+async def test_the_pipeline_routes_refuse_a_bad_token(client, headers):
+    http, _ = client
+    response = await http.post(
+        "/api/posts",
+        json={"media_id": "m", "ig_user_id": ACCOUNT, "link": LINK},
+        headers=headers,
+    )
+
+    assert response.status_code == 401
+
+
+# --- Post registration ------------------------------------------------------
+
+
+async def test_registering_a_post_starts_the_poller_watching_it(client):
+    http, app = client
+
+    response = await http.post(
+        "/api/posts",
+        json={"media_id": "media-1", "ig_user_id": ACCOUNT, "link": LINK, "keyword": "SEND"},
+        headers=AUTH,
+    )
+
+    assert response.status_code == 200
+    row = await db.get_post(app.state.db, "media-1")
+    assert row["link"] == LINK
+    assert row["keyword"] == "SEND"
+
+
+async def test_re_registering_fixes_a_wrong_link(client):
+    http, app = client
+    payload = {"media_id": "media-1", "ig_user_id": ACCOUNT, "link": "https://wrong.example"}
+    await http.post("/api/posts", json=payload, headers=AUTH)
+
+    await http.post("/api/posts", json={**payload, "link": LINK}, headers=AUTH)
+
+    row = await db.get_post(app.state.db, "media-1")
+    assert row["link"] == LINK
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"link": "github.com/no/scheme"},
+        {"keyword": "two words"},
+        {"keyword": ""},
+        {"media_id": ""},
+    ],
+)
+async def test_a_malformed_registration_is_refused_with_the_field_named(client, bad):
+    http, _ = client
+    payload = {"media_id": "m", "ig_user_id": ACCOUNT, "link": LINK, **bad}
+
+    response = await http.post("/api/posts", json=payload, headers=AUTH)
+
+    assert response.status_code == 422
+
+
+# --- Accounts ---------------------------------------------------------------
+
+
+async def test_registering_an_account_subscribes_it_to_messages(client, meta):
+    """Without the subscription the account produces no webhooks at all.
+
+    That failure looks exactly like "nobody is messaging us", so it happens on
+    registration rather than being left to a checklist.
+    """
+    http, app = client
+
+    response = await http.post(
+        "/api/accounts",
+        json={"ig_user_id": ACCOUNT, "access_token": "tok", "expires_in": 5_184_000},
+        headers=AUTH,
+    )
+
+    assert response.status_code == 200
+    assert any("subscribed_apps" in call for call in meta.calls)
+    row = await db.get_account(app.state.db, ACCOUNT)
+    assert row["token_expires_at"] is not None
+
+
+async def test_re_authorising_does_not_un_pause_an_account(client):
+    http, app = client
+    await http.post(
+        "/api/accounts",
+        json={"ig_user_id": ACCOUNT, "access_token": "tok", "subscribe": False},
+        headers=AUTH,
+    )
+    await db.set_account_flags(app.state.db, ACCOUNT, active=False, dm_enabled=False)
+
+    await http.post(
+        "/api/accounts",
+        json={"ig_user_id": ACCOUNT, "access_token": "fresher", "subscribe": False},
+        headers=AUTH,
+    )
+
+    row = await db.get_account(app.state.db, ACCOUNT)
+    assert row["access_token"] == "fresher"
+    assert row["active"] == 0
+    assert row["dm_enabled"] == 0
+
+
+# --- Covers -----------------------------------------------------------------
+
+
+async def test_a_cover_round_trips_from_upload_to_the_url_meta_fetches(client, cfg):
+    http, _ = client
+
+    upload = await http.post(
+        "/api/covers",
+        files={"file": ("cover.png", PNG, "image/png")},
+        data={"slug": "DietrichGebert/ponytail"},
+        headers=AUTH,
+    )
+
+    assert upload.status_code == 200
+    url = upload.json()["url"]
+    assert url.startswith("https://gate.example.test/covers/")
+
+    fetched = await http.get(httpx.URL(url).path)
+    assert fetched.status_code == 200
+    assert fetched.content == PNG
+    assert fetched.headers["content-type"] == "image/png"
+
+
+async def test_the_same_cover_uploaded_twice_keeps_one_name(client):
+    http, _ = client
+    files = {"file": ("cover.png", PNG, "image/png")}
+
+    first = await http.post("/api/covers", files=files, data={"slug": "x"}, headers=AUTH)
+    second = await http.post("/api/covers", files=files, data={"slug": "x"}, headers=AUTH)
+
+    assert first.json()["name"] == second.json()["name"]
+
+
+def test_a_cover_name_can_never_climb_out_of_the_directory():
+    name = api.safe_cover_name("../../etc/passwd", PNG)
+
+    assert "/" not in name
+    assert ".." not in name
+    assert name.endswith(".png")
+
+
+@pytest.mark.parametrize("name", ["../../../etc/passwd", "..%2Fsecret.png", "nope.txt"])
+async def test_the_cover_route_serves_nothing_but_covers(client, name):
+    http, _ = client
+    response = await http.get(f"/covers/{name}")
+
+    assert response.status_code == 404
+
+
+async def test_an_empty_upload_is_refused(client):
+    http, _ = client
+    response = await http.post(
+        "/api/covers", files={"file": ("cover.png", b"", "image/png")}, headers=AUTH
+    )
+
+    assert response.status_code == 400

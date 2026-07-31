@@ -1,72 +1,52 @@
-# tech-ig
+# reelsmith
 
-Automated Instagram Reels about trending dev and AI tooling. Python orchestration,
-Remotion rendering. See `README.md` for architecture and `INSTAGRAM.md` for the
-account.
+Automated Instagram Reels about trending dev and AI tooling. Python
+orchestration, Remotion rendering, plus a self-hosted comment to DM gateway.
+See `README.md` for architecture and `gateway/README.md` for the service.
+
+**If `PROFILE.md` exists, read it before writing anything a viewer will see.**
+It is gitignored and therefore absent from a fresh clone. It holds the account
+identity and the editorial register every script, caption and DM has to match.
+Without it you can still work on the code, but do not write copy.
 
 **If `HANDOVER.md` exists, read it before doing anything else.** It means a
 session ended mid-thread, and it records uncommitted work and open decisions
 that are not visible from the code. Delete it once its open items are resolved.
 
 The audience is working software engineers. They can read code, and they have
-seen a thousand generated videos. Everything below exists because some detail
-gives generated content away, and once a viewer clocks one tell they stop
+seen a thousand generated videos. Most of what follows exists because some
+detail gives generated content away, and once a viewer clocks one tell they stop
 watching and start pattern matching.
 
-## Text: the AI tells to avoid
+## Text
 
-These apply to every word that reaches a viewer, which means the hook, the
-spoken script, the burned-in captions, and the Instagram caption.
+The editorial rules live in `PROFILE.md`. Two of them are enforced in code, so
+they are stated here as well, because otherwise the validator looks like a bug:
 
-**Punctuation.** No em dashes. No en dashes. No hyphens. No colons. Em dashes in
-particular are the single most recognisable LLM signature in written English,
-and on screen they read as a machine wrote it. The others are banned because
-they are invisible to a listener but still clutter the caption burned onto the
-video.
+- **No colons and no dashes of any kind** in `hook` or `spoken_script`. A
+  validator in `pipeline/models.py` rejects every dash variant including en
+  dash, em dash and non-breaking hyphen. It rejects rather than strips, because
+  deleting a hyphen turns "seven-word" into "sevenword". The rejection goes back
+  to Claude with the specific error and up to two corrections are allowed before
+  the run fails (`_MAX_SCRIPT_ATTEMPTS` in `pipeline/scriptwriter.py`).
+  `gateway/copy.py` applies the same check to the DM templates.
+- **No hype vocabulary and no emoji.** Enforced in the prompt rather than the
+  parser, so it needs review rather than trusting a green test.
 
-Enforced by a validator on `hook` and `spoken_script` in `pipeline/models.py`,
-covering every dash variant including en dash, em dash and non-breaking hyphen.
-It rejects rather than strips, because deleting a hyphen turns "seven-word" into
-"sevenword". A rejection is handed back to Claude with the specific error and up
-to two corrections are allowed before the run fails
-(`_MAX_SCRIPT_ATTEMPTS` in `pipeline/scriptwriter.py`).
-
-Rewrite around them instead:
-
-| Instead of | Write |
-|---|---|
-| `92k-star repo` | `92k stars` |
-| `seven-word prompt` | `seven words` |
-| `Ponytail: the lazy senior dev` | two sentences, or drop the colon |
-| `state-of-the-art` | `the best available` |
-
-**Vocabulary.** No hype words: game-changer, revolutionary, insane,
-mind-blowing, you won't believe, unlock, leverage, delve, seamless, robust,
-elevate, harness, in today's fast-paced world. No emoji anywhere. No "This is a
-tool that..." or "The project aims to..." throat clearing. Open on a verb or a
-concrete noun.
-
-**Structure.** Short sentences, average under twelve words, varied hard in
-length. Active voice. One idea per sentence. A run of same-length sentences
-flattens into drone no matter who reads it.
-
-**Honesty.** Never invent facts, benchmarks, version numbers or quotes. If a
-number is uncertain, leave it out. Where a project's own benchmark disagrees
-with independent testing, say both. Scepticism is the differentiator in a niche
-full of uncritical tool promotion.
-
-Full prompt lives in `SYSTEM_PROMPT` in `pipeline/scriptwriter.py`.
+Write "92k stars" rather than "92k-star", and split a colon into two sentences.
+`SYSTEM_PROMPT` in `pipeline/scriptwriter.py` is the full contract.
 
 ## Voice
 
-My own voice, cloned. `TTS_BACKEND=chatterbox`. Every stock voice is one some
-other account is also using, and that is the one tell no amount of scripting
-fixes. This is the only option where that is not true.
+`TTS_BACKEND=chatterbox`, a cloned voice. Which voice and why is in
+`PROFILE.md`; the reference recording is gitignored and a fresh checkout has
+neither it nor the venv, so re-record from
+`tools/chatterbox/ref/RECORD-THIS.txt` or set `TTS_BACKEND=kokoro`.
 
 Engine is Chatterbox, picked over F5-TTS and XTTS-v2 on licence: MIT for both
 code and weights, where F5-TTS ships CC-BY-NC weights and XTTS-v2 is
-non-commercial CPML. Same reasoning that put Kokoro here before it. It clones
-zero-shot, so the whole input is one 25 second recording.
+non-commercial CPML. It clones zero-shot, so the whole input is one 25 second
+recording.
 
 Three things about it are load bearing:
 
@@ -82,18 +62,11 @@ Three things about it are load bearing:
 - **Output is normalised to -3 dBFS in the worker.** Chatterbox renders hot and
   routinely clips past 1.0 where Kokoro sits at 0.63. Without it the voiceover
   distorts and jumps in loudness whenever the backend changes.
-- **`exaggeration` 0.5 and `cfg_weight` 0.3 were picked by ear**, from a
-  four-preset sweep still audible in `tools/chatterbox/out/`. They interact.
-  Re-audition with `clone.py --sweep` rather than guessing.
-
-The reference recording and the venv are both gitignored, so a fresh checkout
-has neither. Re-record from `tools/chatterbox/ref/RECORD-THIS.txt`; the passage
-is deliberately in the pipeline's own register, because the clone copies pacing
-and energy, not just timbre.
+- **`exaggeration` and `cfg_weight` were picked by ear** from a four-preset
+  sweep. They interact. Re-audition with `clone.py --sweep` rather than
+  guessing.
 
 Kokoro (`am_michael`) remains the fallback and is what shipped before this.
-`KOKORO_SPEED` is 1.28 in `.env`, the `config.py` default is 1.15, and the
-clone ignores both because its pace comes from the reference read.
 
 ## Visuals
 
@@ -157,7 +130,8 @@ failed still must never fail a run that already produced a video.
 `publisher.publish_reel` uploads to Instagram directly: a resumable container,
 the MP4 as raw bytes to `rupload.facebook.com`, a poll while Meta transcodes,
 then `media_publish`. No object storage and no App Review, both of which this
-repo spent a while believing were required.
+repo spent a while believing were required. Setup is
+`docs/instagram-api-setup.md`.
 
 Four things here are load bearing:
 
@@ -182,6 +156,14 @@ be a local path. Without it the thumbnail comes from `thumb_offset` at
 `COVER_FRAME`, which is the same moment `cover.png` renders, so the fallback
 loses the hook band and nothing else.
 
+## The gateway
+
+`gateway/` is a separate FastAPI service, not a pipeline stage. It turns
+"comment SEND and I will DM you the link" into something that happens. It
+imports nothing from `pipeline/` or `config.py`, which is what keeps its
+container image free of the models and the voice. Its own README carries the
+three Meta rules it exists to obey.
+
 ## Working on this repo
 
 - `pipeline/models.py` holds the only interface between stages. Change a field
@@ -191,3 +173,7 @@ loses the hook band and nothing else.
 - `pytest` and `ruff check` before considering a change done.
 - Rendering does not start the repo cooldown. `main.py --posted <owner/repo>`
   does, and it is deliberately manual so a rejected video costs nothing.
+- **This repo is public.** `PROFILE.md`, `PLAN.md`, `.env`, `data/` and the
+  voice recording are gitignored and hold the private half. Before adding a
+  file, decide which half it belongs to. `scripts/backup-secrets.sh` backs up
+  the private half, driven by the `# backup:start` block in `.gitignore`.

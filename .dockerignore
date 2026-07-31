@@ -1,0 +1,30 @@
+# Whitelist, not a blocklist, and deliberately so.
+#
+# The gateway image is built from the repo root (the Dockerfile needs
+# `gateway/requirements.txt` and `gateway/`), which means the default build
+# context is this entire checkout: the .env, the live Instagram token in
+# data/ig_token.json, the voice recordings, ~1.5 GB of models and venvs. A
+# blocklist would protect that only for as long as nobody adds a file the list
+# never anticipated, and the image is published to a public registry.
+#
+# So: ignore everything, then re-include exactly what the image needs. A
+# careless `COPY . .` added later can then only ever copy gateway/.
+*
+
+!gateway/
+
+# Re-included above as a directory, so the state that lives inside it has to be
+# excluded again. None of this is in git either, but a developer who has run the
+# service locally has all three sitting right next to the source.
+gateway/covers/
+gateway/state/
+gateway/*.sqlite3
+gateway/*.sqlite3-shm
+gateway/*.sqlite3-wal
+gateway/__pycache__/
+gateway/**/__pycache__/
+
+# The compose file and this Dockerfile describe the build; they are not part of
+# the image.
+gateway/docker-compose.yml
+gateway/Dockerfile

@@ -1,7 +1,61 @@
-# Secrets
-.env
+# This repo is public. Every rule below is either "this is a secret", "this is
+# biometric", or "this is a build artifact nobody should diff". The first two
+# categories are the reason the third is written so carefully: a broad rule
+# added to keep the diff clean is how the narrow rule protecting a token gets
+# quietly widened into uselessness.
+#
+# `.gitignore` only protects what has not been committed yet. Before flipping a
+# repo public, audit the history as well:
+#   git log --all --pretty=format: --name-only --diff-filter=A | sort -u
 
-# Python
+# --- The private half ------------------------------------------------------
+# Everything between the markers is BOTH git-ignored and backed up by
+# scripts/backup-secrets.sh, which reads this block. That is the point of the
+# pairing: a file listed here can never be published by accident, and can never
+# be lost by only living on this laptop.
+#
+# Only the paths are in git, never the contents. Run `scripts/backup-secrets.sh
+# --list` to see what a backup would take.
+#
+# The voice recording is the one irreplaceable entry. Losing it means
+# re-recording, and every video after that is in a subtly different voice.
+# backup:start
+PROFILE.md
+PLAN.md
+INSTAGRAM.md
+.env
+data/star_history.json
+data/used_repos.json
+data/ig_token.json
+tools/chatterbox/ref/morten.wav
+tools/chatterbox/ref/morten.m4a
+# backup:end
+
+# --- Secrets ---------------------------------------------------------------
+# Every variant, because `.env.local` and `.env.backup` are exactly the files
+# that get created in a hurry and never thought about again. `.env.example`
+# is re-included and is the only one that may ever be tracked.
+.env
+.env.*
+!.env.example
+
+# Keys and certificates. Nothing here should ever produce one, which is the
+# point: if a file matches this, something has gone wrong and git staying quiet
+# about it is the failure mode to avoid.
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+credentials.json
+service-account*.json
+
+# Claude Code writes machine-local permissions and paths here. The shared
+# settings.json and any project skills are tracked; the .local. ones are not.
+.claude/settings.local.json
+.claude/*.local.json
+
+# --- Python ----------------------------------------------------------------
 __pycache__/
 *.py[cod]
 .venv/
@@ -9,11 +63,17 @@ venv/
 *.egg-info/
 .ruff_cache/
 .pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
-# Pipeline output and persistent state.
+# --- Pipeline output and persistent state ----------------------------------
 # NOTE: `data/*` not `data/` -- git cannot re-include a file inside an ignored
 # directory, so the negation below only works if the directory itself is not
 # ignored.
+#
+# data/ is not just noise. It holds ig_token.json, which is a live Instagram
+# credential with publishing and messaging rights.
 build/
 data/*
 !data/.gitkeep
@@ -21,7 +81,20 @@ data/*
 # TTS + Whisper model weights (~350 MB)
 models/
 
-# Node / Remotion
+# --- Gateway state ---------------------------------------------------------
+# The SQLite file holds conversations with real people, including their
+# Instagram-scoped ids. The covers directory is a cache of images already
+# uploaded to Instagram. Neither belongs in a public repo, and the database is
+# the one that would be a privacy incident rather than an embarrassment.
+gateway/dev.sqlite3
+gateway/dev.sqlite3-*
+gateway/covers/
+gateway/state/
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+
+# --- Node / Remotion -------------------------------------------------------
 node_modules/
 video/out/
 video/.remotion/
@@ -31,14 +104,29 @@ video/.remotion/
 video/public/*
 !video/public/.gitkeep
 
-# macOS
-.DS_Store
-
-# Chatterbox voice cloning. The venv carries torch and is ~3 GB. `ref/` holds
-# recordings of my own voice, which are biometric and the one input that makes
-# the clone possible, so they stay out of git deliberately rather than by
-# oversight. Losing them means re-recording, not a leak.
+# --- Voice -----------------------------------------------------------------
+# The venv carries torch and is ~3 GB. `ref/` holds recordings of my own voice,
+# which are biometric and the one input that makes the clone possible, so they
+# stay out of git deliberately rather than by oversight. Losing them means
+# re-recording, not a leak. RECORD-THIS.txt is only the passage to read aloud,
+# so it is re-included and is safe in public.
 tools/chatterbox/.venv/
 tools/chatterbox/ref/*
 !tools/chatterbox/ref/RECORD-THIS.txt
 tools/chatterbox/out/
+
+# Loose audio and video anywhere in the tree. The pipeline writes these under
+# build/ and the voice under tools/chatterbox/ref/, both already covered; this
+# catches the copy someone drops in the root to listen to it.
+*.wav
+*.m4a
+*.mp3
+*.mp4
+
+# --- Editors and OS --------------------------------------------------------
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+.idea/
+*.swp

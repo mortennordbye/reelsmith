@@ -1,4 +1,4 @@
-# tech-ig
+# reelsmith
 
 Automated Instagram Reels for trending AI/dev tooling. One command goes from
 "what's trending on GitHub today" to a posted-ready 1080x1920 MP4.
@@ -91,7 +91,7 @@ That uploads it and starts the cooldown in one step. This is the recommended
 setup: you keep the veto, and you never touch a file.
 
 **Unattended.** `python main.py --post` renders and publishes in one run.
-`launchd/it.nordbye.tech-ig.daily.plist` does it on a schedule.
+`launchd/it.nordbye.reelsmith.daily.plist` does it on a schedule.
 
 All three need the same thing to be true: **nothing starts the cooldown except
 posting.** A video you looked at and rejected should not burn that repo for a
@@ -101,7 +101,7 @@ A published run gets a `published.json` receipt, and `--publish` refuses to run
 twice against the same folder. Delete the receipt to override it.
 
 Publishing needs `IG_USER_ID` and `IG_ACCESS_TOKEN` in `.env`; see
-`.env.example` and section 3 of `INSTAGRAM.md`. It does **not** need App
+`.env.example` and `docs/instagram-api-setup.md`. It does **not** need App
 Review, and it does **not** need the MP4 hosted anywhere: the container is
 created with `upload_type=resumable` and the file goes up as raw bytes.
 
@@ -139,7 +139,7 @@ So snapshot every day, including days you make no video:
 python main.py --snapshot     # two search requests, a couple of seconds
 ```
 
-`launchd/it.nordbye.tech-ig.snapshot.plist` runs it at 06:00 daily; its header
+`launchd/it.nordbye.reelsmith.snapshot.plist` runs it at 06:00 daily; its header
 comment has the install commands. From day two onward every ranking uses
 measured deltas.
 
@@ -151,7 +151,7 @@ scrape, the script, or the transcription.
 build/
   2026-07-30/
     astral-sh-uv/
-    mortennordbye-homelab/
+    charmbracelet-crush/
 ```
 
 | Artifact | Written by |
@@ -202,6 +202,14 @@ allocation remains as a fallback for when the transcript can't be matched.
 
 The total is pinned to the **measured** audio duration, so the video can never
 outrun its own soundtrack.
+
+`gateway/` is a separate service, not a pipeline stage. It turns "comment SEND
+and I will DM you the link" into something that actually happens: it polls the
+comments on published posts, sends the one private reply Meta allows per
+comment, gates the link behind a follow, and hosts the cover image that
+publishing wants a public URL for. It runs in the homelab cluster, imports
+nothing from `pipeline/` or `config.py`, and the pipeline works with it down.
+See `gateway/README.md`.
 
 ---
 
@@ -333,6 +341,8 @@ tested here; `--stop-after` is how you inspect those.
 
 ## Not built yet
 
-Hosting for the cover image, which is the last thing that still wants a public
-URL (see Posting). A second render backend. Anything that reads the account's
-own insights and feeds performance back into repo selection.
+The gateway is written and tested but not yet deployed, so cover hosting is
+still on the `thumb_offset` fallback and the publisher does not call it. That
+needs the Meta dashboard setup, then the cluster deployment. A second render
+backend. Anything that reads the account's own insights and feeds performance
+back into repo selection.

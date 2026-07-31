@@ -1,5 +1,5 @@
 [project]
-name = "tech-ig"
+name = "reelsmith"
 version = "0.1.0"
 description = "Automated Instagram Reels pipeline for trending AI/dev tooling"
 requires-python = ">=3.13,<3.14"
@@ -20,18 +20,28 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3",  # the pure-logic suite in tests/
+    "pytest-asyncio>=0.24",  # the gateway is async end to end
     "ruff>=0.8",
+]
+# The DM gateway. A separate group because the container installs only this,
+# and none of the pipeline's 350 MB of models and browsers belong in it.
+gateway = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "aiosqlite>=0.20",        # one file of state, no ORM
+    "prometheus-client>=0.21",
+    "python-multipart>=0.0.9", # the cover upload is multipart
 ]
 
 [project.scripts]
-tech-ig = "main:app"
+reelsmith = "main:app"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["pipeline", "sources"]
+packages = ["pipeline", "sources", "gateway"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -39,6 +49,11 @@ testpaths = ["tests"]
 # so the repo root has to be importable without installing the package.
 pythonpath = ["."]
 addopts = "-q"
+# The gateway suite is async throughout. Auto mode keeps the marker off every
+# single test in it, and the pipeline suite is synchronous so nothing there
+# changes.
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 100
