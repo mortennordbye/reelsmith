@@ -22,6 +22,7 @@
 # backup:start
 PROFILE.md
 PLAN.md
+notes/*.md
 .env
 data/star_history.json
 data/used_repos.json
