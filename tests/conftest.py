@@ -6,7 +6,25 @@ Remotion. If a test needs a fixture file, it is testing the wrong thing.
 
 from __future__ import annotations
 
+import pytest
+
+from config import Settings
 from pipeline.models import Caption, CueKind, RepoCandidate, VideoScript, VisualCue
+
+
+@pytest.fixture(autouse=True)
+def _isolate_from_dotenv(monkeypatch):
+    """Keep the developer's real `.env` out of every test.
+
+    `Settings` reads the repo's `.env` by default, so without this a test's
+    result depends on whether the machine running it happens to have Instagram
+    configured, or a gateway URL set, or a different TTS backend. That is not a
+    hypothetical: adding GATEWAY_URL to a working `.env` turned three passing
+    tests red without touching a line of their code.
+
+    Tests that want a value now have to pass it, which is the point.
+    """
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
 
 
 def cue(excerpt: str, kind: CueKind = CueKind.BULLETS) -> VisualCue:

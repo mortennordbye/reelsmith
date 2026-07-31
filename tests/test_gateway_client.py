@@ -22,20 +22,25 @@ CAPTION = (
 )
 
 
+# `_env_file=None` is load bearing in both fixtures. Settings reads the repo's
+# real .env by default, so without it these tests pass or fail depending on
+# whether the developer running them happens to have a gateway configured. That
+# is exactly how this file first went green here and red in CI.
 @pytest.fixture
-def cfg(tmp_path) -> Settings:
+def cfg() -> Settings:
     return Settings(
         github_token="x",
         ig_user_id="17841400000000000",
         gateway_url="https://gate.example.test",
         gateway_token="test-token",
+        _env_file=None,
     )
 
 
 @pytest.fixture
-def off(tmp_path) -> Settings:
+def off() -> Settings:
     """The normal state for anyone who does not run the gateway."""
-    return Settings(github_token="x")
+    return Settings(github_token="x", _env_file=None)
 
 
 def _client(handler) -> httpx.Client:
