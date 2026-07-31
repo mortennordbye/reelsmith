@@ -215,22 +215,56 @@ A Business account normally wants a linked Facebook Page. Create a bare Page
 for Nightly Build at the same time and link it. The API publishing path
 requires it, and doing it now avoids a second identity decision later.
 
-### What automated posting will actually need
+### Setting up automated posting
 
-Recorded here so the scope is clear before anyone starts it. From
-`IMPROVEMENTS.md`, still open:
+Built. `python main.py --post` renders and publishes; `--publish <date>/<slug>`
+posts a run you have already watched. This section is the one-time setup.
 
-- A Meta developer app with `instagram_business_basic` and
-  `instagram_business_content_publish` (Instagram Login), or `instagram_basic`,
-  `instagram_content_publish` and `pages_read_engagement` (Facebook Login).
-- App review for production access. Budget weeks, not days.
-- The MP4 reachable at a public URL, because the API pulls the media rather
-  than accepting an upload. That means object storage, presigned S3 or R2.
-- Rate limit is 100 API-published posts per rolling 24 hours, which is not a
-  constraint at one post a day.
+Two of the three blockers this section used to list turned out not to exist,
+and both mattered enough to write down:
 
-Until that exists, posting stays manual: `pipeline/publisher.py` puts the
-caption on the clipboard and opens the run folder.
+- **App Review is not needed.** Review gates *Advanced Access*, which means
+  acting on accounts you do not own. *Standard Access* is granted
+  automatically and covers any account holding a role on the app. Your own
+  account holds a role on your own app, so an app left in development mode
+  publishes fine. The "budget weeks, not days" note that was here was wrong.
+- **The MP4 does not need a public URL.** Creating the container with
+  `upload_type=resumable` returns an upload URI on `rupload.facebook.com` that
+  takes the file as raw bytes. The public-URL requirement applies to the older
+  `video_url` flow. No object storage, no S3, no R2.
+
+What is genuinely required:
+
+1. **Business account linked to a Facebook Page.** Section 3 above already
+   commits to both.
+2. **A Meta app** at <https://developers.facebook.com/apps>, type Business,
+   with the Instagram product added. Leave it in **development** mode.
+3. **Your account added as an Instagram tester** on the app, and the invite
+   accepted from the Instagram side (Settings, Website permissions, Tester
+   invites). This is the step that grants Standard Access to your own account,
+   and skipping it is what produces a confusing permissions error later.
+4. **Scopes** `instagram_business_basic` and
+   `instagram_business_content_publish`. The Facebook Login path wants
+   `instagram_basic`, `instagram_content_publish` and `pages_read_engagement`
+   instead; set `IG_GRAPH_HOST=https://graph.facebook.com` if you go that way.
+5. **A long-lived token.** Authorise once, exchange the short-lived token, put
+   it in `IG_ACCESS_TOKEN`, then run `python main.py --refresh-token` to move
+   it into `data/ig_token.json`.
+6. **Your IG user ID**, a 17-digit number, into `IG_USER_ID`.
+
+Two operational facts worth knowing before you rely on it:
+
+- **Tokens last 60 days and an expired one cannot be refreshed.** Recovering
+  means going back through the dashboard in a browser. The daily `--snapshot`
+  job refreshes automatically inside a 15-day margin, so that job is now load
+  bearing for posting, not just for scoring.
+- **Rate limit is 100 published posts per rolling 24 hours.** Not a constraint
+  at one a day.
+
+The cover image is the one thing that still wants hosting: `cover_url` is
+fetched by Meta, so without a public URL the Reel thumbnail falls back to
+`thumb_offset` and the designed hook band is lost. Pass `--cover-url` if you
+host it somewhere.
 
 ---
 

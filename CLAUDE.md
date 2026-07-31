@@ -4,6 +4,10 @@ Automated Instagram Reels about trending dev and AI tooling. Python orchestratio
 Remotion rendering. See `README.md` for architecture and `INSTAGRAM.md` for the
 account.
 
+**If `HANDOVER.md` exists, read it before doing anything else.** It means a
+session ended mid-thread, and it records uncommitted work and open decisions
+that are not visible from the code. Delete it once its open items are resolved.
+
 The audience is working software engineers. They can read code, and they have
 seen a thousand generated videos. Everything below exists because some detail
 gives generated content away, and once a viewer clocks one tell they stop
@@ -147,6 +151,36 @@ Two constraints that are easy to break:
 
 Cover rendering is best effort. It logs and returns what it managed, because a
 failed still must never fail a run that already produced a video.
+
+## Publishing
+
+`publisher.publish_reel` uploads to Instagram directly: a resumable container,
+the MP4 as raw bytes to `rupload.facebook.com`, a poll while Meta transcodes,
+then `media_publish`. No object storage and no App Review, both of which this
+repo spent a while believing were required.
+
+Four things here are load bearing:
+
+- **Posting is the only thing that starts a cooldown.** Not rendering, not
+  uploading, not a failed publish. `_publish_run` in `main.py` is the single
+  place that calls `mark_featured`, and `--post` and `--publish` both go
+  through it so there cannot be two answers to what posting means.
+- **`published.json` is a duplicate guard, not a log.** `--publish` refuses a
+  folder that already has one. Unattended is exactly where posting the same
+  Reel twice goes unnoticed, and the receipt is cheaper than noticing.
+- **The publish path raises where the cover path logs.** A half-finished
+  upload is worth stopping on. That is the opposite of `render_covers` and
+  `copy_to_clipboard`, and the difference is deliberate.
+- **The token is in `data/ig_token.json`, refreshed by the `--snapshot` job.**
+  Long-lived tokens last 60 days, are refreshed rather than reissued, and an
+  expired one cannot be refreshed at all. That makes a job whose stated purpose
+  is star velocity also the thing keeping posting alive, so do not "simplify"
+  the refresh out of it without moving it somewhere that runs as often.
+
+`--cover-url` is the seam for a hosted cover. Meta cURLs that URL, so it cannot
+be a local path. Without it the thumbnail comes from `thumb_offset` at
+`COVER_FRAME`, which is the same moment `cover.png` renders, so the fallback
+loses the hook band and nothing else.
 
 ## Working on this repo
 

@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The unattended daily post: discover, write, voice, render, publish.
+
+  READ THIS BEFORE INSTALLING IT.
+
+  Every other job in this repo is safe to forget about. This one is not. It
+  publishes to a real account with nobody reading the script first, and the
+  script is written by a language model from a README it scraped an hour
+  earlier. The pipeline's validators catch dashes and hype words; they cannot
+  catch a claim that is simply wrong about a project, and that is the failure
+  that costs an audience of working engineers.
+
+  So there are two ways to run this, and the safer one is not much more work:
+
+    Reviewed (recommended).  Install this plist without --post. It renders
+    overnight and stops. You watch 40 seconds over coffee and run
+    `python main.py --publish <date>/<slug>`, which uploads it and starts the
+    cooldown in one step.
+
+    Unattended.  Add <string>--post</string> to ProgramArguments below. The
+    render publishes itself. Nothing else changes.
+
+  Either way the run stops at the first stage that fails, and a failed run
+  costs nothing: no cooldown is started, and tomorrow's job picks a repo as if
+  today had not happened.
+
+  Prerequisites beyond the snapshot job: Instagram configured in .env, and a
+  token that has been refreshed inside the last 60 days. The snapshot job does
+  that refresh, so install that one too or this eventually stops working.
+
+  Install (replace __REPO__ with the absolute path to this checkout):
+
+    sed "s|__REPO__|$PWD|g" launchd/it.nordbye.tech-ig.daily.plist \
+      > ~/Library/LaunchAgents/it.nordbye.tech-ig.daily.plist
+    launchctl bootstrap gui/$UID ~/Library/LaunchAgents/it.nordbye.tech-ig.daily.plist
+
+  Run it once by hand to confirm it works:
+
+    launchctl kickstart -p gui/$UID/it.nordbye.tech-ig.daily
+    tail -f __REPO__/data/daily.log
+
+  Uninstall:
+
+    launchctl bootout gui/$UID/it.nordbye.tech-ig.daily
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>it.nordbye.tech-ig.daily</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO__/.venv/bin/python</string>
+    <string>__REPO__/main.py</string>
+    <!-- Add <string>&#45;&#45;post</string> here to publish without review. -->
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+
+  <!-- 07:00, an hour after the snapshot job, so today's ranking already has
+       today's star counts to measure velocity against. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>7</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+
+  <!-- Deliberately NOT RunAtLoad, unlike the snapshot job. A missed snapshot
+       is a real loss and worth catching up on; a missed video is not, and a
+       catch-up run that fires whenever the laptop wakes would post at
+       unpredictable hours. -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>__REPO__/data/daily.log</string>
+  <key>StandardErrorPath</key>
+  <string>__REPO__/data/daily.log</string>
+
+  <!-- launchd starts agents with a near-empty PATH, and this run genuinely
+       needs more than Python: `claude` writes the script, npx/node render, and
+       ffprobe reads the audio duration. Homebrew paths first for Apple silicon.
+       If the script stage fails with "claude not found", this is why. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__REPO__/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <!-- A render that hangs should not still be holding the machine tomorrow. -->
+  <key>ExitTimeOut</key>
+  <integer>3600</integer>
+</dict>
+</plist>

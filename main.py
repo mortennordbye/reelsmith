@@ -5,8 +5,13 @@
     python main.py --repo astral-sh/uv  skip discovery, use a specific repo
     python main.py --resume 2026-07-30/astral-sh-uv   re-render from artifacts
 
+    python main.py --post               render, then publish it unattended
+    python main.py --publish 2026-07-30/astral-sh-uv  publish a run you approved
+
     python main.py --candidates         rank today's repos, generate nothing
     python main.py --snapshot           record star counts only (run daily)
+    python main.py --refresh-token      renew the Instagram token by hand
+                                        (--snapshot already does it when due)
     python main.py --posted astral-sh/uv    start the 30-day cooldown
     python main.py --unmark astral-sh/uv    undo that
 
@@ -18,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
@@ -26,7 +32,14 @@ import typer
 from rich.console import Console
 from rich.logging import RichHandler
 
-from config import ConfigError, get_settings, require_github_token, resolve_claude_cli
+from config import (
+    ConfigError,
+    Settings,
+    get_settings,
+    require_github_token,
+    require_instagram,
+    resolve_claude_cli,
+)
 from pipeline import captions as captions_mod
 from pipeline import publisher, renderer, scraper, screenshot, tts
 from pipeline import spec as spec_mod
@@ -61,7 +74,7 @@ def _setup_logging(verbose: bool) -> None:
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
-def _preflight(*, need_github: bool, need_claude: bool) -> None:
+def _preflight(*, need_github: bool, need_claude: bool, need_instagram: bool = False) -> None:
     """Fail on missing prerequisites before spending any time or tokens.
 
     Exits rather than raising: every caller wants the same readable message and
@@ -73,6 +86,8 @@ def _preflight(*, need_github: bool, need_claude: bool) -> None:
             require_github_token(cfg)
         if need_claude:
             resolve_claude_cli()
+        if need_instagram:
+            require_instagram(cfg)
     except ConfigError as exc:
         console.print(f"[bold red]Setup problem[/]\n{exc}")
         raise typer.Exit(1) from exc
@@ -107,6 +122,22 @@ def run(
     resume: Annotated[
         str | None,
         typer.Option("--resume", help="Re-run from artifacts, e.g. '2026-07-30/astral-sh-uv'"),
+    ] = None,
+    post: Annotated[
+        bool,
+        typer.Option("--post", help="Publish to Instagram once the render finishes"),
+    ] = False,
+    publish: Annotated[
+        str | None,
+        typer.Option("--publish", help="Publish an existing run, e.g. '2026-07-30/astral-sh-uv'"),
+    ] = None,
+    refresh_token: Annotated[
+        bool,
+        typer.Option("--refresh-token", help="Renew the Instagram token; run at least monthly"),
+    ] = False,
+    cover_url: Annotated[
+        str | None,
+        typer.Option("--cover-url", help="Public URL of the cover image; else a video frame"),
     ] = None,
     no_research: Annotated[
         bool, typer.Option("--no-research", help="Skip Claude's web search (faster, cheaper)")
@@ -148,6 +179,31 @@ def run(
         _preflight(need_github=True, need_claude=False)
         count = scraper.snapshot_stars(cfg)
         console.print(f"[bold green]Snapshotted[/] {count} repos")
+        # Piggybacked on the daily job because the failure it prevents is a slow
+        # one: a token nobody refreshed for 60 days is dead and needs a browser
+        # to replace. A no-op on almost every run is the intended behaviour.
+        try:
+            if state := publisher.refresh_token_if_due(cfg):
+                console.print(f"[dim]Instagram token renewed, {state.days_left:.0f} days left[/]")
+        except publisher.PublishError as exc:
+            console.print(f"[yellow]Instagram token not renewed:[/] {exc}")
+        return
+
+    if refresh_token:
+        _preflight(need_github=False, need_claude=False, need_instagram=True)
+        try:
+            state = publisher.refresh_token(cfg)
+        except publisher.PublishError as exc:
+            console.print(f"[bold red]Could not refresh the token[/]\n{exc}")
+            raise typer.Exit(1) from exc
+        left = f"{state.days_left:.0f} days" if state.days_left is not None else "unknown"
+        console.print(f"[bold green]Token renewed[/] [dim](valid for {left})[/]")
+        console.print(f"[dim]Stored in {cfg.ig_token_path}[/]")
+        return
+
+    if publish:
+        _preflight(need_github=False, need_claude=False, need_instagram=True)
+        _publish_run(cfg, cfg.build_dir / publish, cover_url=cover_url)
         return
 
     if preview_voice:
@@ -163,6 +219,9 @@ def run(
     _preflight(
         need_github=resume is None and repo_full_name is None,
         need_claude=stop_after != Stage.SCRAPE,
+        # Checked now rather than after the render, so a missing token costs a
+        # config error instead of ten minutes of Remotion.
+        need_instagram=post,
     )
 
     run_dir = cfg.build_dir / resume if resume else None
@@ -314,32 +373,113 @@ def run(
     if covers:
         console.print(f"  [dim]covers: {', '.join(p.name for p in covers)}[/]")
 
-    # Everything from here is about making the one remaining manual step --
-    # dropping the file into Instagram -- as short as possible.
+    # The caption is written either way: --post needs it to send, and a run you
+    # come back to tomorrow needs it because the clipboard is long gone.
     if script.caption_text:
-        # On the clipboard for an immediate post, and on disk because the
-        # clipboard is gone the moment anything else copies, and a run you come
-        # back to tomorrow still needs its caption.
-        caption_path = run_dir / "caption.txt"
-        caption_path.write_text(script.caption_text.strip() + "\n")
+        (run_dir / "caption.txt").write_text(script.caption_text.strip() + "\n")
+
+    if post:
+        console.rule("[bold]Publishing to Instagram")
+        _publish_run(cfg, run_dir, cover_url=cover_url)
+        console.print(
+            f"[dim]Iterate on the look:  cd video && npm run studio  "
+            f"(then load {run_dir / 'video.json'})[/]"
+        )
+        return
+
+    # Otherwise, make the one remaining manual step -- dropping the file into
+    # Instagram -- as short as possible.
+    if script.caption_text:
         console.print(f"\n[bold]Instagram caption[/]\n{script.caption_text}")
         if publisher.copy_to_clipboard(script.caption_text):
             console.print("[dim]  (copied to the clipboard)[/]")
-        console.print(f"[dim]  (also written to {caption_path.name})[/]")
+        console.print("[dim]  (also written to caption.txt)[/]")
     publisher.reveal(run_dir / "out.mp4")
 
     console.print(
-        f"\n[bold]Once it is actually posted:[/]  "
-        f"python main.py --posted {repo.full_name}"
+        f"\n[bold]Post it from here:[/]  "
+        f"python main.py --publish {run_dir.parent.name}/{run_dir.name}"
     )
     console.print(
-        f"[dim]That is what starts the {cfg.repo_cooldown_days}-day cooldown. "
-        f"Rendering alone does not, so a video you reject costs you nothing.[/]"
+        f"[dim]That uploads it and starts the {cfg.repo_cooldown_days}-day cooldown in one "
+        f"step. If you posted it by hand instead: python main.py --posted {repo.full_name}[/]"
+    )
+    console.print(
+        "[dim]Rendering alone starts no cooldown, so a video you reject costs you nothing.[/]"
     )
     console.print(
         f"[dim]Iterate on the look:  cd video && npm run studio  "
         f"(then load {run_dir / 'video.json'})[/]"
     )
+
+
+def _publish_run(cfg: Settings, run_dir: Path, *, cover_url: str | None = None) -> None:
+    """Upload a finished run and start its cooldown.
+
+    Shared by `--post` and `--publish` so there is exactly one definition of
+    what posting means, including the part that is easy to forget: the cooldown
+    starts here and nowhere else.
+    """
+    if not run_dir.is_dir():
+        console.print(f"[bold red]No such build dir:[/] {run_dir}")
+        raise typer.Exit(1)
+
+    video_path = run_dir / "out.mp4"
+    if not video_path.exists():
+        console.print(f"[bold red]No video in {run_dir}[/] [dim](expected out.mp4)[/]")
+        raise typer.Exit(1)
+
+    # A second --publish on the same folder would post the same Reel twice, and
+    # unattended is exactly where that mistake goes unnoticed.
+    receipt_path = run_dir / "published.json"
+    if receipt_path.exists():
+        prior = json.loads(receipt_path.read_text())
+        console.print(
+            f"[yellow]Already published[/] on {prior.get('published_at', '?')} "
+            f"({prior.get('permalink') or prior.get('media_id')}).\n"
+            f"[dim]Delete {receipt_path} to publish it again.[/]"
+        )
+        return
+
+    repo_path = run_dir / "repo.json"
+    repo = RepoCandidate.model_validate_json(repo_path.read_text()) if repo_path.exists() else None
+
+    caption_path = run_dir / "caption.txt"
+    caption = caption_path.read_text().strip() if caption_path.exists() else ""
+    if not caption:
+        console.print("[yellow]No caption.txt in this run; posting without a caption.[/]")
+
+    try:
+        with console.status("Uploading and waiting for Instagram to process..."):
+            result = publisher.publish_reel(video_path, caption, cfg, cover_url=cover_url)
+    except publisher.PublishError as exc:
+        console.print(f"[bold red]Publish failed[/]\n{exc}")
+        raise typer.Exit(1) from exc
+
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "media_id": result.media_id,
+                "permalink": result.permalink,
+                "published_at": datetime.now(UTC).isoformat(),
+                "repo": repo.full_name if repo else None,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+    console.print(f"[bold green]Published[/] {result.permalink or result.media_id}")
+    if repo:
+        scraper.mark_featured(cfg, repo.full_name)
+        console.print(
+            f"[dim]{repo.full_name} is on cooldown for {cfg.repo_cooldown_days} days.[/]"
+        )
+    else:
+        console.print(
+            "[yellow]No repo.json in this run, so no cooldown was started.[/] "
+            "[dim]Run --posted <owner/repo> by hand.[/]"
+        )
 
 
 def _finish(run_dir: Path | None) -> None:

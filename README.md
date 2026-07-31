@@ -49,6 +49,10 @@ per minute, which is not enough for a single run.
 Verify Claude Code is authenticated: `claude --version` should work, and
 `ANTHROPIC_API_KEY` should be **unset** so the CLI uses subscription OAuth.
 
+To let the pipeline post for you, add `IG_USER_ID` and `IG_ACCESS_TOKEN` too.
+That part is optional and everything except `--post` and `--publish` runs
+without it; `.env.example` has the four-step setup.
+
 ---
 
 ## Usage
@@ -61,7 +65,11 @@ python main.py --stop-after script    # stop early to inspect an artifact
 python main.py --no-research          # skip Claude's web search (faster)
 python main.py --resume 2026-07-30/astral-sh-uv   # re-render from artifacts
 
+python main.py --post                     # render, then publish it unattended
+python main.py --publish 2026-07-30/astral-sh-uv   # publish a run you approved
+
 python main.py --snapshot                 # record star counts only (see below)
+python main.py --refresh-token            # renew the Instagram token
 python main.py --posted astral-sh/uv      # start the 30-day cooldown
 python main.py --unmark astral-sh/uv      # undo that
 ```
@@ -70,16 +78,53 @@ python main.py --unmark astral-sh/uv      # undo that
 single core request, which fits inside the anonymous budget. Only discovery
 needs the token.
 
-When the render finishes, the Instagram caption is copied to your clipboard and
-the run folder opens. Drop `out.mp4` into Instagram, paste, post.
+### Posting
 
-**Rendering does not start the cooldown; `--posted` does.** A video you looked
-at and rejected should not burn that repo for a month, so the last step is
-manual on purpose:
+Three ways out, in increasing order of how much you trust it.
+
+**By hand.** The default. When the render finishes the caption is on your
+clipboard and the run folder is open. Drop `out.mp4` into Instagram, paste,
+post, then `python main.py --posted astral-sh/uv`.
+
+**Reviewed.** Watch the video, then `python main.py --publish <date>/<slug>`.
+That uploads it and starts the cooldown in one step. This is the recommended
+setup: you keep the veto, and you never touch a file.
+
+**Unattended.** `python main.py --post` renders and publishes in one run.
+`launchd/it.nordbye.tech-ig.daily.plist` does it on a schedule.
+
+All three need the same thing to be true: **nothing starts the cooldown except
+posting.** A video you looked at and rejected should not burn that repo for a
+month, so rendering deliberately does not mark it.
+
+A published run gets a `published.json` receipt, and `--publish` refuses to run
+twice against the same folder. Delete the receipt to override it.
+
+Publishing needs `IG_USER_ID` and `IG_ACCESS_TOKEN` in `.env`; see
+`.env.example` and section 3 of `INSTAGRAM.md`. It does **not** need App
+Review, and it does **not** need the MP4 hosted anywhere: the container is
+created with `upload_type=resumable` and the file goes up as raw bytes.
+
+The one thing that still wants a public URL is a custom cover image. Without
+`--cover-url` the Reel's thumbnail falls back to `thumb_offset`, which picks the
+same frame `cover.png` is rendered from, minus the hook band. If you host the
+cover somewhere, pass it:
 
 ```bash
-python main.py --posted astral-sh/uv
+python main.py --publish 2026-07-30/astral-sh-uv \
+  --cover-url https://example.com/cover.png
 ```
+
+### Keeping the token alive
+
+Long-lived Instagram tokens last 60 days, are refreshed rather than reissued,
+and **an expired one cannot be refreshed**. Recovering from that costs a browser
+round trip through the Meta dashboard. The daily `--snapshot` job refreshes when
+it is within `IG_REFRESH_MARGIN_DAYS` (15) of expiring, so keeping that job
+installed is what keeps posting unattended. `--refresh-token` forces it.
+
+The live token lives in `data/ig_token.json`, not `.env`. A cron job that
+rewrites a hand-edited dotenv eventually eats something you cared about.
 
 ### The daily snapshot
 
@@ -118,6 +163,9 @@ build/
 | `repo.png` | screenshot |
 | `video.json` | spec |
 | `out.mp4` | renderer |
+| `cover.png` + `cover-clean.png` | renderer |
+| `caption.txt` | main |
+| `published.json` | publisher, only once it is posted |
 
 ### Iterating on the visuals
 
@@ -285,7 +333,6 @@ tested here; `--stop-after` is how you inspect those.
 
 ## Not built yet
 
-Auto-posting to Instagram (the Graph API needs a Business account and a
-publicly reachable video URL, so it means standing up object storage and a Meta
-app to avoid one drag-and-drop), scheduling the full run, and a second render
-backend.
+Hosting for the cover image, which is the last thing that still wants a public
+URL (see Posting). A second render backend. Anything that reads the account's
+own insights and feeds performance back into repo selection.

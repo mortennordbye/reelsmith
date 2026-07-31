@@ -26,15 +26,27 @@ Ranked by value. Check items off as they land.
   - `captions._repair_gaps` — `tests/test_captions.py`
   - the two contracts that used to drift — `tests/test_contracts.py`
 
-- [~] **Close the last manual step: posting.**
-  Cheap version done: the render now copies `caption_text` to the clipboard and
-  opens the run dir (`pipeline/publisher.py`, best-effort — a failed clipboard
-  write never fails a run that produced a video).
-  Full version **not** done. Instagram Graph API Reels publishing needs a
-  business/creator account and the MP4 at a public URL, so it means standing up
-  object storage (presigned S3/R2) and a Meta app before the first post. That
-  is an infrastructure decision, not a code one. `publisher.py` is where it
-  goes when you want it.
+- [x] **Close the last manual step: posting.**
+  `publisher.publish_reel` uploads and publishes; `main.py --post` does it at
+  the end of a render, `--publish <date>/<slug>` does it for a run you have
+  already watched, and both start the cooldown themselves.
+  The infrastructure this was blocked on turned out not to be needed. App
+  Review only gates acting on accounts you do not own, so an app in development
+  mode with your own account as a tester publishes fine; and
+  `upload_type=resumable` takes the MP4 as raw bytes, so there is no object
+  storage. Both claims were wrong in this file and in `INSTAGRAM.md`, and both
+  are corrected there now.
+  Left over: `cover_url` is still fetched by Meta, so a designed cover needs
+  hosting. Without `--cover-url` the thumbnail falls back to `thumb_offset` at
+  the same frame `cover.png` uses, minus the hook band.
+
+- [x] **Schedule the full run.** `launchd/it.nordbye.tech-ig.daily.plist`,
+  07:00, an hour behind the snapshot job so the ranking has today's stars.
+  Ships *without* `--post` on purpose: the reviewed path renders overnight and
+  waits for a `--publish`. Adding one line makes it unattended.
+  Token upkeep rides on the existing `--snapshot` job, because a long-lived
+  token that nobody refreshed for 60 days is dead and needs a browser to
+  replace. That job is now load bearing for posting, not just for scoring.
 
 ## Correctness
 

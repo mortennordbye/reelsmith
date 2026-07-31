@@ -1,26 +1,455 @@
-"""Step 6 -- hand the finished video off to a human.
+"""Step 6 -- get the finished video onto Instagram.
 
-Instagram has no unattended posting path worth taking here. The Graph API can
-publish Reels, but only for a business or creator account, and only from an MP4
-already sitting at a public URL -- which means standing up object storage and a
-Meta app just to avoid a drag-and-drop. Not worth it for one video a day.
+Two paths out of here, and the difference is whether a human looks at the video
+first.
 
-So this closes the gap the cheap way: the moment the render finishes, the
-caption is on the clipboard and the folder is open. The remaining manual step is
-dropping the file into Instagram and pressing paste.
+**Automatic.** `publish_reel()` uploads `out.mp4` straight to the account. Three
+facts make this cheap, and all three contradict what this file used to say:
 
-Everything here is best-effort. A failed clipboard write must never fail a run
-that already produced a video.
+- The Reels container accepts `upload_type=resumable`, so the MP4 goes up as
+  raw bytes to `rupload.facebook.com`. The older flow made Meta cURL a public
+  URL, which is what put "stand up object storage" in the way.
+- App Review is only for Advanced Access, meaning acting on accounts you do not
+  own. Standard Access is automatic and covers any account holding a role on
+  your app, so publishing to your own account needs an app in development mode
+  and nothing else.
+- The rate limit is 100 published posts per rolling 24 hours. One a day is not
+  near it.
+
+**Manual.** `copy_to_clipboard()` and `reveal()` put the caption on the
+clipboard and open the run folder, leaving a drag and a paste. This is still the
+default, because posting automatically also removes the only step where anyone
+reads the script before it is public.
+
+Everything in the manual path is best-effort: a failed clipboard write must
+never fail a run that already produced a video. Everything in the automatic path
+raises, because a publish that half-worked is worth stopping on.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import platform
 import subprocess
+import time
+from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import httpx
+
+from config import Settings
+from pipeline.renderer import COVER_FRAME
+
 log = logging.getLogger(__name__)
+
+# Uploads do not go to the Graph host. This one is fixed for both the Instagram
+# Login and Facebook Login paths, so unlike the Graph host it is not a setting.
+UPLOAD_HOST = "https://rupload.facebook.com/ig-api-upload"
+
+# Terminal states from GET /<container-id>?fields=status_code. IN_PROGRESS is
+# the only one worth waiting on.
+_STATUS_DONE = "FINISHED"
+_STATUS_WAIT = "IN_PROGRESS"
+
+# Meta's code for "this token is no longer valid", which is the one failure
+# here that a retry can never fix and a human has to go and undo in a browser.
+_OAUTH_ERROR_CODE = 190
+
+
+class PublishError(RuntimeError):
+    """A publish that did not complete. The message is meant to be shown as-is."""
+
+
+@dataclass(frozen=True)
+class PublishResult:
+    media_id: str
+    permalink: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Token storage
+#
+# Long-lived tokens last 60 days and are refreshed, not reissued, so the current
+# one has to be written back somewhere. That somewhere is data/ig_token.json
+# rather than .env: a cron job that rewrites a hand-edited dotenv will eventually
+# eat a comment or a line someone cared about.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TokenState:
+    access_token: str
+    expires_at: datetime | None
+    refreshed_at: datetime | None
+
+    @property
+    def days_left(self) -> float | None:
+        if self.expires_at is None:
+            return None
+        return (self.expires_at - datetime.now(UTC)).total_seconds() / 86_400
+
+
+def load_token(cfg: Settings) -> TokenState:
+    """The token to use now: the stored one, or the .env seed on first run."""
+    path = cfg.ig_token_path
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise PublishError(f"{path} is unreadable ({exc}). Delete it and re-seed.") from exc
+        token = raw.get("access_token", "")
+        if token:
+            return TokenState(
+                access_token=token,
+                expires_at=_parse_dt(raw.get("expires_at")),
+                refreshed_at=_parse_dt(raw.get("refreshed_at")),
+            )
+
+    if not cfg.ig_access_token:
+        raise PublishError(
+            "No Instagram token. Put a long-lived token in IG_ACCESS_TOKEN, then run "
+            "`python main.py --refresh-token` to move it into data/ig_token.json."
+        )
+    # Seeded from .env, so the expiry is whatever Meta issued it with and we
+    # have no way to know. The first refresh fills it in.
+    return TokenState(access_token=cfg.ig_access_token, expires_at=None, refreshed_at=None)
+
+
+def save_token(cfg: Settings, token: str, expires_in_s: int | None) -> TokenState:
+    now = datetime.now(UTC)
+    state = TokenState(
+        access_token=token,
+        expires_at=now + timedelta(seconds=expires_in_s) if expires_in_s else None,
+        refreshed_at=now,
+    )
+    payload = {
+        "access_token": state.access_token,
+        "expires_at": state.expires_at.isoformat() if state.expires_at else None,
+        "refreshed_at": now.isoformat(),
+    }
+    path = cfg.ig_token_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n")
+    # Not a secret-manager, but no reason for it to be world-readable either.
+    path.chmod(0o600)
+    return state
+
+
+def refresh_token(cfg: Settings, *, client: httpx.Client | None = None) -> TokenState:
+    """Exchange the current long-lived token for a fresh 60 days.
+
+    Refusable by Meta if the token is under 24 hours old, which is not an error
+    worth acting on -- a token that new has 59 days left.
+    """
+    current = load_token(cfg)
+    with _client(client, timeout=30) as http:
+        data = _graph_json(
+            http,
+            "GET",
+            f"{cfg.ig_graph_host.rstrip('/')}/refresh_access_token",
+            params={"grant_type": "ig_refresh_token", "access_token": current.access_token},
+        )
+
+    token = data.get("access_token")
+    if not token:
+        raise PublishError(f"Refresh returned no access_token: {data}")
+    state = save_token(cfg, token, data.get("expires_in"))
+    log.info(
+        "Instagram token refreshed, %s days left",
+        f"{state.days_left:.0f}" if state.days_left is not None else "?",
+    )
+    return state
+
+
+def refresh_token_if_due(cfg: Settings) -> TokenState | None:
+    """Refresh only when the token is inside the margin. Returns None if it is not.
+
+    Meant for the daily job, where a no-op most days is the point. An unknown
+    expiry counts as due: that is the state a freshly seeded token is in, and
+    refreshing it is how it gets a known one.
+    """
+    if not cfg.ig_user_id and not cfg.ig_token_path.exists():
+        return None
+    try:
+        current = load_token(cfg)
+    except PublishError:
+        return None
+
+    left = current.days_left
+    if left is not None and left > cfg.ig_refresh_margin_days:
+        log.debug("Instagram token has %.0f days left, not refreshing", left)
+        return None
+    if left is not None and left <= 0:
+        raise PublishError(
+            "The Instagram token has expired and can no longer be refreshed. "
+            "Re-authorise in the Meta app dashboard and re-seed IG_ACCESS_TOKEN."
+        )
+    return refresh_token(cfg)
+
+
+# ---------------------------------------------------------------------------
+# Publishing
+# ---------------------------------------------------------------------------
+
+
+def publish_reel(
+    video_path: Path,
+    caption: str,
+    cfg: Settings,
+    *,
+    cover_url: str | None = None,
+    client: httpx.Client | None = None,
+) -> PublishResult:
+    """Upload and publish `video_path` as a Reel. Returns the published media.
+
+    Four calls: create a resumable container, push the bytes, wait for Meta to
+    transcode, publish. The wait is the slow part and there is no callback, so
+    it is a poll.
+
+    The cover is the one thing that did not get easier. `cover_url` is fetched
+    by Meta, so a designed cover still needs somewhere public to live; without
+    one this falls back to `thumb_offset`, which can only pick a frame that is
+    already in the video. COVER_FRAME is the frame `render_covers` uses, so the
+    fallback is the same moment as cover.png without the hook band.
+    """
+    if not video_path.exists():
+        raise PublishError(f"No video at {video_path}")
+    if not cfg.ig_user_id:
+        raise PublishError("IG_USER_ID is not set.")
+
+    size = video_path.stat().st_size
+    token = load_token(cfg).access_token
+    base = f"{cfg.ig_graph_base}/{cfg.ig_user_id}"
+
+    params: dict[str, str] = {
+        "media_type": "REELS",
+        "upload_type": "resumable",
+        "caption": caption.strip(),
+    }
+    if cover_url:
+        params["cover_url"] = cover_url
+    else:
+        params["thumb_offset"] = str(round(COVER_FRAME / cfg.fps * 1000))
+
+    with _client(client, timeout=cfg.ig_upload_timeout_s) as http:
+        log.info("Creating Reels container (%.1f MB)", size / 1_048_576)
+        created = _graph_json(http, "POST", f"{base}/media", token=token, data=params)
+        container_id = created.get("id")
+        if not container_id:
+            raise PublishError(f"Container creation returned no id: {created}")
+
+        # Meta hands back the upload URI. Prefer it over building one: it
+        # carries the API version the container was actually created under.
+        upload_uri = created.get("uri") or f"{UPLOAD_HOST}/{cfg.ig_api_version}/{container_id}"
+        _upload(http, upload_uri, video_path, size, token)
+
+        _await_container(http, cfg, container_id, token)
+
+        log.info("Publishing container %s", container_id)
+        published = _graph_json(
+            http, "POST", f"{base}/media_publish", token=token, data={"creation_id": container_id}
+        )
+        media_id = published.get("id")
+        if not media_id:
+            raise PublishError(f"media_publish returned no id: {published}")
+
+        return PublishResult(media_id=media_id, permalink=_permalink(http, cfg, media_id, token))
+
+
+def _upload(
+    http: httpx.Client, uri: str, video_path: Path, size: int, token: str, *, attempts: int = 3
+) -> None:
+    """Push the file, resuming from Meta's offset if a transfer dies mid-way.
+
+    The whole file is read into memory, which is fine for a 30-45 second Reel at
+    tens of MB and would not be for anything longer.
+    """
+    payload = video_path.read_bytes()
+    offset = 0
+
+    for attempt in range(1, attempts + 1):
+        try:
+            resp = http.post(
+                uri,
+                headers={
+                    # OAuth, not Bearer. The upload host takes a different
+                    # scheme from the Graph host and rejects the other one.
+                    "Authorization": f"OAuth {token}",
+                    "offset": str(offset),
+                    "file_size": str(size),
+                    "Content-Type": "application/octet-stream",
+                },
+                content=payload[offset:],
+            )
+        except httpx.HTTPError as exc:
+            if attempt == attempts:
+                raise PublishError(f"Upload failed after {attempts} attempts: {exc}") from exc
+            log.warning("Upload attempt %d failed (%s), retrying", attempt, exc)
+            offset = _resume_offset(http, uri, token)
+            continue
+
+        if resp.status_code < 400:
+            log.info("Uploaded %.1f MB", size / 1_048_576)
+            return
+
+        detail = _error_message(resp)
+        if attempt == attempts:
+            raise PublishError(f"Upload failed (HTTP {resp.status_code}): {detail}")
+        log.warning("Upload attempt %d failed (%s), retrying", attempt, detail)
+        offset = _resume_offset(http, uri, token)
+
+
+def _resume_offset(http: httpx.Client, uri: str, token: str) -> int:
+    """Ask how many bytes survived. Falls back to starting over.
+
+    A GET on the upload URI reports progress, but a failure here is not worth
+    failing the run over: re-sending from zero is slower, not wrong.
+    """
+    try:
+        resp = http.get(uri, headers={"Authorization": f"OAuth {token}"})
+        value = resp.json().get("bytes_transferred")
+        return int(value) if value is not None else 0
+    except (httpx.HTTPError, ValueError, TypeError, json.JSONDecodeError):
+        return 0
+
+
+def _await_container(http: httpx.Client, cfg: Settings, container_id: str, token: str) -> None:
+    """Poll until Meta has finished transcoding, or give up loudly."""
+    deadline = time.monotonic() + cfg.ig_publish_timeout_s
+    seen = ""
+    while time.monotonic() < deadline:
+        data = _graph_json(
+            http,
+            "GET",
+            f"{cfg.ig_graph_base}/{container_id}",
+            token=token,
+            params={"fields": "status_code,status"},
+        )
+        status = data.get("status_code", "")
+        if status != seen:
+            log.info("Container %s: %s", container_id, status or "?")
+            seen = status
+        if status == _STATUS_DONE:
+            return
+        if status and status != _STATUS_WAIT:
+            # ERROR and EXPIRED both land here. `status` carries Meta's prose
+            # reason, which is the only thing that says which one it was.
+            raise PublishError(f"Container {container_id} is {status}: {data.get('status', '')}")
+        time.sleep(cfg.ig_poll_interval_s)
+
+    raise PublishError(
+        f"Container {container_id} was still processing after {cfg.ig_publish_timeout_s}s. "
+        f"It stays valid for 24 hours, so `--publish` on the same run will pick it up."
+    )
+
+
+def _permalink(http: httpx.Client, cfg: Settings, media_id: str, token: str) -> str | None:
+    """The post's URL, for the log line. Never worth failing a publish over."""
+    try:
+        data = _graph_json(
+            http,
+            "GET",
+            f"{cfg.ig_graph_base}/{media_id}",
+            token=token,
+            params={"fields": "permalink"},
+        )
+    except PublishError as exc:
+        log.debug("Could not read permalink (%s)", exc)
+        return None
+    return data.get("permalink")
+
+
+# ---------------------------------------------------------------------------
+# HTTP plumbing
+# ---------------------------------------------------------------------------
+
+
+def _client(
+    existing: httpx.Client | None, *, timeout: float
+) -> AbstractContextManager[httpx.Client]:
+    """Use the caller's client if given, otherwise own one and close it.
+
+    nullcontext is what keeps a borrowed client open: closing someone else's
+    client on the way out would break the second call that shares it. The
+    injection point is also what lets the tests drive this over a mock
+    transport instead of the network.
+    """
+    if existing is not None:
+        return nullcontext(existing)
+    return httpx.Client(timeout=timeout, follow_redirects=True)
+
+
+def _graph_json(
+    http: httpx.Client,
+    method: str,
+    url: str,
+    *,
+    token: str | None = None,
+    params: dict[str, str] | None = None,
+    data: dict[str, str] | None = None,
+) -> dict:
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        resp = http.request(method, url, headers=headers, params=params, data=data)
+    except httpx.HTTPError as exc:
+        raise PublishError(f"{method} {url} failed: {exc}") from exc
+
+    if resp.status_code >= 400:
+        raise PublishError(_error_message(resp))
+    try:
+        body = resp.json()
+    except ValueError as exc:
+        raise PublishError(f"{method} {url} returned non-JSON: {resp.text[:300]}") from exc
+    return body if isinstance(body, dict) else {"data": body}
+
+
+def _error_message(resp: httpx.Response) -> str:
+    """Turn a Graph error envelope into one readable line."""
+    try:
+        err = resp.json().get("error", {})
+    except ValueError:
+        return f"HTTP {resp.status_code}: {resp.text[:300]}"
+
+    if not err:
+        return f"HTTP {resp.status_code}: {resp.text[:300]}"
+
+    message = err.get("message", "unknown error")
+    if err.get("code") == _OAUTH_ERROR_CODE:
+        return (
+            f"{message}\n"
+            "The token is no longer valid. Long-lived tokens die after 60 days without a "
+            "refresh, and an expired one cannot be refreshed -- re-authorise in the Meta "
+            "app dashboard and re-seed IG_ACCESS_TOKEN."
+        )
+    parts = [message]
+    if sub := err.get("error_user_msg"):
+        parts.append(sub)
+    if trace := err.get("fbtrace_id"):
+        parts.append(f"(fbtrace_id {trace})")
+    return " ".join(parts)
+
+
+def _parse_dt(value: str | None) -> datetime | None:
+    """Read a stored timestamp, tolerating one someone edited by hand.
+
+    Forced to UTC because a naive value would raise on the first comparison
+    against `now`, and the file is plain JSON that invites editing.
+    """
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+# ---------------------------------------------------------------------------
+# The manual path: caption on the clipboard, folder open, drag the file.
+# ---------------------------------------------------------------------------
 
 
 def copy_to_clipboard(text: str) -> bool:

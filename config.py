@@ -26,9 +26,34 @@ class Settings(BaseSettings):
     )
 
     # --- Credentials -------------------------------------------------------
-    # The only one. Script generation uses the Claude Code CLI's existing
-    # subscription auth, so there is no ANTHROPIC_API_KEY anywhere in here.
+    # Script generation uses the Claude Code CLI's existing subscription auth,
+    # so there is no ANTHROPIC_API_KEY anywhere in here.
     github_token: str = Field(default="", description="GitHub PAT, no scopes needed")
+
+    # --- Instagram publishing ----------------------------------------------
+    # Optional: everything except `--post` and `--publish` runs without these.
+    # Setup is in INSTAGRAM.md; the short version is a Meta app in development
+    # mode with your own account added as a tester, which needs no App Review.
+    ig_user_id: str = ""
+    # The seed token only. The live one lives in data/ig_token.json, because a
+    # refreshed token has to be written back somewhere and rewriting .env from
+    # a cron job is a good way to lose the rest of the file.
+    ig_access_token: str = ""
+    # graph.instagram.com is the Instagram Login path. The Facebook Login path
+    # is graph.facebook.com with a different permission set; only the host
+    # changes here, so it is a setting rather than a fork in the code.
+    ig_graph_host: str = "https://graph.instagram.com"
+    ig_api_version: str = "v23.0"
+    # Meta suggests polling a container once a minute for no more than five.
+    # Ours are 30-45s of 1080x1920, which in practice finish inside a minute,
+    # so poll faster and keep the ceiling.
+    ig_poll_interval_s: int = 8
+    ig_publish_timeout_s: int = 300
+    ig_upload_timeout_s: int = 600
+    # Refresh when the token has less than this left. Long-lived tokens last 60
+    # days and can be refreshed any time after they are 24 hours old, so a wide
+    # margin costs nothing and a narrow one risks a missed cron.
+    ig_refresh_margin_days: int = 15
 
     # --- Topic selection ---------------------------------------------------
     min_stars_breakout: int = 400
@@ -172,6 +197,15 @@ class Settings(BaseSettings):
     def used_repos_path(self) -> Path:
         return self.data_dir / "used_repos.json"
 
+    @property
+    def ig_token_path(self) -> Path:
+        """Where the live Instagram token lives. Gitignored with the rest of data/."""
+        return self.data_dir / "ig_token.json"
+
+    @property
+    def ig_graph_base(self) -> str:
+        return f"{self.ig_graph_host.rstrip('/')}/{self.ig_api_version}"
+
     def run_dir(self, slug: str, on: date | None = None) -> Path:
         """Per-run artifact folder: build/2026-07-30/owner-repo/.
 
@@ -210,6 +244,27 @@ def resolve_claude_cli() -> str:
             "`claude --version` works in this shell."
         )
     return path
+
+
+def require_instagram(settings: Settings) -> None:
+    """Fail before a render if publishing is asked for but not configured.
+
+    Checked up front rather than at the end, because the alternative is
+    discovering it after Remotion has spent ten minutes on an MP4.
+    """
+    missing = [] if settings.ig_user_id else ["IG_USER_ID"]
+    # A stored token counts: after the first --refresh-token the .env line is
+    # stale by design, and demanding it back would be a lie about what is needed.
+    if not settings.ig_access_token and not settings.ig_token_path.exists():
+        missing.append("IG_ACCESS_TOKEN")
+    if missing:
+        raise ConfigError(
+            f"Instagram publishing is not configured ({', '.join(missing)} missing).\n"
+            "Setup is section 3 of INSTAGRAM.md: a Meta app in development mode, your "
+            "own account added as an Instagram tester, then a long-lived token.\n"
+            "No App Review is needed to publish to an account that holds a role on "
+            "your own app."
+        )
 
 
 def require_github_token(settings: Settings) -> str:
