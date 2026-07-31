@@ -123,9 +123,14 @@ rather than Meta's own text, it is flagged.
       │  publish_reel()                      • private reply + follow gate
       ├────────────► Instagram ◄────────────┘      + link sender
       │                                      • cover file host (public URL)
-      └── register post ────────────────►    • SQLite state on a PVC
-          (media_id, keyword, link,
-           cover.png upload)
+      ├── register post ────────────────►    • admin UI, behind Authentik (F)
+      │   (media_id, keyword, link,          • job queue + insights snapshots
+      │    cover.png upload)                 • SQLite state on a PVC
+      │
+ agent: polls the job queue (pull only,
+ the cluster never reaches the laptop),
+ runs renders and publishes, uploads
+ previews back for approval
 ```
 
 The voice, the reference recording, the Chatterbox venv, and rendering stay on
@@ -247,6 +252,8 @@ Routes:
 | `GET /covers/<name>.png` | none | The URL Meta fetches |
 | `GET /healthz` | none | Liveness |
 | `GET /metrics` | cluster-internal | Prometheus (comment polls, replies sent, links sent, follow-gate conversion) |
+| `GET /admin/...` | Authentik forward-auth at Traefik | The admin UI (section F) |
+| `/api/jobs...` | Bearer token | The Mac agent claims jobs, reports progress, uploads preview artifacts |
 
 Background tasks in the same process:
 
@@ -266,11 +273,15 @@ the migration path if this ever needs more than one replica):
 - `comments_handled` (comment_id PK, media_id, igsid?, replied_at)
 - `conversations` (igsid, account, state: replied/awaiting_follow/converted,
   last_inbound_at, link_sent_at)
+- `jobs` (id, type: render/publish, account, params, state:
+  queued/claimed/running/done/failed, claimed_at, log_tail, artifact_path)
+- `insights_daily` (media_id, day, views, reach, likes, follower_count)
 
 ### B4. Meta dashboard work (you, ~15 min on top of the publishing setup)
 
-1. Same Meta app as publishing. Add scopes `instagram_business_manage_messages`
-   and `instagram_business_manage_comments` next to the existing two.
+1. Same Meta app as publishing. Add scopes `instagram_business_manage_messages`,
+   `instagram_business_manage_comments` and `instagram_business_manage_insights`
+   next to the existing two.
 2. Configure the webhook product: callback `https://<gateway-host>/webhook`,
    verify token from the gateway's secret, subscribe to the `messages` field.
 3. Switch the app to **Live** (webhooks are only delivered to Live apps; Live
@@ -332,6 +343,52 @@ Designed in from day one, activated later:
   account alias email, no shared contact details). Accounts you do not own
   would need App Review; owned accounts do not.
 
+## F. Admin UI
+
+One place to see and steer everything, served by the same gateway process at
+`/admin`. Server-rendered (Jinja + HTMX) rather than a separate frontend:
+one container, no frontend build pipeline, and every page is a form over the
+SQLite tables the gateway already owns. Auth is Authentik forward-auth at
+Traefik, the homelab's house pattern; `/webhook`, `/covers/*` and the
+bearer-token `/api/*` routes bypass it (Meta and the Mac agent cannot log in
+to Authentik).
+
+**Control.** Accounts (add via OAuth, pause, token status), per-post keyword
+and link editing after publish, the DM copy templates, and a per-account
+kill switch that stops all outbound DMs without touching the webhook
+subscription. The kill switch is the safety feature: policy trouble or a
+runaway bug is answered from the phone in one tap.
+
+**Generate.** A "new video" button that queues a render job: pick a repo
+from the live candidates list (the gateway proxies `--candidates` scoring
+data uploaded by the agent) or type `owner/repo`. The Mac agent, a small
+launchd-kept loop polling `/api/jobs` every 30 seconds, claims the job and
+drives `main.py`. It streams state and log tail back, then uploads
+`out.mp4`, `cover.png` and `caption.txt` as preview artifacts. The UI shows
+the video inline with an **Approve and publish** button, which queues a
+publish job for the same agent. Publishing therefore still happens only on
+the Mac, with the Mac's token, through the same `_publish_run()` path as
+ever; the UI adds remote review and approval, it does not move trust into
+the cluster. Renders need the laptop awake; a queued job simply waits until
+the agent next polls, and the UI says so rather than pretending otherwise.
+
+**Metrics.** Three layers:
+
+- The funnel, per account and per post: comments seen → private replies →
+  users who replied → follows confirmed → links sent. This is the number
+  the whole mechanic exists for.
+- Operational: token expiry countdowns (the thing that silently kills
+  everything), job history, poller lag, webhook signature failures. Same
+  data exported at `/metrics`; kube-prometheus-stack scrapes it and a
+  Grafana dashboard can come later, but the admin UI is the primary view.
+- Post performance: a daily task snapshots each published Reel's insights
+  (views, reach, likes) plus account follower count into `insights_daily`,
+  via the `instagram_business_manage_insights` scope. This fills the post
+  log INSTAGRAM.md keeps by hand today, and later feeds repo selection.
+  Metric names have shifted between API versions (plays became views);
+  verify the current list against the media-insights doc at build time
+  rather than trusting this document.
+
 ---
 
 ## Phases
@@ -360,7 +417,16 @@ Designed in from day one, activated later:
 - [ ] Caption CTA line.
 - [ ] Flip launchd to `--post` once trust is earned.
 
-**Phase 4, scale (when account #2 exists)**
+**Phase 4, admin UI and the Mac agent (F)**
+- [ ] Job queue tables + `/api/jobs` endpoints in the gateway.
+- [ ] The agent: launchd-kept poll loop on the Mac wrapping `main.py`,
+      artifact upload for previews.
+- [ ] `/admin` pages: dashboard/funnel, accounts, posts, templates, kill
+      switch, generate + approve flow. Authentik forward-auth middleware on
+      the HTTPRoute.
+- [ ] Insights snapshot task + `instagram_business_manage_insights` scope.
+
+**Phase 5, scale (when account #2 exists)**
 - [ ] `--account` profiles in the pipeline.
 - [ ] App Review + Business Verification if comment webhooks or non-owned
       accounts become worth it.
@@ -380,6 +446,7 @@ No Facebook Page required.
 | `instagram_business_manage_comments` | read comments, reply, **private replies**, comment webhooks |
 | `instagram_business_manage_messages` | DMs both ways, `messages` webhooks, User Profile API |
 | `instagram_business_content_publish` | publishing (the pipeline already uses it) |
+| `instagram_business_manage_insights` | media + account insights for the admin UI's metrics |
 
 **Token flow** (matches what `pipeline/publisher.py` already does):
 authorize at `www.instagram.com/oauth/authorize` → short-lived token via
@@ -396,6 +463,7 @@ while the token is older than 24h and not yet expired.
 | DM inside the 24h window | same endpoint, `{"recipient": {"id": "<IGSID>"}}` |
 | Follower check | `GET /<IGSID>?fields=username,is_user_follow_business,is_business_follow_user,follower_count`. Errors with "user consent is required" until the user has messaged the account. |
 | Poll comments | `GET /<MEDIA_ID>/comments` |
+| Insights snapshot | `GET /<MEDIA_ID>/insights?metric=...` and `GET /<IG_ID>?fields=followers_count`. Metric names shift between versions; verify the current list at build time. |
 | Enable webhooks for an account | `POST /me/subscribed_apps?subscribed_fields=messages` with that account's token |
 
 **Webhooks:** app-level config in the dashboard (callback URL + verify
