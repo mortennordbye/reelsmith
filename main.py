@@ -454,17 +454,31 @@ def _publish_run(cfg: Settings, run_dir: Path, *, cover_url: str | None = None) 
     if not caption:
         console.print("[yellow]No caption.txt in this run; posting without a caption.[/]")
 
-    # Meta fetches cover_url when the container is created, so this has to
-    # happen before the publish, not after. An explicit --cover-url always wins.
+    # Meta fetches both of these from its own servers while the container is
+    # created, so they have to be public before the publish, not after.
     if cover_url is None:
         with console.status("Hosting the cover..."):
             cover_url = gateway.upload_cover(run_dir / "cover.png", run_dir.name, cfg)
         if cover_url:
             console.print(f"[dim]Cover hosted at {cover_url}[/]")
 
+    with console.status("Hosting the video..."):
+        video_url = gateway.upload_media(video_path, run_dir.name, cfg)
+    if not video_url:
+        # Unlike the cover, there is no fallback. Meta will not take the bytes.
+        console.print(
+            "[bold red]Cannot publish[/] the video has nowhere public to live.\n"
+            "[dim]Meta fetches the MP4 rather than accepting an upload on this API path. "
+            "Set GATEWAY_URL and GATEWAY_TOKEN, or host it yourself.[/]"
+        )
+        raise typer.Exit(1)
+    console.print(f"[dim]Video hosted at {video_url}[/]")
+
     try:
-        with console.status("Uploading and waiting for Instagram to process..."):
-            result = publisher.publish_reel(video_path, caption, cfg, cover_url=cover_url)
+        with console.status("Waiting for Instagram to fetch and process..."):
+            result = publisher.publish_reel(
+                video_path, caption, cfg, video_url=video_url, cover_url=cover_url
+            )
     except publisher.PublishError as exc:
         console.print(f"[bold red]Publish failed[/]\n{exc}")
         raise typer.Exit(1) from exc

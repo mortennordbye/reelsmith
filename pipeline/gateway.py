@@ -138,6 +138,45 @@ def upload_cover(
     return public_url
 
 
+def upload_media(
+    path: Path, slug: str, cfg: Settings, *, client: httpx.Client | None = None
+) -> str | None:
+    """Host any file Meta has to fetch, and return the public URL.
+
+    Unlike the cover, the video is **not** optional. Meta pulls the MP4 from a
+    public URL on this API path, so if this returns None there is no publish at
+    all. The caller decides how loudly to fail: `_publish_run` raises for the
+    video and shrugs for the cover.
+    """
+    if not _configured(cfg):
+        return None
+    if not path.exists():
+        log.debug("Nothing to upload at %s", path)
+        return None
+
+    url = f"{cfg.gateway_url.rstrip('/')}/api/media"
+    mime = "video/mp4" if path.suffix.lower() == ".mp4" else "image/png"
+    try:
+        # Videos are tens of MB and the upload crosses the internet to the
+        # cluster, so this gets its own, longer clock.
+        with client or httpx.Client(timeout=cfg.ig_upload_timeout_s) as http:
+            response = http.post(
+                url,
+                headers=_headers(cfg),
+                files={"file": (path.name, path.read_bytes(), mime)},
+                data={"slug": slug},
+            )
+            response.raise_for_status()
+            public_url = response.json().get("url")
+    except (httpx.HTTPError, ValueError, OSError) as exc:
+        log.warning("Hosting %s failed: %s", path.name, exc)
+        return None
+
+    if public_url:
+        log.info("Hosting %s at %s", path.name, public_url)
+    return public_url
+
+
 def register_post(
     media_id: str,
     link: str,

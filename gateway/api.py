@@ -16,7 +16,7 @@ import hashlib
 import hmac
 import logging
 import re
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
@@ -34,6 +34,18 @@ router = APIRouter()
 # Anything outside this cannot become part of a path on disk.
 _SAFE_NAME = re.compile(r"[^a-z0-9-]+")
 _MAX_COVER_BYTES = 8 * 1024 * 1024
+
+# Video is the reason this service hosts anything at all beyond covers.
+# `upload_type=resumable` is documented as Facebook Login only, so on the
+# Instagram Login path Meta will not take the MP4 as bytes: it fetches
+# `video_url` from a public server. This is that server.
+_MAX_VIDEO_BYTES = 300 * 1024 * 1024
+_MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".mp4": "video/mp4"}
+
+# Meta fetches the file once, while the container is being created. Keeping it
+# much beyond that only fills the volume, which is 1Gi and shared with the
+# database. A week is generous for retries and a republish.
+_MEDIA_TTL_DAYS = 7
 
 
 async def require_token(request: Request) -> None:
@@ -141,3 +153,71 @@ async def serve_cover(request: Request, name: str) -> FileResponse:
     if not cleaned.endswith(".png") or not path.is_file():
         raise HTTPException(status_code=404, detail="no such cover")
     return FileResponse(path, media_type="image/png")
+
+
+def _prune_media(directory: Path) -> int:
+    """Drop anything older than the TTL. Returns how many went.
+
+    Called on upload rather than on a timer: uploads are the only thing that
+    grows this directory, so that is exactly when it needs bounding, and it
+    saves a background task that could fail silently.
+    """
+    cutoff = db.now() - timedelta(days=_MEDIA_TTL_DAYS)
+    removed = 0
+    for path in directory.glob("*"):
+        try:
+            if path.is_file() and datetime.fromtimestamp(path.stat().st_mtime, UTC) < cutoff:
+                path.unlink()
+                removed += 1
+        except OSError as exc:  # a file vanishing under us is not an error
+            log.debug("Could not prune %s: %s", path, exc)
+    return removed
+
+
+@router.post("/api/media", response_model=CoverUploaded, dependencies=[Depends(require_token)])
+async def upload_media(
+    request: Request,
+    file: Annotated[UploadFile, File()],
+    slug: Annotated[str, Form()] = "media",
+) -> CoverUploaded:
+    """Host a file Meta has to fetch, and hand back the URL it should fetch.
+
+    Covers and videos both come through here. The video is the load bearing
+    one: without a public URL there is no way to publish a Reel on the
+    Instagram Login path at all.
+    """
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in _MEDIA_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"unsupported type {suffix!r}, expected one of {sorted(_MEDIA_TYPES)}",
+        )
+
+    payload = await file.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="empty upload")
+    limit = _MAX_VIDEO_BYTES if suffix == ".mp4" else _MAX_COVER_BYTES
+    if len(payload) > limit:
+        raise HTTPException(status_code=413, detail=f"{suffix} larger than {limit} bytes")
+
+    cfg = request.app.state.cfg
+    media_dir = Path(cfg.covers_dir)
+    media_dir.mkdir(parents=True, exist_ok=True)
+    pruned = _prune_media(media_dir)
+    if pruned:
+        log.info("Pruned %d media files past %d days", pruned, _MEDIA_TTL_DAYS)
+
+    name = safe_cover_name(slug, payload).removesuffix(".png") + suffix
+    (media_dir / name).write_bytes(payload)
+    log.info("Hosting %s (%.1f MB)", name, len(payload) / 1_048_576)
+    return CoverUploaded(name=name, url=f"{cfg.public_base_url}/media/{name}")
+
+
+@router.get("/media/{name}")
+async def serve_media(request: Request, name: str) -> FileResponse:
+    cleaned = Path(name).name
+    media_type = _MEDIA_TYPES.get(Path(cleaned).suffix.lower())
+    path = Path(request.app.state.cfg.covers_dir) / cleaned
+    if media_type is None or not path.is_file():
+        raise HTTPException(status_code=404, detail="no such media")
+    return FileResponse(path, media_type=media_type)

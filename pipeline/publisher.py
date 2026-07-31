@@ -3,12 +3,15 @@
 Two paths out of here, and the difference is whether a human looks at the video
 first.
 
-**Automatic.** `publish_reel()` uploads `out.mp4` straight to the account. Three
-facts make this cheap, and all three contradict what this file used to say:
+**Automatic.** `publish_reel()` publishes `out.mp4` to the account. Three facts
+shape it:
 
-- The Reels container accepts `upload_type=resumable`, so the MP4 goes up as
-  raw bytes to `rupload.facebook.com`. The older flow made Meta cURL a public
-  URL, which is what put "stand up object storage" in the way.
+- **Meta fetches the video, it is never pushed.** The container needs a public
+  `video_url`. This file used to claim `upload_type=resumable` let the MP4 go
+  up as raw bytes, which is true only for Facebook Login for Business; on the
+  Instagram Login path the API answers "The parameter video_url is required".
+  The claim survived because the first posts were made by hand, so the code
+  had never actually run. The gateway is what hosts the file.
 - App Review is only for Advanced Access, meaning acting on accounts you do not
   own. Standard Access is automatic and covers any account holding a role on
   your app, so publishing to your own account needs an app in development mode
@@ -44,10 +47,6 @@ from config import Settings
 from pipeline.renderer import COVER_FRAME
 
 log = logging.getLogger(__name__)
-
-# Uploads do not go to the Graph host. This one is fixed for both the Instagram
-# Login and Facebook Login paths, so unlike the Graph host it is not a setting.
-UPLOAD_HOST = "https://rupload.facebook.com/ig-api-upload"
 
 # Terminal states from GET /<container-id>?fields=status_code. IN_PROGRESS is
 # the only one worth waiting on.
@@ -200,20 +199,25 @@ def publish_reel(
     caption: str,
     cfg: Settings,
     *,
+    video_url: str | None = None,
     cover_url: str | None = None,
     client: httpx.Client | None = None,
 ) -> PublishResult:
-    """Upload and publish `video_path` as a Reel. Returns the published media.
+    """Publish `video_path` as a Reel. Returns the published media.
 
-    Four calls: create a resumable container, push the bytes, wait for Meta to
-    transcode, publish. The wait is the slow part and there is no callback, so
-    it is a poll.
+    Three calls: create a container pointing at a public `video_url`, wait for
+    Meta to fetch and transcode it, publish. The wait is the slow part and
+    there is no callback, so it is a poll.
 
-    The cover is the one thing that did not get easier. `cover_url` is fetched
-    by Meta, so a designed cover still needs somewhere public to live; without
-    one this falls back to `thumb_offset`, which can only pick a frame that is
-    already in the video. COVER_FRAME is the frame `render_covers` uses, so the
-    fallback is the same moment as cover.png without the hook band.
+    **Meta pulls the file, this never pushes it.** `upload_type=resumable`,
+    which does take raw bytes, is documented as Facebook Login for Business
+    only; on the Instagram Login path `graph.instagram.com` answers "The
+    parameter video_url is required". This file used to claim otherwise and was
+    wrong, which went unnoticed because the first posts were made by hand.
+
+    So both the video and the cover need somewhere public to live, and that is
+    what the gateway is for. Without a `cover_url` the thumbnail falls back to
+    `thumb_offset`; without a `video_url` there is no publish at all.
     """
     if not video_path.exists():
         raise PublishError(f"No video at {video_path}")
@@ -224,9 +228,19 @@ def publish_reel(
     token = load_token(cfg).access_token
     base = f"{cfg.ig_graph_base}/{cfg.ig_user_id}"
 
+    if not video_url:
+        raise PublishError(
+            "Publishing a Reel needs a public video_url, and none was provided.\n"
+            "Meta fetches the file from its own servers on this API path: "
+            "upload_type=resumable is documented as Facebook Login for Business only, "
+            "and graph.instagram.com rejects it with 'The parameter video_url is required'.\n"
+            "Set GATEWAY_URL and GATEWAY_TOKEN so the pipeline can host the MP4, "
+            "or pass a URL yourself."
+        )
+
     params: dict[str, str] = {
         "media_type": "REELS",
-        "upload_type": "resumable",
+        "video_url": video_url,
         "caption": caption.strip(),
     }
     if cover_url:
@@ -235,16 +249,11 @@ def publish_reel(
         params["thumb_offset"] = str(round(COVER_FRAME / cfg.fps * 1000))
 
     with _client(client, timeout=cfg.ig_upload_timeout_s) as http:
-        log.info("Creating Reels container (%.1f MB)", size / 1_048_576)
+        log.info("Creating Reels container (%.1f MB, fetched from %s)", size / 1_048_576, video_url)
         created = _graph_json(http, "POST", f"{base}/media", token=token, data=params)
         container_id = created.get("id")
         if not container_id:
             raise PublishError(f"Container creation returned no id: {created}")
-
-        # Meta hands back the upload URI. Prefer it over building one: it
-        # carries the API version the container was actually created under.
-        upload_uri = created.get("uri") or f"{UPLOAD_HOST}/{cfg.ig_api_version}/{container_id}"
-        _upload(http, upload_uri, video_path, size, token)
 
         _await_container(http, cfg, container_id, token)
 
@@ -259,61 +268,6 @@ def publish_reel(
         return PublishResult(media_id=media_id, permalink=_permalink(http, cfg, media_id, token))
 
 
-def _upload(
-    http: httpx.Client, uri: str, video_path: Path, size: int, token: str, *, attempts: int = 3
-) -> None:
-    """Push the file, resuming from Meta's offset if a transfer dies mid-way.
-
-    The whole file is read into memory, which is fine for a 30-45 second Reel at
-    tens of MB and would not be for anything longer.
-    """
-    payload = video_path.read_bytes()
-    offset = 0
-
-    for attempt in range(1, attempts + 1):
-        try:
-            resp = http.post(
-                uri,
-                headers={
-                    # OAuth, not Bearer. The upload host takes a different
-                    # scheme from the Graph host and rejects the other one.
-                    "Authorization": f"OAuth {token}",
-                    "offset": str(offset),
-                    "file_size": str(size),
-                    "Content-Type": "application/octet-stream",
-                },
-                content=payload[offset:],
-            )
-        except httpx.HTTPError as exc:
-            if attempt == attempts:
-                raise PublishError(f"Upload failed after {attempts} attempts: {exc}") from exc
-            log.warning("Upload attempt %d failed (%s), retrying", attempt, exc)
-            offset = _resume_offset(http, uri, token)
-            continue
-
-        if resp.status_code < 400:
-            log.info("Uploaded %.1f MB", size / 1_048_576)
-            return
-
-        detail = _error_message(resp)
-        if attempt == attempts:
-            raise PublishError(f"Upload failed (HTTP {resp.status_code}): {detail}")
-        log.warning("Upload attempt %d failed (%s), retrying", attempt, detail)
-        offset = _resume_offset(http, uri, token)
-
-
-def _resume_offset(http: httpx.Client, uri: str, token: str) -> int:
-    """Ask how many bytes survived. Falls back to starting over.
-
-    A GET on the upload URI reports progress, but a failure here is not worth
-    failing the run over: re-sending from zero is slower, not wrong.
-    """
-    try:
-        resp = http.get(uri, headers={"Authorization": f"OAuth {token}"})
-        value = resp.json().get("bytes_transferred")
-        return int(value) if value is not None else 0
-    except (httpx.HTTPError, ValueError, TypeError, json.JSONDecodeError):
-        return 0
 
 
 def _await_container(http: httpx.Client, cfg: Settings, container_id: str, token: str) -> None:

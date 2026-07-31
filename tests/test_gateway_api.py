@@ -7,6 +7,8 @@ be impossible to steer.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -214,6 +216,67 @@ async def test_the_cover_route_serves_nothing_but_covers(client, name):
     response = await http.get(f"/covers/{name}")
 
     assert response.status_code == 404
+
+
+# --- Media, which is why publishing works at all -----------------------------
+
+MP4 = b"\x00\x00\x00\x20ftypisom" + b"0" * 512
+
+
+async def test_a_video_round_trips_and_is_served_as_video(client):
+    """Meta fetches the MP4 from a public URL on the Instagram Login path.
+    `upload_type=resumable` is Facebook Login only, so without this there is no
+    publish at all."""
+    http, _ = client
+
+    up = await http.post(
+        "/api/media", files={"file": ("out.mp4", MP4, "video/mp4")},
+        data={"slug": "xai-org-grok-build"}, headers=AUTH,
+    )
+
+    assert up.status_code == 200
+    url = up.json()["url"]
+    assert "/media/" in url and url.endswith(".mp4")
+
+    fetched = await http.get(httpx.URL(url).path)
+    assert fetched.status_code == 200
+    assert fetched.headers["content-type"] == "video/mp4"
+    assert fetched.content == MP4
+
+
+async def test_media_refuses_a_type_meta_would_not_take(client):
+    http, _ = client
+    r = await http.post(
+        "/api/media", files={"file": ("notes.txt", b"hello", "text/plain")}, headers=AUTH
+    )
+    assert r.status_code == 415
+
+
+async def test_media_needs_the_bearer_token(client):
+    http, _ = client
+    r = await http.post("/api/media", files={"file": ("out.mp4", MP4, "video/mp4")})
+    assert r.status_code == 401
+
+
+async def test_old_media_is_pruned_on_upload(client, cfg):
+    """The volume is 1Gi and shared with the database. Meta fetches the file
+    once, at container creation, so nothing needs to live long."""
+    import os
+    import time
+
+    http, _ = client
+    stale = Path(cfg.covers_dir)
+    stale.mkdir(parents=True, exist_ok=True)
+    old = stale / "old-deadbeef.mp4"
+    old.write_bytes(b"x")
+    ancient = time.time() - 30 * 86_400
+    os.utime(old, (ancient, ancient))
+
+    await http.post(
+        "/api/media", files={"file": ("out.mp4", MP4, "video/mp4")}, headers=AUTH
+    )
+
+    assert not old.exists(), "a month-old video should not survive an upload"
 
 
 async def test_an_empty_upload_is_refused(client):
