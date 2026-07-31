@@ -1,0 +1,51 @@
+# Tests and lint for everything in the repo. The gateway image is built by
+# build-gateway.yml instead, which is path-filtered, because a commit that only
+# touches the pipeline must not produce a new image tag: Kargo would see it as
+# new Freight and open a deploy PR for a byte-identical container.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: pytest + ruff
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      # pyproject pins >=3.13,<3.14, so let uv resolve it rather than pinning a
+      # patch version here that drifts from what runs on the Mac.
+      - name: Set up Python
+        run: uv python install 3.13
+
+      # The pipeline's own deps carry playwright, faster-whisper and the Kokoro
+      # runtime. None of them are needed to run the suite, which is pure logic by
+      # design, but the modules are imported, so they have to resolve.
+      - name: Install dependencies
+        run: |
+          uv venv --python 3.13
+          uv pip install -r requirements.txt
+          uv pip install -e ".[dev,gateway]"
+
+      - name: Ruff
+        run: uv run ruff check
+
+      - name: Tests
+        run: uv run pytest
