@@ -22,6 +22,22 @@ def _cfg(**kw) -> Settings:
     return Settings(github_token="x", **kw)
 
 
+# The chatterbox venv is a ~3 GB local build carrying torch, and it is
+# gitignored, so it exists on a machine that has run the voice setup and nowhere
+# else. Anything that has to construct the backend needs it, because
+# `get_backend` checks for the interpreter before it does anything else.
+#
+# Skipping rather than building it in CI is the deliberate choice: this suite is
+# pure logic by design, and a 3 GB download to reach four assertions would be
+# the slowest possible way to learn nothing new. The half of the contract that
+# git can actually protect, `synth.py` existing at the path the pipeline shells
+# out to, is asserted unconditionally below.
+requires_chatterbox_venv = pytest.mark.skipif(
+    not _cfg().chatterbox_python.exists(),
+    reason="the chatterbox venv is a local 3 GB build and is absent here",
+)
+
+
 class TestBackendSelection:
     def test_each_name_maps_to_its_backend(self):
         assert isinstance(tts.get_backend(_cfg(), "edge"), tts.EdgeTTSBackend)
@@ -62,6 +78,7 @@ class TestVoiceName:
         assert not (set(name) & set(':/\\'))
 
 
+@requires_chatterbox_venv
 class TestChatterboxGuards:
     def test_missing_reference_names_the_recording_instructions(self, tmp_path):
         cfg = _cfg(chatterbox_ref=tmp_path / "nope.wav")
@@ -106,12 +123,14 @@ class TestWorkerContract:
     """The worker is invoked by path from a different interpreter, so a rename
     or a moved venv breaks the pipeline with no import error to warn about."""
 
-    def test_worker_and_interpreter_exist(self):
-        cfg = _cfg()
-        assert cfg.chatterbox_worker.exists(), "tools/chatterbox/synth.py is missing"
-        assert cfg.chatterbox_python.exists(), (
-            "tools/chatterbox/.venv is missing; rebuild it or set TTS_BACKEND=kokoro"
-        )
+    def test_worker_exists_at_the_path_the_pipeline_shells_out_to(self):
+        # Tracked in git, so this one is a real contract: a rename breaks the
+        # pipeline at runtime with no import error to warn about.
+        assert _cfg().chatterbox_worker.exists(), "tools/chatterbox/synth.py is missing"
+
+    @requires_chatterbox_venv
+    def test_interpreter_exists(self):
+        assert _cfg().chatterbox_python.exists()
 
     def test_worker_normalises_below_clipping(self):
         # Chatterbox renders hot enough to clip. The constant lives in the
