@@ -409,6 +409,9 @@ the agent next polls, and the UI says so rather than pretending otherwise.
 
 **Phase 2, cluster**
 - [ ] Dockerfile + GH Actions build to ghcr (SHA tags).
+- [ ] Image pruning in the same workflow (delete untagged and old versions).
+      Private ghcr storage is free only to 500 MB and SHA tags accumulate
+      past it within a few builds; pruning is free, overage is not.
 - [ ] Manifests in Homelab repo, ESO secret, DNS, deploy via ArgoCD.
 - [ ] Point the Meta webhook at the cluster URL, retire the tunnel.
 
