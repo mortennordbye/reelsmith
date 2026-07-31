@@ -90,6 +90,73 @@ const Hook: React.FC<{ text: string }> = ({ text }) => {
 // account handle rather than the repo name. A repost is worth marking; a repo
 // name is the thing being traded.
 
+// How long the end card holds. Long enough to read and act on, short enough
+// that it does not eat the last point the voiceover is making.
+const CTA_SECONDS = 4;
+
+/**
+ * The ask, on screen. The caption carries the same line, but a caption sits
+ * behind a "more" tap that most viewers never make, so without this the whole
+ * comment-to-DM mechanic depends on an interaction that does not happen.
+ *
+ * Deliberately plain: no arrows, no emoji, no "link in bio". The instruction is
+ * the entire message and anything else competes with it.
+ */
+const CallToAction: React.FC<{ keyword: string }> = ({ keyword }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  // Rises rather than pops. A spring here reads as a template transition.
+  const enter = interpolate(frame, [0, 0.4 * fps], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  return (
+    <AbsoluteFill
+      style={{
+        justifyContent: "flex-end",
+        alignItems: "center",
+        paddingBottom: 420,
+        opacity: enter,
+      }}
+    >
+      <div
+        style={{
+          transform: `translateY(${(1 - enter) * 24}px)`,
+          textAlign: "center",
+          padding: "28px 44px",
+          borderRadius: 28,
+          backgroundColor: "rgba(1, 4, 9, 0.82)",
+          border: `2px solid ${theme.color.accent}`,
+        }}
+      >
+        <div
+          style={{
+            fontFamily: theme.font.display,
+            fontSize: 62,
+            fontWeight: 800,
+            color: theme.color.text,
+            lineHeight: 1.1,
+          }}
+        >
+          Comment <span style={{ color: theme.color.accent }}>{keyword}</span>
+        </div>
+        <div
+          style={{
+            fontFamily: theme.font.display,
+            fontSize: 34,
+            fontWeight: 600,
+            color: theme.color.muted,
+            marginTop: 10,
+          }}
+        >
+          and I send you the link
+        </div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
 export const Reel: React.FC<VideoSpec> = (spec) => {
   const { fps } = useVideoConfig();
 
@@ -115,6 +182,18 @@ export const Reel: React.FC<VideoSpec> = (spec) => {
       <Sequence durationInFrames={HOOK_SECONDS * fps} layout="none">
         <Hook text={spec.hook} />
       </Sequence>
+
+      {/* Anchored to the end rather than given a fixed slot, so it always lands
+          under the closing line of the voiceover however long the script ran. */}
+      {spec.ctaKeyword ? (
+        <Sequence
+          from={Math.max(0, spec.durationInFrames - CTA_SECONDS * fps)}
+          durationInFrames={CTA_SECONDS * fps}
+          layout="none"
+        >
+          <CallToAction keyword={spec.ctaKeyword} />
+        </Sequence>
+      ) : null}
 
       {spec.audioSrc ? <Audio src={staticFile(spec.audioSrc)} /> : null}
     </AbsoluteFill>

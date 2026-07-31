@@ -42,10 +42,17 @@ class GatewaySettings(BaseSettings):
     graph_timeout_s: float = 20.0
 
     # --- Behaviour ---------------------------------------------------------
-    # Meta allows 750 private replies per hour per account. One sweep a minute
-    # over a handful of posts is not close to it, and the reply window is seven
-    # days, so an hour of downtime costs nothing.
-    poll_interval_s: int = 60
+    # How long someone waits between commenting and the DM arriving. Meta's own
+    # messaging policy expects an automated experience to respond within 30
+    # seconds, and a 60 second sweep misses that on a bad draw: worst case is a
+    # full interval, so 60 meant up to a minute.
+    #
+    # At 20s the worst case is 20 seconds and the average is 10. The cost is
+    # reads: one call per watched post per sweep, and posts age out after
+    # `post_ttl_days`, so the ceiling is 7 posts x 180 sweeps/hour = 1260 reads
+    # an hour. Private replies, the genuinely limited action at 750/hour, are
+    # unaffected because they only happen once per comment.
+    poll_interval_s: int = 20
     # How long a post stays in the poller's sweep. Meta refuses a private reply
     # more than seven days after the comment, so polling past that only burns
     # quota.

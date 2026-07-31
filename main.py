@@ -300,9 +300,18 @@ def run(
         (p for p in (audio_path, run_dir / "voice.mp3", run_dir / "voice.wav") if p.exists()),
         None,
     )
+    # The voice reads the ask too. The caption carries it and so does the end
+    # card, but the caption is behind a "more" tap and the card can be scrolled
+    # past, so the one channel that reaches everyone who watches is the audio.
+    cta_keyword = gateway.keyword_for(repo.full_name, cfg)
+    spoken = script.spoken_script
+    cta_line = gateway.spoken_cta(cta_keyword, cfg)
+    if cta_line:
+        spoken = f"{spoken.rstrip()} {cta_line}"
+
     if existing is None:
         console.rule("[bold]3/5  Synthesizing the voiceover")
-        tts.synthesize(script.spoken_script, audio_path, cfg)
+        tts.synthesize(spoken, audio_path, cfg)
     else:
         audio_path = existing
         console.rule("[bold]3/5  Voiceover [dim](cached)")
@@ -322,7 +331,7 @@ def run(
     else:
         console.rule("[bold]4/5  Aligning captions with Whisper")
         with console.status(f"Transcribing with {cfg.whisper_model}..."):
-            caps = captions_mod.transcribe(audio_path, cfg, script.spoken_script)
+            caps = captions_mod.transcribe(audio_path, cfg, spoken)
         captions_path.write_text(
             json.dumps([json.loads(c.model_dump_json()) for c in caps], indent=2)
         )
@@ -357,6 +366,9 @@ def run(
     video_spec: VideoSpec = spec_mod.build_spec(
         repo, script, caps, duration, audio_src, cfg, screenshot_src=screenshot_src
     )
+    # The end card. Same word the voice just read and the caption carries, so
+    # the three cannot disagree about what to comment.
+    video_spec = video_spec.model_copy(update={"ctaKeyword": cta_keyword if cta_line else None})
     renderer.write_spec(video_spec, run_dir / "video.json")
 
     out_path = run_dir / "out.mp4"

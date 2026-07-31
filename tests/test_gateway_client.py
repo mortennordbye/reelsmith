@@ -210,3 +210,28 @@ def test_the_keyword_is_always_a_single_typable_word(cfg):
         word = gateway.keyword_for(repo, cfg)
         assert word.isalnum(), f"{word} would not survive the API's one-word rule"
         assert word == word.upper()
+
+
+# --- The spoken call to action ----------------------------------------------
+
+
+def test_the_voice_reads_the_ask(cfg):
+    assert gateway.spoken_cta("GROK", cfg) == "Comment GROK and I send you the link."
+
+
+def test_no_spoken_ask_when_nothing_is_listening(off):
+    assert gateway.spoken_cta("GROK", off) is None
+
+
+def test_the_spoken_ask_obeys_the_text_rules(cfg):
+    line = gateway.spoken_cta("GROK", cfg)
+    assert not (set(line) & _BANNED_PUNCTUATION), "no colons or dashes in anything spoken"
+    assert not any(ord(c) > 0x2500 for c in line)
+
+
+def test_the_three_channels_agree_on_the_word(cfg):
+    """The end card, the voiceover and the caption all derive from one place.
+    If they ever disagreed, viewers would comment a word nothing watches for."""
+    keyword = gateway.keyword_for("xai-org/grok-build", cfg)
+    assert keyword in gateway.spoken_cta(keyword, cfg)
+    assert keyword in gateway.add_caption_cta("Body.", cfg, keyword=keyword)

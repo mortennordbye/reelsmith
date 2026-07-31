@@ -88,6 +88,12 @@ export const videoSpecSchema = z.object({
   repo: repoMetaSchema,
   scenes: z.array(sceneSchema),
   captions: z.array(captionSchema),
+  /**
+   * The word to comment for the link, shown as an end card. Null when no
+   * gateway is configured: asking for a comment nothing listens for is a
+   * promise the account cannot keep.
+   */
+  ctaKeyword: z.string().nullable().optional(),
 });
 
 /**

@@ -62,6 +62,23 @@ def keyword_for(repo_name: str, cfg: Settings) -> str:
     return cfg.gateway_keyword.upper()
 
 
+def spoken_cta(keyword: str, cfg: Settings) -> str | None:
+    """The sentence the voice reads at the end, or None if nothing is listening.
+
+    Appended after the scriptwriter rather than requested from it, for two
+    reasons. It is the same every time, so spending prompt budget and a
+    validation round trip on it buys nothing. And leaving it to the model means
+    it is occasionally missing, which quietly breaks the mechanic on that video
+    with no error anywhere.
+
+    It lands after the `max_script_words` check on purpose: the limit exists to
+    keep Claude terse, and this is not Claude's text.
+    """
+    if not _configured(cfg):
+        return None
+    return f"Comment {keyword.strip().upper()} and I send you the link."
+
+
 def add_caption_cta(caption: str, cfg: Settings, *, keyword: str | None = None) -> str:
     """Insert the "comment the keyword" line, above the hashtags.
 

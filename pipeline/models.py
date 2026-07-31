@@ -251,3 +251,11 @@ class VideoSpec(BaseModel):
     repo: RepoMeta
     scenes: list[Scene]
     captions: list[Caption]
+
+    # The word to comment for the link, shown as an end card. None when no
+    # gateway is configured, because asking for a comment nothing is listening
+    # for is a promise the account cannot keep. The caption carries the same
+    # ask, but a caption sits behind a "more" tap and most viewers never open
+    # it, so the video has to say it too or the mechanic depends on a tap that
+    # does not happen.
+    ctaKeyword: str | None = None  # noqa: N815
