@@ -11,9 +11,17 @@ const GROUP_MS = 900;
 
 type Props = {
   captions: Caption[];
+  /**
+   * Stop drawing at this frame. The end card occupies the same band as the
+   * captions (both sit just above Instagram's bottom chrome, which is the only
+   * safe place for either), so without this they overlap and neither is
+   * readable. Nothing is lost by stopping: the card carries the same words the
+   * voice is reading at that moment, set larger.
+   */
+  untilFrame?: number;
 };
 
-export const Captions: React.FC<Props> = ({ captions }) => {
+export const Captions: React.FC<Props> = ({ captions, untilFrame }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const nowMs = (frame / fps) * 1000;
@@ -32,6 +40,8 @@ export const Captions: React.FC<Props> = ({ captions }) => {
     return createTikTokStyleCaptions({ captions: source, combineTokensWithinMilliseconds: GROUP_MS })
       .pages;
   }, [captions]);
+
+  if (untilFrame !== undefined && frame >= untilFrame) return null;
 
   const page = pages.find(
     (p) => nowMs >= p.startMs && nowMs < p.startMs + p.durationMs,

@@ -159,6 +159,11 @@ const CallToAction: React.FC<{ keyword: string }> = ({ keyword }) => {
 
 export const Reel: React.FC<VideoSpec> = (spec) => {
   const { fps } = useVideoConfig();
+  // Where the end card takes over the bottom band from the captions. Undefined
+  // when there is no card, so the captions run to the end as before.
+  const ctaFrom = spec.ctaKeyword
+    ? Math.max(0, spec.durationInFrames - CTA_SECONDS * fps)
+    : undefined;
 
   return (
     <AbsoluteFill style={{ backgroundColor: theme.color.bgDeep }}>
@@ -177,20 +182,21 @@ export const Reel: React.FC<VideoSpec> = (spec) => {
         </Sequence>
       ))}
 
-      <Captions captions={spec.captions} />
+      <Captions
+        captions={spec.captions}
+        untilFrame={ctaFrom}
+      />
 
       <Sequence durationInFrames={HOOK_SECONDS * fps} layout="none">
         <Hook text={spec.hook} />
       </Sequence>
 
       {/* Anchored to the end rather than given a fixed slot, so it always lands
-          under the closing line of the voiceover however long the script ran. */}
-      {spec.ctaKeyword ? (
-        <Sequence
-          from={Math.max(0, spec.durationInFrames - CTA_SECONDS * fps)}
-          durationInFrames={CTA_SECONDS * fps}
-          layout="none"
-        >
+          under the closing line of the voiceover however long the script ran.
+          The captions stop at the same frame: both live in the band above
+          Instagram's bottom chrome, and two things there is one too many. */}
+      {spec.ctaKeyword && ctaFrom !== undefined ? (
+        <Sequence from={ctaFrom} durationInFrames={CTA_SECONDS * fps} layout="none">
           <CallToAction keyword={spec.ctaKeyword} />
         </Sequence>
       ) : null}
