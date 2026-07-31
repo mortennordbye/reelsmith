@@ -89,7 +89,9 @@ export const Cover: React.FC<CoverProps> = ({ showHook = true, ...spec }) => {
             letterSpacing: "0.14em",
           }}
         >
-          {`github.com/${spec.repo.fullName}`}
+          {/* Name only. The cover is the most screenshotted frame there is,
+              and the link is what the follow is traded for. */}
+          {spec.repo.name}
         </span>
       </AbsoluteFill>
     </AbsoluteFill>

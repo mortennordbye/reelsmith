@@ -121,7 +121,10 @@ export const Reel: React.FC<VideoSpec> = (spec) => {
         <Hook text={spec.hook} />
       </Sequence>
 
-      <Watermark handle={`github.com/${spec.repo.fullName}`} />
+      {/* The repo name, not the URL. This sits on screen for the whole video,
+          so putting the full path here would hand over the exact thing the
+          caption offers to send in exchange for a follow. */}
+      <Watermark handle={spec.repo.name} />
 
       {spec.audioSrc ? <Audio src={staticFile(spec.audioSrc)} /> : null}
     </AbsoluteFill>
