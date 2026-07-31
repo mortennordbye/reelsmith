@@ -1,0 +1,46 @@
+READ THIS ALOUD. Record in Voice Memos. 25 to 35 seconds.
+
+Before you start:
+  Quiet room, no fan, no music.
+  Mic about a hand's width away, slightly off to the side.
+  One continuous take. If you fumble, start over rather than splice.
+  Read it a bit faster and more direct than you normally talk.
+  This is the pace and energy every video will inherit, so read it
+  the way you want the voiceover to sound. Do not perform it.
+
+Read once to warm up. Record the second pass.
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+
+Most of these tools do one thing,
+
+and the README buries it under three paragraphs of throat clearing.
+
+This one does not.
+
+You point it at a folder, it reads every file,
+
+and it tells you what is actually slow.
+
+The project claims a 40 percent speedup.
+
+I ran it against version 2 point 4 on my own machine
+
+and got closer to half that.
+
+Still worth the install.
+
+It is a single binary, no runtime,
+
+and it does not phone home.
+
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+The line breaks are for your eye only. Read it as flowing speech,
+not line by line. The short lines near the end are meant to land
+clipped, which is what the pipeline's own scripts sound like.
+
+Save the file, then drop it in this folder:
+  experiments/voice-clone/ref/

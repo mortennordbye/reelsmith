@@ -55,7 +55,9 @@ class Settings(BaseSettings):
     #             its only natural-sounding English voices (Andrew, Brian, Ava,
     #             Emma) are the ones in every AI video on the internet.
     # "kokoro" -- Apache-2.0, fully local, 54 voices, far less recognisable.
-    tts_backend: str = "kokoro"
+    # "chatterbox" -- my own cloned voice. The only option here that no other
+    #             account can be using, which is the whole point.
+    tts_backend: str = "chatterbox"
 
     # edge backend
     tts_voice: str = "en-US-AndrewMultilingualNeural"
@@ -72,6 +74,31 @@ class Settings(BaseSettings):
     kokoro_speed: float = 1.15
     kokoro_lang: str = "en-us"
 
+    # chatterbox backend -- my cloned voice, run out of process. See
+    # tools/chatterbox/synth.py for why it cannot share this interpreter.
+    #
+    # These two numbers were picked by ear from a four-preset sweep against the
+    # Ponytail script, audible in tools/chatterbox/out/. Re-audition with
+    # `tools/chatterbox/.venv/bin/python tools/chatterbox/clone.py --sweep`
+    # before changing them; they are not independent and guessing goes badly.
+    #   exaggeration -- emotional intensity. 0.5 is neutral, past ~0.7 it acts
+    #     rather than reads.
+    #   cfg_weight   -- pull toward the reference. 0.3 reads calmer and slower
+    #     than the 0.5 default, which suits a reference read at Reels pace.
+    chatterbox_exaggeration: float = 0.5
+    chatterbox_cfg_weight: float = 0.3
+    # "mps" on Apple silicon, "cpu" everywhere else. Roughly 35s of compute for
+    # 25s of audio once warm; the first call of a process pays a much larger
+    # one-off for MPS kernel compilation.
+    chatterbox_device: str = "mps"
+    # Generous because the first call in a cold process pays for MPS kernel
+    # compilation, which took ~200s more than a warm one when measured. A run
+    # that hangs past this is broken, not slow.
+    chatterbox_timeout_s: int = 900
+    # Recording of my voice the clone is built from. Gitignored, so a fresh
+    # checkout has to re-record it (tools/chatterbox/ref/RECORD-THIS.txt).
+    chatterbox_ref: Path = ROOT / "tools/chatterbox/ref/morten.wav"
+
     # --- Captions ----------------------------------------------------------
     whisper_model: str = "small.en"
     whisper_compute_type: str = "int8"
@@ -87,6 +114,14 @@ class Settings(BaseSettings):
         allowed = {"low", "medium", "high", "xhigh", "max"}
         if v not in allowed:
             raise ValueError(f"claude_effort must be one of {sorted(allowed)}, got {v!r}")
+        return v
+
+    @field_validator("tts_backend")
+    @classmethod
+    def _valid_backend(cls, v: str) -> str:
+        allowed = {"edge", "kokoro", "chatterbox"}
+        if v not in allowed:
+            raise ValueError(f"tts_backend must be one of {sorted(allowed)}, got {v!r}")
         return v
 
     # --- Derived paths -----------------------------------------------------
@@ -119,6 +154,15 @@ class Settings(BaseSettings):
     @property
     def kokoro_voices_path(self) -> Path:
         return self.models_dir / "voices-v1.0.bin"
+
+    @property
+    def chatterbox_python(self) -> Path:
+        """The isolated interpreter, not the one running this."""
+        return ROOT / "tools/chatterbox/.venv/bin/python"
+
+    @property
+    def chatterbox_worker(self) -> Path:
+        return ROOT / "tools/chatterbox/synth.py"
 
     @property
     def star_history_path(self) -> Path:

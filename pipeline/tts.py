@@ -1,12 +1,17 @@
 """Step 3 -- synthesize the voiceover.
 
-Default backend is edge-tts: free, keyless, and the neural voices are close to
-indistinguishable from a human read. Be aware it is *not* local -- it calls
-Microsoft's Edge read-aloud endpoint. Install the `offline-tts` extra and set
-TTS_BACKEND=kokoro for a fully on-device alternative.
+Default backend is chatterbox: my own voice, cloned from a 25 second recording.
+Every other option here is a stock voice that some other account is also using,
+which is the one tell no amount of scripting fixes.
 
-Both backends satisfy the same protocol, so the rest of the pipeline neither
-knows nor cares which one produced the file.
+  chatterbox -- my cloned voice. Local, MIT weights, ~35s of compute per video.
+  kokoro     -- Apache-2.0, local, 54 voices. The fallback when the clone is
+                unavailable, and what shipped before it existed.
+  edge       -- Microsoft's voices. Free and keyless but a network call, and its
+                only natural English voices are in every AI video on the market.
+
+All three satisfy the same protocol, so the rest of the pipeline neither knows
+nor cares which produced the file.
 """
 
 from __future__ import annotations
@@ -128,25 +133,112 @@ class KokoroBackend:
         return out_path
 
 
+class ChatterboxBackend:
+    """My own voice, cloned. Runs in a subprocess, deliberately.
+
+    Chatterbox needs torch, transformers and `setuptools<81`, while this venv is
+    Python 3.13 on numpy 2.5 with a setuptools that dropped `pkg_resources`.
+    Merging the two means downgrading a working pipeline to suit a voice, so
+    they stay apart and talk over JSON. Same trade as shelling out to the Claude
+    CLI rather than taking an SDK dependency.
+
+    The cost is a fresh model load per call, about 9 seconds. That is paid once
+    per video against a synthesis that takes half a minute, so it is not worth
+    engineering away.
+    """
+
+    def __init__(self, cfg: Settings):
+        self.cfg = cfg
+
+    def synthesize(self, text: str, out_path: Path) -> Path:
+        import json
+        import subprocess
+
+        python, worker = self.cfg.chatterbox_python, self.cfg.chatterbox_worker
+        if not python.exists():
+            raise TTSError(
+                f"The chatterbox venv is missing from {python.parent.parent}.\n"
+                f"Rebuild it (~3 GB):\n"
+                f"  uv venv --python 3.12 tools/chatterbox/.venv\n"
+                f"  VIRTUAL_ENV=tools/chatterbox/.venv uv pip install "
+                f"chatterbox-tts soundfile 'setuptools<81'\n"
+                f"Or set TTS_BACKEND=kokoro in .env."
+            )
+        if not self.cfg.chatterbox_ref.exists():
+            raise TTSError(
+                f"No reference recording at {self.cfg.chatterbox_ref}.\n"
+                f"The clone is built from it and it is gitignored, so a fresh "
+                f"checkout has to record one: see "
+                f"tools/chatterbox/ref/RECORD-THIS.txt."
+            )
+
+        payload = json.dumps(
+            {
+                "text": text,
+                "ref": str(self.cfg.chatterbox_ref),
+                "out": str(out_path),
+                "exaggeration": self.cfg.chatterbox_exaggeration,
+                "cfg_weight": self.cfg.chatterbox_cfg_weight,
+                "device": self.cfg.chatterbox_device,
+            }
+        )
+        proc = subprocess.run(
+            [str(python), str(worker), payload],
+            capture_output=True,
+            text=True,
+            timeout=self.cfg.chatterbox_timeout_s,
+        )
+
+        # The worker reports on the last line of stdout. Everything above it is
+        # torch and huggingface warning noise, which is why this does not just
+        # parse the whole stream.
+        result = {}
+        for line in reversed(proc.stdout.strip().splitlines()):
+            try:
+                result = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
+
+        if not result.get("ok"):
+            reason = result.get("error") or proc.stderr.strip()[-500:] or "no output"
+            raise TTSError(f"Chatterbox failed: {reason}")
+
+        log.info(
+            "Chatterbox rendered %.1fs (normalised from peak %.2f)",
+            result["seconds"],
+            result.get("peak_before_normalise", 0.0),
+        )
+        return out_path
+
+
 def get_backend(cfg: Settings, name: str | None = None) -> TTSBackend:
     name = name or cfg.tts_backend
     if name == "edge":
         return EdgeTTSBackend(cfg.tts_voice, cfg.tts_rate)
     if name == "kokoro":
         return KokoroBackend(cfg)
-    raise TTSError(f"Unknown TTS backend {name!r}; expected 'edge' or 'kokoro'")
+    if name == "chatterbox":
+        return ChatterboxBackend(cfg)
+    raise TTSError(f"Unknown TTS backend {name!r}; expected 'edge', 'kokoro' or 'chatterbox'")
 
 
 def voice_name(cfg: Settings, backend: str | None = None) -> str:
     backend = backend or cfg.tts_backend
-    return cfg.kokoro_voice if backend == "kokoro" else cfg.tts_voice
+    if backend == "kokoro":
+        return cfg.kokoro_voice
+    if backend == "chatterbox":
+        # No colon: --preview-voice builds a filename out of this, and Finder
+        # renders a colon in a filename as a slash.
+        return f"clone-{cfg.chatterbox_ref.stem}"
+    return cfg.tts_voice
 
 
 def audio_suffix(cfg: Settings, backend: str | None = None) -> str:
-    """edge-tts emits mp3; Kokoro emits raw samples we write as wav. Remotion
-    and faster-whisper both read either, so the extension just has to match
-    what was actually written."""
-    return ".wav" if (backend or cfg.tts_backend) == "kokoro" else ".mp3"
+    """edge-tts emits mp3; Kokoro and Chatterbox emit raw samples we write as
+    wav. Remotion and faster-whisper both read either, so the extension just has
+    to match what was actually written."""
+    return ".mp3" if (backend or cfg.tts_backend) == "edge" else ".wav"
 
 
 def synthesize(text: str, out_path: Path, cfg: Settings, backend: str | None = None) -> Path:

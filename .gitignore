@@ -33,3 +33,12 @@ video/public/*
 
 # macOS
 .DS_Store
+
+# Chatterbox voice cloning. The venv carries torch and is ~3 GB. `ref/` holds
+# recordings of my own voice, which are biometric and the one input that makes
+# the clone possible, so they stay out of git deliberately rather than by
+# oversight. Losing them means re-recording, not a leak.
+tools/chatterbox/.venv/
+tools/chatterbox/ref/*
+!tools/chatterbox/ref/RECORD-THIS.txt
+tools/chatterbox/out/

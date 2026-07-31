@@ -8,8 +8,9 @@ python main.py
 ```
 
 ```
-GitHub + HN  ->  Claude Code  ->  edge-tts  ->  faster-whisper  ->  Playwright  ->  Remotion
-  scraper        script.json     voice.mp3     captions.json       repo.png        out.mp4
+GitHub + HN  ->  Claude Code  ->  Chatterbox  ->  faster-whisper  ->  Playwright  ->  Remotion
+  scraper        script.json    voice.wav       captions.json       repo.png        out.mp4
+                               (my own voice)
 ```
 
 **No paid API keys.** Script generation runs through the Claude Code CLI in
@@ -26,7 +27,10 @@ uv venv --python 3.13
 uv pip install -r requirements.txt
 .venv/bin/playwright install chromium   # ~95 MB, for the opening screenshot
 
-# Kokoro voice model, ~350 MB, one time (skip if you set TTS_BACKEND=edge)
+# Voice. The default backend is a clone of my own voice, which needs its own
+# ~3 GB environment and a reference recording. Neither is in git.
+# See tools/chatterbox/README.md. To skip it entirely, set TTS_BACKEND=kokoro
+# and download the Kokoro model instead (~350 MB, one time):
 mkdir -p models
 curl -L -o models/kokoro-v1.0.onnx https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
 curl -L -o models/voices-v1.0.bin  https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
@@ -109,7 +113,7 @@ build/
 |---|---|
 | `repo.json` | scraper |
 | `script.json` + `claude_envelope.json` | scriptwriter |
-| `voice.mp3` | tts |
+| `voice.wav` (`.mp3` on the edge backend) | tts |
 | `captions.json` | captions |
 | `repo.png` | screenshot |
 | `video.json` | spec |
@@ -166,17 +170,28 @@ for individuals and companies of ≤3 people — check
 and it avoids pulling ~2.5 GB of PyTorch. It also bundles PyAV, so no system
 ffmpeg is required.
 
-**Kokoro over edge-tts, for recognisability rather than quality.** The two are
-close on quality. The problem is that edge-tts has exactly five natural-sounding
-English voices — Andrew, Brian, Ava, Emma, and one Australian — and the first
-four are the default in every AI video tool on the market, so viewers have heard
-them a thousand times. Its other 42 English voices are older-generation and
-audibly robotic, so there is no way out within edge-tts. Kokoro is Apache-2.0,
-runs fully on-device, has 54 voices, and none of them are worn out.
+**My own cloned voice, over any stock voice.** This started on edge-tts, moved
+to Kokoro, and ended here, and each step was about recognisability rather than
+quality. edge-tts has exactly five natural-sounding English voices — Andrew,
+Brian, Ava, Emma, and one Australian — and the first four are the default in
+every AI video tool on the market, so viewers have heard them a thousand times.
+Kokoro fixed that with 54 unworn voices. Cloning fixes the remaining problem,
+which is that a stock voice is still a voice someone else can pick.
 
-edge-tts is still supported (`TTS_BACKEND=edge`) and is the lighter option: no
-model download and no `models/` directory. It is also a network call, which
-Kokoro is not.
+Engine is Chatterbox, chosen on licence: MIT for code and weights, where
+F5-TTS ships CC-BY-NC weights and XTTS-v2 is non-commercial CPML. It clones
+zero-shot from a single 25 second recording, with no training step, and adds
+about 35 seconds of compute per video.
+
+It runs in its own venv under `tools/chatterbox/`, invoked as a subprocess.
+That is deliberate: Chatterbox needs torch, transformers and `setuptools<81`,
+while this project runs Python 3.13 on numpy 2.5, and merging them would mean
+downgrading a working pipeline to suit a voice.
+
+Kokoro (`TTS_BACKEND=kokoro`) remains the fallback and needs no reference
+recording. edge-tts (`TTS_BACKEND=edge`) is the lightest option, with no model
+download and no `models/` directory, but it is a network call and the other two
+are not.
 
 Audition before committing to a full run:
 
