@@ -41,7 +41,7 @@ from config import (
     resolve_claude_cli,
 )
 from pipeline import captions as captions_mod
-from pipeline import publisher, renderer, scraper, screenshot, tts
+from pipeline import gateway, publisher, renderer, scraper, screenshot, tts
 from pipeline import spec as spec_mod
 from pipeline.models import Caption, RepoCandidate, VideoScript, VideoSpec
 from pipeline.scriptwriter import write_script
@@ -376,7 +376,8 @@ def run(
     # The caption is written either way: --post needs it to send, and a run you
     # come back to tomorrow needs it because the clipboard is long gone.
     if script.caption_text:
-        (run_dir / "caption.txt").write_text(script.caption_text.strip() + "\n")
+        caption_out = gateway.add_caption_cta(script.caption_text.strip(), cfg)
+        (run_dir / "caption.txt").write_text(caption_out.rstrip() + "\n")
 
     if post:
         console.rule("[bold]Publishing to Instagram")
@@ -449,6 +450,14 @@ def _publish_run(cfg: Settings, run_dir: Path, *, cover_url: str | None = None) 
     if not caption:
         console.print("[yellow]No caption.txt in this run; posting without a caption.[/]")
 
+    # Meta fetches cover_url when the container is created, so this has to
+    # happen before the publish, not after. An explicit --cover-url always wins.
+    if cover_url is None:
+        with console.status("Hosting the cover..."):
+            cover_url = gateway.upload_cover(run_dir / "cover.png", run_dir.name, cfg)
+        if cover_url:
+            console.print(f"[dim]Cover hosted at {cover_url}[/]")
+
     try:
         with console.status("Uploading and waiting for Instagram to process..."):
             result = publisher.publish_reel(video_path, caption, cfg, cover_url=cover_url)
@@ -470,7 +479,17 @@ def _publish_run(cfg: Settings, run_dir: Path, *, cover_url: str | None = None) 
     )
 
     console.print(f"[bold green]Published[/] {result.permalink or result.media_id}")
+
     if repo:
+        # Only now does a media id exist, which is why this cannot happen
+        # earlier. A failure here costs the keyword mechanic on one post and is
+        # recoverable by hand for the seven days Meta allows a reply to a
+        # comment.
+        if gateway.register_post(result.media_id, repo.url, cfg):
+            console.print(
+                f"[dim]Gateway is watching for comments matching "
+                f"'{cfg.gateway_keyword}'.[/]"
+            )
         scraper.mark_featured(cfg, repo.full_name)
         console.print(
             f"[dim]{repo.full_name} is on cooldown for {cfg.repo_cooldown_days} days.[/]"

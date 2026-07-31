@@ -56,6 +56,17 @@ class Settings(BaseSettings):
     # margin costs nothing and a narrow one risks a missed cron.
     ig_refresh_margin_days: int = 15
 
+    # --- DM gateway (optional) ---------------------------------------------
+    # The self-hosted service that answers comments and DMs, and hosts the
+    # cover image Meta fetches. Leaving gateway_url empty disables both calls,
+    # which is the normal state for anyone who does not run it. Everything the
+    # pipeline asks of it is best effort: see pipeline/gateway.py.
+    gateway_url: str = ""
+    gateway_token: str = ""
+    # What the video tells people to comment. Per-post on the gateway side, so
+    # this is only the default the pipeline registers with.
+    gateway_keyword: str = "send"
+
     # --- Topic selection ---------------------------------------------------
     min_stars_breakout: int = 400
     min_stars_established: int = 2000
