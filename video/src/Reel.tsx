@@ -80,20 +80,15 @@ const Hook: React.FC<{ text: string }> = ({ text }) => {
   );
 };
 
-const Watermark: React.FC<{ handle: string }> = ({ handle }) => (
-  <AbsoluteFill style={{ justifyContent: "flex-start", alignItems: "center", paddingTop: 120 }}>
-    <span
-      style={{
-        fontFamily: theme.font.mono,
-        fontSize: 30,
-        color: theme.color.muted,
-        letterSpacing: "0.14em",
-      }}
-    >
-      {handle}
-    </span>
-  </AbsoluteFill>
-);
+// There was a watermark here carrying the repo name for the whole video. It is
+// gone on purpose. The name now appears exactly twice: in the opening README
+// shot, where it is part of the page being shown, and in the voiceover. Every
+// other repetition weakened the only reason to comment, which is that the
+// caption will send you the link.
+//
+// If attribution ever matters more than conversion, bring it back with the
+// account handle rather than the repo name. A repost is worth marking; a repo
+// name is the thing being traded.
 
 export const Reel: React.FC<VideoSpec> = (spec) => {
   const { fps } = useVideoConfig();
@@ -120,11 +115,6 @@ export const Reel: React.FC<VideoSpec> = (spec) => {
       <Sequence durationInFrames={HOOK_SECONDS * fps} layout="none">
         <Hook text={spec.hook} />
       </Sequence>
-
-      {/* The repo name, not the URL. This sits on screen for the whole video,
-          so putting the full path here would hand over the exact thing the
-          caption offers to send in exchange for a follow. */}
-      <Watermark handle={spec.repo.name} />
 
       {spec.audioSrc ? <Audio src={staticFile(spec.audioSrc)} /> : null}
     </AbsoluteFill>

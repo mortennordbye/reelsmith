@@ -78,22 +78,10 @@ export const Cover: React.FC<CoverProps> = ({ showHook = true, ...spec }) => {
         </AbsoluteFill>
       ) : null}
 
-      <AbsoluteFill
-        style={{ justifyContent: "flex-start", alignItems: "center", paddingTop: 120 }}
-      >
-        <span
-          style={{
-            fontFamily: theme.font.mono,
-            fontSize: 30,
-            color: theme.color.muted,
-            letterSpacing: "0.14em",
-          }}
-        >
-          {/* Name only. The cover is the most screenshotted frame there is,
-              and the link is what the follow is traded for. */}
-          {spec.repo.name}
-        </span>
-      </AbsoluteFill>
+      {/* The repo name used to be printed across the top here, as it was on the
+          Reel. Both are gone: the name belongs in the README shot and the
+          voiceover, and nowhere else. Repeating it in chrome is what made the
+          comment unnecessary, and the comment is the whole mechanic. */}
     </AbsoluteFill>
   );
 };
