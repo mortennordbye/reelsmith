@@ -230,3 +230,39 @@ def test_a_corrupt_store_degrades_instead_of_crashing(tmp_path):
     path = tmp_path / "used.json"
     path.write_text("{ this is not json")
     assert UsedRepos(path).penalty("a/b", TODAY) == 1.0
+
+
+# --------------------------------------------------------------------------
+# is_covered -- the discovery-time filter, which is what stops the re-scrape
+# --------------------------------------------------------------------------
+
+
+def test_a_covered_repo_is_recognised_before_it_is_scored(tmp_path):
+    store = UsedRepos(tmp_path / "used.json", cooldown_days=30)
+    store.mark_used("a/b", TODAY)
+
+    assert store.is_covered("a/b", TODAY) is True
+    assert store.is_covered("c/d", TODAY) is False
+
+
+def test_is_covered_and_the_penalty_cannot_disagree(tmp_path):
+    """Both express one rule. Two answers to "may we use this" is a bug waiting."""
+    store = UsedRepos(tmp_path / "used.json", cooldown_days=30)
+    store.mark_used("fresh/repo", TODAY)
+    store.mark_used("edge/repo", TODAY - timedelta(days=30))
+    store.mark_used("inside/repo", TODAY - timedelta(days=29))
+
+    for name in ("fresh/repo", "edge/repo", "inside/repo", "never/seen"):
+        blocked = store.is_covered(name, TODAY)
+        assert store.penalty(name, TODAY) == (0.0 if blocked else 1.0), name
+
+
+def test_covered_lists_everything_ever_made_newest_first(tmp_path):
+    """The record outlives the cooldown: "have we done this" is not "may we do it"."""
+    store = UsedRepos(tmp_path / "used.json", cooldown_days=30)
+    store.mark_used("old/one", TODAY - timedelta(days=200))
+    store.mark_used("new/one", TODAY)
+
+    assert [name for name, _ in store.covered()] == ["new/one", "old/one"]
+    # The old one is off cooldown and still on the list.
+    assert store.is_covered("old/one", TODAY) is False

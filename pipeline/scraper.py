@@ -113,14 +113,31 @@ class UsedRepos:
             log.warning("Could not read %s (%s); starting fresh.", self.path, exc)
             return {}
 
-    def penalty(self, full_name: str, on: date | None = None) -> float:
-        """1.0 if free to use, 0.0 if inside the cooldown window."""
+    def is_covered(self, full_name: str, on: date | None = None) -> bool:
+        """True if we already made a video about this and it is still inside the window.
+
+        Checked during discovery, before enrichment, so a repo we have covered
+        costs no README fetch and no Hacker News lookup. The scoring penalty
+        below is the same rule applied later; keeping both means a caller that
+        scores a pool it assembled itself still cannot pick a repeat.
+        """
         used_on = self._data.get(full_name)
         if not used_on:
-            return 1.0
+            return False
         today = on or date.today()
-        age = (today - date.fromisoformat(used_on)).days
-        return 1.0 if age >= self.cooldown_days else 0.0
+        return (today - date.fromisoformat(used_on)).days < self.cooldown_days
+
+    def penalty(self, full_name: str, on: date | None = None) -> float:
+        """1.0 if free to use, 0.0 if inside the cooldown window."""
+        return 0.0 if self.is_covered(full_name, on) else 1.0
+
+    def covered(self) -> list[tuple[str, str]]:
+        """Everything we have ever covered, newest first. The record, not the filter.
+
+        Includes repos whose cooldown has long expired, because the question
+        this answers is "have we done this one" rather than "may we do it now".
+        """
+        return sorted(self._data.items(), key=lambda kv: kv[1], reverse=True)
 
     def mark_used(self, full_name: str, on: date | None = None) -> None:
         self._data[full_name] = (on or date.today()).isoformat()
@@ -318,21 +335,33 @@ def collect_candidates(
     used = UsedRepos(cfg.used_repos_path, cfg.repo_cooldown_days)
 
     seen: dict[str, RepoCandidate] = {}
+    covered = 0
 
     with GitHubClient(token) as gh:
         for query in _build_queries(cfg, today):
             for item in gh.search_repositories(query, limit=cfg.candidates_per_query):
-                # Snapshot every repo we lay eyes on, even ones we filter out.
-                # Tomorrow's velocity is only as good as today's coverage.
+                # Snapshot every repo we lay eyes on, even ones we drop below.
+                # Tomorrow's velocity is only as good as today's coverage, and
+                # that includes repos we have already featured.
                 history.record(item["full_name"], item.get("stargazers_count", 0), today)
 
                 if item["full_name"] in seen or not _passes_hard_filters(item):
                     continue
+                # Dropped here rather than scored to zero later, so a repo we
+                # have already made a video about never reaches the enrichment
+                # step. Star velocity is sticky: yesterday's winner is usually
+                # still near the top today, and enriching it costs a README
+                # fetch and a Hacker News lookup to produce a candidate that
+                # cannot win.
+                if used.is_covered(item["full_name"], today):
+                    covered += 1
+                    continue
                 seen[item["full_name"]] = _to_candidate(item)
 
         log.info(
-            "Found %d candidates after filtering (GitHub quota left: %s)",
-            len(seen), gh.rate_limit_remaining,
+            "Found %d candidates after filtering, %d skipped as already covered "
+            "(GitHub quota left: %s)",
+            len(seen), covered, gh.rate_limit_remaining,
         )
 
         # Velocity for everything -- it's free, it's already in memory.
@@ -399,22 +428,41 @@ def record_snapshot(cfg: Settings, repo: RepoCandidate, *, on: date | None = Non
     history.save()
 
 
-def find_trending_repo(cfg: Settings | None = None, *, on: date | None = None) -> RepoCandidate:
-    """The single entry point main.py calls. Returns today's winner."""
+def find_trending_repos(
+    cfg: Settings | None = None, *, count: int = 1, on: date | None = None
+) -> list[RepoCandidate]:
+    """The top `count` distinct repos, best first.
+
+    One discovery pass for the whole batch, which is the only way to get
+    distinct winners: nothing marks a repo as taken until it is published or
+    queued, so ranking once per video would hand the same winner to every run
+    in the batch.
+
+    Returns fewer than `count` rather than raising when the pool is thin. A
+    batch of three that only found two good repos should still make two videos,
+    and the caller says so out loud.
+    """
     cfg = cfg or get_settings()
     ranked = collect_candidates(cfg, on=on)
     if not ranked:
         raise RuntimeError(
-            "No candidate repositories survived filtering. Try lowering "
-            "MIN_STARS_BREAKOUT or widening BREAKOUT_WINDOW_DAYS in .env"
+            "No candidate repositories survived filtering. Either everything "
+            "trending is already covered (see `--covered`), or the filters are "
+            "too tight: try lowering MIN_STARS_BREAKOUT or widening "
+            "BREAKOUT_WINDOW_DAYS in .env"
         )
-    winner = ranked[0]
-    if winner.score <= 0:
+    winners = [c for c in ranked[:count] if c.score > 0]
+    if not winners:
         raise RuntimeError(
-            "Every candidate is inside its cooldown window. Either wait, or "
-            "lower REPO_COOLDOWN_DAYS in .env"
+            "Every candidate scored zero, which means the pool is flat rather "
+            "than empty. Widen BREAKOUT_WINDOW_DAYS in .env"
         )
-    return winner
+    return winners
+
+
+def find_trending_repo(cfg: Settings | None = None, *, on: date | None = None) -> RepoCandidate:
+    """The single entry point main.py calls for a one-video run."""
+    return find_trending_repos(cfg, count=1, on=on)[0]
 
 
 def mark_featured(cfg: Settings, full_name: str, on: date | None = None) -> None:
@@ -430,6 +478,11 @@ def mark_featured(cfg: Settings, full_name: str, on: date | None = None) -> None
 def unmark_featured(cfg: Settings, full_name: str) -> str | None:
     """Escape hatch: clear a repo's cooldown. Returns the date it was set."""
     return UsedRepos(cfg.used_repos_path, cfg.repo_cooldown_days).clear(full_name)
+
+
+def covered_repos(cfg: Settings) -> list[tuple[str, str]]:
+    """Every repo we have committed to a post about, newest first."""
+    return UsedRepos(cfg.used_repos_path, cfg.repo_cooldown_days).covered()
 
 
 # --------------------------------------------------------------------------

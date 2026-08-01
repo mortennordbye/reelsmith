@@ -8,7 +8,10 @@
     python main.py --post               render, then publish it unattended
     python main.py --publish 2026-07-30/astral-sh-uv  publish a run you approved
 
+    python main.py --batch 3            render the top 3 repos in one sitting
+
     python main.py --candidates         rank today's repos, generate nothing
+    python main.py --covered            list every repo already made into a Reel
     python main.py --snapshot           record star counts only (run daily)
     python main.py --refresh-token      renew the Instagram token by hand
                                         (--snapshot already does it when due)
@@ -23,7 +26,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
@@ -103,6 +106,14 @@ def run(
         bool,
         typer.Option("--snapshot", help="Record star counts only; generate nothing"),
     ] = False,
+    covered: Annotated[
+        bool,
+        typer.Option("--covered", help="List every repo already made into a Reel"),
+    ] = False,
+    batch: Annotated[
+        int | None,
+        typer.Option("--batch", help="Render this many distinct repos in one sitting"),
+    ] = None,
     posted: Annotated[
         str | None,
         typer.Option("--posted", help="Mark a repo as posted, starting its cooldown"),
@@ -185,6 +196,10 @@ def run(
         scraper.inspect_candidates(cfg)
         return
 
+    if covered:
+        _show_covered(cfg)
+        return
+
     if snapshot:
         _preflight(need_github=True, need_claude=False)
         count = scraper.snapshot_stars(cfg)
@@ -228,6 +243,14 @@ def run(
         out = cfg.build_dir / f"voice-preview-{tts.voice_name(cfg)}{tts.audio_suffix(cfg)}"
         tts.synthesize(sample, out, cfg)
         console.print(f"[bold green]Preview:[/] {out}")
+        return
+
+    if batch is not None:
+        if batch < 1:
+            console.print("[bold red]--batch needs a positive number.[/]")
+            raise typer.Exit(1)
+        _preflight(need_github=True, need_claude=True, need_instagram=post)
+        _run_batch(cfg, batch, stop_after=stop_after, post=post, cover_url=cover_url)
         return
 
     _preflight(
@@ -287,6 +310,58 @@ def run(
     console.print(f"  [dim]{repo.description[:110]}[/]")
     if done(Stage.SCRAPE):
         return _finish(run_dir)
+
+    script = _render_one(cfg, repo, run_dir, stop_after=stop_after)
+    if script is None:
+        return _finish(run_dir)
+
+    if post:
+        console.rule("[bold]Publishing to Instagram")
+        _publish_run(cfg, run_dir, cover_url=cover_url)
+        console.print(
+            f"[dim]Iterate on the look:  cd video && npm run studio  "
+            f"(then load {run_dir / 'video.json'})[/]"
+        )
+        return
+
+    # Otherwise, make the one remaining manual step -- dropping the file into
+    # Instagram -- as short as possible.
+    if script.caption_text:
+        console.print(f"\n[bold]Instagram caption[/]\n{script.caption_text}")
+        if publisher.copy_to_clipboard(script.caption_text):
+            console.print("[dim]  (copied to the clipboard)[/]")
+        console.print("[dim]  (also written to caption.txt)[/]")
+    publisher.reveal(run_dir / "out.mp4")
+
+    console.print(
+        f"\n[bold]Post it from here:[/]  "
+        f"python main.py --publish {run_dir.parent.name}/{run_dir.name}"
+    )
+    console.print(
+        f"[dim]That uploads it and starts the {cfg.repo_cooldown_days}-day cooldown in one "
+        f"step. If you posted it by hand instead: python main.py --posted {repo.full_name}[/]"
+    )
+    console.print(
+        "[dim]Rendering alone starts no cooldown, so a video you reject costs you nothing.[/]"
+    )
+    console.print(
+        f"[dim]Iterate on the look:  cd video && npm run studio  "
+        f"(then load {run_dir / 'video.json'})[/]"
+    )
+
+
+def _render_one(
+    cfg: Settings, repo: RepoCandidate, run_dir: Path, *, stop_after: Stage | None = None
+) -> VideoScript | None:
+    """Stages 2 to 5 for one repo, from an existing run dir holding repo.json.
+
+    Shared by the single run and by `--batch`, so a batch cannot drift from
+    what a hand-driven run produces. Returns the script once the video and its
+    covers exist, or None if `--stop-after` ended it early.
+    """
+
+    def done(stage: Stage) -> bool:
+        return stop_after is not None and ORDER.index(stage) >= ORDER.index(stop_after)
 
     # ---- 2. Script ------------------------------------------------------
     script_path = run_dir / "script.json"
@@ -409,38 +484,108 @@ def run(
         )
         (run_dir / "caption.txt").write_text(caption_out.rstrip() + "\n")
 
-    if post:
-        console.rule("[bold]Publishing to Instagram")
-        _publish_run(cfg, run_dir, cover_url=cover_url)
+    return script
+
+
+def _run_batch(
+    cfg: Settings,
+    count: int,
+    *,
+    stop_after: Stage | None,
+    post: bool,
+    cover_url: str | None,
+) -> None:
+    """Render `count` distinct repos back to back.
+
+    The gateway holds three slots a day and the launchd job renders one, so
+    without this two of three slots starve every day. Discovery runs once for
+    the whole batch: nothing marks a repo as taken until it is published or
+    queued, so ranking per video would pick the same winner every time.
+
+    One repo failing does not stop the others. A batch is a day's worth of
+    posting, and losing all of it because the third script tripped the dash
+    validator is worse than losing one.
+    """
+    console.rule(f"[bold]Finding the top {count} repositories")
+    repos = scraper.find_trending_repos(cfg, count=count)
+    if len(repos) < count:
         console.print(
-            f"[dim]Iterate on the look:  cd video && npm run studio  "
-            f"(then load {run_dir / 'video.json'})[/]"
+            f"[yellow]Only {len(repos)} of {count} repos are available[/] "
+            f"[dim](the rest are already covered; see --covered).[/]"
         )
+    for i, repo in enumerate(repos, 1):
+        console.print(f"  [dim]{i}.[/] [cyan]{repo.full_name}[/]  {repo.stars:,}★  "
+                      f"[dim]{repo.description[:80]}[/]")
+
+    done: list[tuple[RepoCandidate, Path]] = []
+    failed: list[tuple[RepoCandidate, str]] = []
+
+    for i, repo in enumerate(repos, 1):
+        console.rule(f"[bold]Video {i}/{len(repos)}  {repo.full_name}")
+        run_dir = cfg.run_dir(repo.slug)
+        (run_dir / "repo.json").write_text(repo.model_dump_json(indent=2))
+        try:
+            script = _render_one(cfg, repo, run_dir, stop_after=stop_after)
+        except Exception as exc:  # noqa: BLE001 -- one bad repo must not end the batch
+            log.exception("Video %d failed", i)
+            failed.append((repo, f"{type(exc).__name__}: {exc}"))
+            continue
+        if script is None:
+            console.print(f"[dim]Stopped after {stop_after}; artifacts in {run_dir}[/]")
+            continue
+        done.append((repo, run_dir))
+        if post:
+            console.rule(f"[bold]Publishing {repo.full_name}")
+            _publish_run(cfg, run_dir, cover_url=cover_url)
+
+    console.rule("[bold green]Batch done" if not failed else "[bold yellow]Batch done")
+    for repo, run_dir in done:
+        console.print(f"  [green]✓[/] {repo.full_name}  [dim]{run_dir / 'out.mp4'}[/]")
+    for repo, why in failed:
+        console.print(f"  [red]✗[/] {repo.full_name}  [dim]{why}[/]")
+
+    if done and not post:
+        console.print("\n[bold]Queue them for the gateway's slots:[/]")
+        for _, run_dir in done:
+            console.print(
+                f"  python main.py --enqueue {run_dir.parent.name}/{run_dir.name} --approve"
+            )
+        console.print(
+            "[dim]Watch each one first. --enqueue starts the cooldown, because a queued "
+            "post goes out days later with nobody here to catch it.[/]"
+        )
+
+
+def _show_covered(cfg: Settings) -> None:
+    """Print every repo we have committed to a post about.
+
+    The store has always existed as a filter; this makes it readable, because
+    "have we done this one already" is a question you ask far more often than
+    the scorer does.
+    """
+    from rich.table import Table
+
+    rows = scraper.covered_repos(cfg)
+    if not rows:
+        console.print("[dim]Nothing covered yet.[/]")
         return
 
-    # Otherwise, make the one remaining manual step -- dropping the file into
-    # Instagram -- as short as possible.
-    if script.caption_text:
-        console.print(f"\n[bold]Instagram caption[/]\n{script.caption_text}")
-        if publisher.copy_to_clipboard(script.caption_text):
-            console.print("[dim]  (copied to the clipboard)[/]")
-        console.print("[dim]  (also written to caption.txt)[/]")
-    publisher.reveal(run_dir / "out.mp4")
+    today = datetime.now(UTC).date()
+    table = Table(title=f"Covered repositories ({len(rows)})", header_style="bold")
+    table.add_column("Repository", style="cyan", no_wrap=True)
+    table.add_column("Covered")
+    table.add_column("Status")
 
+    for full_name, used_on in rows:
+        age = (today - date.fromisoformat(used_on)).days
+        left = cfg.repo_cooldown_days - age
+        status = f"[yellow]blocked, {left}d left[/]" if left > 0 else "[green]free again[/]"
+        table.add_row(full_name, used_on, status)
+
+    console.print(table)
     console.print(
-        f"\n[bold]Post it from here:[/]  "
-        f"python main.py --publish {run_dir.parent.name}/{run_dir.name}"
-    )
-    console.print(
-        f"[dim]That uploads it and starts the {cfg.repo_cooldown_days}-day cooldown in one "
-        f"step. If you posted it by hand instead: python main.py --posted {repo.full_name}[/]"
-    )
-    console.print(
-        "[dim]Rendering alone starts no cooldown, so a video you reject costs you nothing.[/]"
-    )
-    console.print(
-        f"[dim]Iterate on the look:  cd video && npm run studio  "
-        f"(then load {run_dir / 'video.json'})[/]"
+        f"[dim]Blocked repos are dropped during discovery, before any README is fetched. "
+        f"Cooldown is {cfg.repo_cooldown_days} days (REPO_COOLDOWN_DAYS).[/]"
     )
 
 
