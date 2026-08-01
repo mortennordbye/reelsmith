@@ -393,7 +393,9 @@ def _render_one(
     # card, but the caption is behind a "more" tap and the card can be scrolled
     # past, so the one channel that reaches everyone who watches is the audio.
     cta_keyword = gateway.keyword_for(repo.full_name, cfg)
-    spoken = script.spoken_script
+    # Strip any ask the model wrote itself before appending ours, or the voice
+    # reads two of them back to back asking for two different words.
+    spoken = gateway.strip_written_cta(script.spoken_script)
     cta_line = gateway.spoken_cta(cta_keyword, cfg)
     if cta_line:
         spoken = f"{spoken.rstrip()} {cta_line}"

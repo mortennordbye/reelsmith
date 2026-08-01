@@ -234,6 +234,28 @@ def test_an_ask_at_the_tail_of_a_paragraph_is_removed_too(cfg):
     assert "ran internally for two years." in out, "the prose it rode on must survive"
 
 
+def test_the_voice_never_reads_two_asks_back_to_back():
+    """Heard in a rendered voiceover, which is the channel nobody can skip.
+
+    alibaba/open-code-review read "Comment REVIEW and I will send the link.
+    Comment OPENCODEREVIEW if you want the link." in one breath, asking for two
+    different words. The caption had been fixed and the audio had not.
+    """
+    spoken = (
+        "Higher precision, lower recall. Fewer false alarms. More misses. "
+        "Comment REVIEW and I will send the link."
+    )
+    cleaned = gateway.strip_written_cta(spoken)
+
+    assert "Comment" not in cleaned
+    assert cleaned.endswith("More misses."), "the script it rode on must survive"
+
+
+def test_stripping_leaves_a_script_that_never_asked_untouched():
+    spoken = "Use it when you are skimming for the command, not reading an essay."
+    assert gateway.strip_written_cta(spoken) == spoken
+
+
 def test_prose_that_merely_mentions_commenting_is_left_alone(cfg):
     """Only a line that *opens* with the ask is one. Prose about comments is not."""
     caption = "The maintainer will comment on your issue within a day.\n\n#devtools\n"

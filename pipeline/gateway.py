@@ -100,6 +100,28 @@ def keyword_for(repo_name: str, cfg: Settings) -> str:
     return cfg.gateway_keyword.upper()
 
 
+def strip_written_cta(text: str) -> str:
+    """Remove any ask the model wrote itself, so ours is the only one.
+
+    The prompt tells the scriptwriter that the call to action is appended
+    afterwards. It writes one anyway, often enough that both places this text
+    reaches a viewer have to defend against it, and in wording and placement
+    that vary.
+
+    Heard in a rendered voiceover on alibaba/open-code-review, which read
+    "Comment REVIEW and I will send the link. Comment OPENCODEREVIEW if you
+    want the link." back to back, asking for two different words in the same
+    breath. The caption had the same pair. Fixing one channel and not the
+    other is how that shipped, so both now call this.
+    """
+    cleaned = "\n".join(
+        _CTA_SENTENCE_RE.sub("", line).rstrip()
+        for line in text.splitlines()
+        if not _CTA_LINE_RE.match(line)
+    )
+    return cleaned.strip()
+
+
 def spoken_cta(keyword: str, cfg: Settings) -> str | None:
     """The sentence the voice reads at the end, or None if nothing is listening.
 
@@ -145,8 +167,7 @@ def add_caption_cta(caption: str, cfg: Settings, *, keyword: str | None = None) 
     word = (keyword or cfg.gateway_keyword).strip().upper()
     cta = f"Comment {word} if you want the link."
 
-    lines = [ln for ln in caption.rstrip().splitlines() if not _CTA_LINE_RE.match(ln)]
-    lines = [_CTA_SENTENCE_RE.sub("", ln).rstrip() for ln in lines]
+    lines = strip_written_cta(caption).splitlines()
     # Hashtags live in a trailing block. Find where it starts so the call to
     # action lands in the prose rather than after a wall of tags nobody reads.
     first_tag = next(
