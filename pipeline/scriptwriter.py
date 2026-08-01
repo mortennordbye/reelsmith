@@ -254,6 +254,20 @@ visual_cues
 
 caption_text
     The Instagram caption: two or three sentences, then 5-8 relevant hashtags.
+
+    **The first line must open on a concrete fact, never a definition.** Only
+    the first line shows before the "more" tap, so "X is a tool that does Y"
+    spends it telling the reader nothing they cannot see from the video. Lead
+    with the number, the command, or the specific behaviour, and let the
+    definition follow in the second sentence.
+
+      no    Ponytail is a rules file that makes your coding agent stop.
+      no    Grok Build is SpaceXAI's terminal coding agent.
+      yes   Colibri keeps about ten gigabytes of a 744 gigabyte index on disk.
+      yes   /grill-me interviews you before your agent writes a line.
+
+    The first two are real captions from this account that reached about 150
+    accounts each. The third is a real one that reached 1173.
 """
 
 
