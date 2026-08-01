@@ -224,3 +224,54 @@ async def test_the_account_funnel_counts_a_repeat_converter_twice(conn, cfg):
 
     assert account_wide["links_sent"] == 2
     assert sum(p["links_sent"] for p in per_post.values()) == account_wide["links_sent"]
+
+
+# --- Both publish paths -----------------------------------------------------
+
+
+async def test_a_reel_published_by_hand_is_not_invisible(conn, cfg):
+    """`--publish` from the Mac writes `posts` and never touches the queue.
+
+    Reading only the queue hid three of the first five Reels ever made,
+    including the best performing one, on the page built to compare them.
+    """
+    await publish_one(conn, media_id="from-queue")
+    await db.register_post(
+        conn, media_id="by-hand", ig_user_id=ACCOUNT,
+        keyword="SKILLS", link="https://github.com/mattpocock/skills",
+    )
+
+    listed = await db.published_media(conn, ACCOUNT)
+
+    assert {r["media_id"] for r in listed} == {"from-queue", "by-hand"}
+    by_hand = next(r for r in listed if r["media_id"] == "by-hand")
+    # No queue row means no stored repo name, so it comes from the link.
+    assert by_hand["repo_full_name"] == "mattpocock/skills"
+    assert by_hand["source"] == "direct"
+
+
+async def test_a_hand_published_reel_is_swept_for_insights_too(conn, cfg):
+    await db.register_post(
+        conn, media_id="by-hand", ig_user_id=ACCOUNT,
+        keyword="SKILLS", link="https://github.com/mattpocock/skills",
+    )
+    meta = FakeMeta(insights={"by-hand": {"views": 1500, "reach": 1173, "likes": 23,
+                                          "comments": 0, "saved": 20, "shares": 9}})
+    graph, metrics = sweep(meta, cfg)
+
+    assert await insights.refresh_once(conn, graph, cfg, metrics) == 1
+    assert (await db.latest_insights(conn, ACCOUNT))["by-hand"]["views"] == 1500
+
+
+async def test_a_reel_in_both_tables_is_listed_once(conn, cfg):
+    """The publish path registers the post as well as marking the queue row."""
+    await publish_one(conn, media_id="media-1")
+    await db.register_post(
+        conn, media_id="media-1", ig_user_id=ACCOUNT,
+        keyword="UV", link="https://github.com/astral-sh/uv",
+    )
+
+    listed = await db.published_media(conn, ACCOUNT)
+
+    assert [r["media_id"] for r in listed] == ["media-1"]
+    assert listed[0]["repo_full_name"] == "astral-sh/uv", "the queue row wins"

@@ -1188,29 +1188,67 @@ async def per_post_funnel(
     return out
 
 
+def _repo_from_link(link: str | None) -> str | None:
+    """`https://github.com/owner/repo` to `owner/repo`."""
+    if not link:
+        return None
+    parts = [p for p in str(link).rstrip("/").split("/") if p]
+    return "/".join(parts[-2:]) if len(parts) >= 2 else None
+
+
 async def published_media(
     conn: aiosqlite.Connection, ig_user_id: str | None = None, limit: int = 100
 ) -> list[Any]:
-    """Published queue rows, newest first, for the Posts page.
+    """Every Reel this account has live, newest first, for the Posts page.
 
-    Reads from `queued_posts` rather than `posts`, because that is the table
-    holding the repo name, the cover and the caption. `posts` only knows what
-    the poller needs.
+    Two sources, because there are two ways a post gets published and only one
+    of them leaves a queue row. `--publish` from the Mac registers the media
+    with `posts` and never touches `queued_posts`, so reading the queue alone
+    hid three of the first five Reels made, including the best performing one.
+
+    A queue row carries the repo name, the cover and the caption. A `posts` row
+    carries only what the poller needs, so those come back without a thumbnail
+    and with the repo derived from the link. Fewer details is worth far more
+    than being absent.
     """
-    where, args = (["state = ?"], [QUEUE_PUBLISHED])
+    queue_where, queue_args = ["q.state = ?"], [QUEUE_PUBLISHED]
+    direct_where, direct_args = [], []
     if ig_user_id:
-        where.append("ig_user_id = ?")
-        args.append(ig_user_id)
-    args.append(limit)
-    return await _all(
+        queue_where.append("q.ig_user_id = ?")
+        queue_args.append(ig_user_id)
+        direct_where.append("p.ig_user_id = ?")
+        direct_args.append(ig_user_id)
+
+    direct_clause = f"AND {' AND '.join(direct_where)}" if direct_where else ""
+    rows = await _all(
         conn,
         f"""
-        SELECT * FROM queued_posts
-        WHERE {' AND '.join(where)} AND media_id IS NOT NULL
-        ORDER BY published_at DESC, id DESC LIMIT ?
+        SELECT q.media_id, q.repo_full_name, q.video_name, q.cover_name,
+               q.keyword, q.link, q.permalink, q.published_at, 'queue' AS source
+        FROM queued_posts q
+        WHERE {' AND '.join(queue_where)} AND q.media_id IS NOT NULL
+
+        UNION ALL
+
+        SELECT p.media_id, NULL, NULL, NULL,
+               p.keyword, p.link, NULL, p.registered_at, 'direct' AS source
+        FROM posts p
+        WHERE p.media_id NOT IN (
+            SELECT media_id FROM queued_posts WHERE media_id IS NOT NULL
+        ) {direct_clause}
+
+        ORDER BY published_at DESC LIMIT ?
         """,
-        args,
+        [*queue_args, *direct_args, limit],
     )
+    # sqlite3.Row is read-only, so the derived name is filled in here.
+    out = []
+    for row in rows:
+        record = dict(row)
+        if not record.get("repo_full_name"):
+            record["repo_full_name"] = _repo_from_link(record.get("link"))
+        out.append(record)
+    return out
 
 
 async def insights_stale_media(
@@ -1223,20 +1261,31 @@ async def insights_stale_media(
     forever. Thirty days is well past where these settle.
     """
     cutoff = (now() - timedelta(days=within_days)).isoformat()
+    # Both publish paths, for the same reason `published_media` reads both: a
+    # Reel put out by hand from the Mac has no queue row, and sweeping only the
+    # queue left it with no numbers on a page that lists it.
     return await _all(
         conn,
         """
-        SELECT q.media_id FROM queued_posts q
-        LEFT JOIN insights i
-               ON i.media_id = q.media_id AND i.fetched_on = ?
-        WHERE q.ig_user_id = ?
-          AND q.state = ?
-          AND q.media_id IS NOT NULL
-          AND q.published_at >= ?
-          AND i.media_id IS NULL
-        ORDER BY q.published_at DESC
+        SELECT media_id FROM (
+            SELECT q.media_id AS media_id, q.published_at AS at
+            FROM queued_posts q
+            WHERE q.ig_user_id = ? AND q.state = ?
+              AND q.media_id IS NOT NULL AND q.published_at >= ?
+
+            UNION ALL
+
+            SELECT p.media_id AS media_id, p.registered_at AS at
+            FROM posts p
+            WHERE p.ig_user_id = ? AND p.registered_at >= ?
+              AND p.media_id NOT IN (
+                  SELECT media_id FROM queued_posts WHERE media_id IS NOT NULL
+              )
+        ) live
+        WHERE live.media_id NOT IN (SELECT media_id FROM insights WHERE fetched_on = ?)
+        ORDER BY live.at DESC
         """,
-        (on, ig_user_id, QUEUE_PUBLISHED, cutoff),
+        (ig_user_id, QUEUE_PUBLISHED, cutoff, ig_user_id, cutoff, on),
     )
 
 
