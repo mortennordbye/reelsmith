@@ -163,9 +163,9 @@ restart, and a slot judged not-yet-due at 17:55 could come due at 17:50 after a
 pod restart, publishing twice or slipping a day. Hashing the slot id and the
 local date gives an offset that is stable for the day, different the next, and
 identical across replicas and replays. Two further details are on purpose:
-resolution is seconds rather than minutes, and offsets that would land on :00,
-:15, :30 or :45 are skipped. A column of timestamps on a fifteen minute grid is
-the cheapest automation tell there is.
+the offset resolves to seconds rather than whole minutes, and any that would
+land on :00, :15, :30 or :45 is skipped. A column of timestamps on a fifteen
+minute grid is the cheapest automation tell there is.
 
 Because the slot id seeds the jitter, the config sync keeps the id of any slot
 whose definition has not changed. Rewriting the rows every boot would reshuffle

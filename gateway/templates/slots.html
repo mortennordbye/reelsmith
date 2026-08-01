@@ -85,10 +85,9 @@
       <p class="small muted" style="margin:10px 0 0">
         No days ticked means every day. A named zone rather than an offset, so
         the slot stays at the same local hour across a daylight saving change.
-        The jitter also avoids landing on :00, :15, :30 and :45, and lands on a
-        second rather than on the minute, because a post that arrives at
-        exactly 18:00:00 every evening is the cheapest thing in the world to
-        spot.
+        The jitter moves each firing to the second and never onto :00, :15, :30
+        or :45, because a post that arrives at exactly 18:00:00 every evening
+        is the cheapest thing in the world to spot.
       </p>
       <p class="small muted" style="margin:6px 0 0">
         Slots that should survive a redeploy belong in
