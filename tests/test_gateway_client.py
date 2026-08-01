@@ -240,6 +240,41 @@ def test_the_keyword_comes_from_the_repo_name(cfg, repo, expected):
     assert gateway.keyword_for(repo, cfg) == expected
 
 
+@pytest.mark.parametrize(
+    ("repo", "expected"),
+    [
+        ("alibaba/open-code-review", "OPENCODEREVIEW"),  # not OPEN
+        ("anomalyco/opencode", "OPENCODE"),              # one segment, so untouched
+        ("owner/agent-zero", "AGENTZERO"),
+        ("owner/code-graph", "CODEGRAPH"),
+    ],
+)
+def test_an_ordinary_word_is_not_used_as_the_ask(cfg, repo, expected):
+    """A keyword has to be something nobody types by accident.
+
+    `comment_matches` compares whole words, so OPEN on a video about an open
+    source reviewer fires on "open source is great" and DMs a link to someone
+    who was only talking. Longer to type beats messaging a stranger uninvited.
+    """
+    assert gateway.keyword_for(repo, cfg) == expected
+
+
+def test_the_derived_keyword_never_collides_with_ordinary_comment_text(cfg):
+    from gateway import conversations
+
+    chatter = [
+        "open source is great",
+        "I love open code",
+        "this is a cool dev tool",
+        "nice ai agent",
+        "does it run on the web",
+    ]
+    for repo in ("alibaba/open-code-review", "owner/dev-tools", "owner/ai-agent"):
+        word = gateway.keyword_for(repo, cfg)
+        for text in chatter:
+            assert not conversations.comment_matches(text, word), f"{word} fires on {text!r}"
+
+
 def test_a_name_too_short_to_type_falls_back_to_the_default(cfg):
     # Two letters is not a word anyone comments deliberately, and it collides
     # with ordinary text.

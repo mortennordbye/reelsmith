@@ -34,6 +34,22 @@ log = logging.getLogger(__name__)
 # writes its own anyway often enough to matter, and its phrasing varies.
 _ANY_CTA_RE = re.compile(r"^\s*comment\s+([A-Za-z0-9]{2,})\b", re.IGNORECASE)
 
+# Words too ordinary to use as the ask. `comment_matches` in the gateway tests
+# whole words against the comment text, so a keyword of OPEN on a video about
+# an open source reviewer fires on "open source is great" and DMs a link to
+# someone who never asked for one. That is the one thing the gateway must not
+# do. These are the segment names common enough in repo names to be a real
+# risk; the check is only ever applied to the first segment, so a repo actually
+# called `open` still gets a usable keyword from its full name.
+_TOO_COMMON = {
+    "agent", "agents", "ai", "api", "app", "auto", "awesome", "build", "chat",
+    "cli", "cloud", "code", "core", "data", "deep", "dev", "docs", "engine",
+    "fast", "free", "go", "hub", "kit", "lab", "lite", "live", "llm", "main",
+    "mini", "ml", "net", "new", "next", "node", "one", "open", "pro", "py",
+    "run", "self", "server", "smart", "stack", "super", "test", "the", "tiny",
+    "tool", "tools", "ultra", "web", "zero",
+}
+
 # Short. Nothing here is worth making a publish wait, and the publish itself
 # already has a much longer clock running.
 _TIMEOUT = 20.0
@@ -55,10 +71,19 @@ def keyword_for(repo_name: str, cfg: Settings) -> str:
     The first segment of the repo name, so `grok-build` becomes GROK rather than
     GROKBUILD. Short enough to type from memory, which is the whole point of
     asking for it.
+
+    The first segment is skipped when it is an ordinary word, because the ask
+    has to be something nobody types by accident. `open-code-review` gives
+    OPENCODEREVIEW rather than OPEN, which is longer to type and worth it: OPEN
+    fires on "open source is great" and sends a link to someone who was only
+    talking.
     """
     bare = repo_name.rsplit("/", 1)[-1]
     first = "".join(c for c in bare.split("-")[0].split("_")[0] if c.isalnum())
     whole = "".join(c for c in bare if c.isalnum())
+
+    if first.lower() in _TOO_COMMON:
+        first = ""
 
     for candidate in (first, whole):
         # Two letters is not a word anyone will type deliberately, and it
