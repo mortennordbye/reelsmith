@@ -218,9 +218,36 @@ Meta fetch a video, and therefore an unpublished queued Reel is readable by
 anyone who knows its filename. The name carries a 48 bit digest of the file's
 own bytes, so knowing it means already having it.
 
+## Insights
+
+`GET /admin/posts` answers the question the rest of the panel could not: did
+that Reel work. It joins two things, neither of them new. Meta's numbers, which
+a sweep reads once every six hours and stores, and the DM funnel this service
+has recorded since the first post.
+
+Three decisions worth knowing:
+
+- **A reading is per media per day, not per media.** A Reel keeps climbing for
+  days after it publishes, so one mutable row would answer "how is it doing"
+  while making "did the evening slot beat the morning one" unanswerable
+  forever. The history costs a few hundred bytes a post a day.
+- **A media with no numbers is normal, not an error.** Meta has nothing for a
+  Reel published minutes ago, so `graph.media_insights` returns None for that
+  and the sweep moves on. It re-raises an auth failure, though, because that is
+  true of every media behind it and a sweep that swallowed it would read
+  nothing at all while reporting no errors.
+- **The sweep is on by default**, where the scheduler is off. It only reads: it
+  creates nothing, publishes nothing and messages nobody, so gaining it by
+  upgrading is not a surprise worth guarding against.
+
+The per-post funnel comes from `comments_handled` and `deliveries`, both keyed
+by media id and both written all along. `db.funnel` only ever summed them
+account-wide, which cannot say which video converted, and that is the question
+that decides what to make more of.
+
 ## State
 
-One SQLite file, seven tables, `PRAGMA user_version` for migrations. Postgres is
+One SQLite file, eight tables, `PRAGMA user_version` for migrations. Postgres is
 the migration path the day this needs a second replica; nothing here makes that
 hard.
 

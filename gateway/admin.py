@@ -205,6 +205,29 @@ async def _accounts(request: Request) -> list[Any]:
     return await db.all_accounts(request.app.state.db)
 
 
+async def _scope(request: Request) -> dict[str, Any]:
+    """Which account the page is about, from `?account=`.
+
+    Every page used to stack one board per account down the screen, which reads
+    fine at one account and becomes a scroll at four. The scope narrows the
+    page instead, and `visible` is what a page iterates either way, so a page
+    never has to care which mode it is in.
+
+    An unknown or removed id falls back to showing everything rather than
+    404ing. A bookmark that outlived its account should still show the panel.
+    """
+    accounts = await db.all_accounts(request.app.state.db)
+    wanted = request.query_params.get("account") or ""
+    selected = next((a for a in accounts if a["ig_user_id"] == wanted), None)
+    return {
+        "accounts": accounts,
+        "selected": selected,
+        "visible": [selected] if selected else accounts,
+        # Appended to every in-panel link so the choice survives navigation.
+        "query": f"?account={selected['ig_user_id']}" if selected else "",
+    }
+
+
 def _back(request: Request, anchor: str = "") -> RedirectResponse:
     """Post, redirect, get. A reload must not resend the form.
 
@@ -228,11 +251,11 @@ def _back(request: Request, anchor: str = "") -> RedirectResponse:
 @router.get("/", response_class=HTMLResponse, name="queue_page")
 async def queue_page(request: Request) -> Any:
     conn, cfg = request.app.state.db, request.app.state.cfg
-    accounts = await _accounts(request)
+    scope = await _scope(request)
     moment = db.now()
 
     boards = []
-    for account in accounts:
+    for account in scope["visible"]:
         slots = await db.active_slots(conn, account["ig_user_id"])
         rows = await scheduler.upcoming(
             conn, cfg, account["ig_user_id"], moment=moment
@@ -260,6 +283,7 @@ async def queue_page(request: Request) -> Any:
             "boards": boards,
             "cfg": cfg,
             "page": "queue",
+            "scope": scope,
             "states": db,
         },
     )
@@ -268,9 +292,10 @@ async def queue_page(request: Request) -> Any:
 @router.get("/slots", response_class=HTMLResponse, name="slots_page")
 async def slots_page(request: Request) -> Any:
     conn, cfg = request.app.state.db, request.app.state.cfg
+    scope = await _scope(request)
     moment = db.now()
     boards = []
-    for account in await _accounts(request):
+    for account in scope["visible"]:
         rows = await db.all_slots(conn, account["ig_user_id"])
         boards.append(
             {
@@ -288,25 +313,104 @@ async def slots_page(request: Request) -> Any:
             }
         )
     return templates.TemplateResponse(
-        request, "slots.html", {"boards": boards, "cfg": cfg, "page": "slots"}
+        request,
+        "slots.html",
+        {"boards": boards, "cfg": cfg, "page": "slots", "scope": scope},
+    )
+
+
+@router.get("/posts", response_class=HTMLResponse, name="posts_page")
+async def posts_page(request: Request) -> Any:
+    """How the published Reels are doing, and which of them converted.
+
+    Two sources joined by media id and neither of them new: Meta's numbers from
+    the insights sweep, and the DM funnel this service has been recording since
+    the first post. The funnel was only ever shown as an account-wide total,
+    which cannot answer the question worth asking, which is which video worked.
+    """
+    conn, cfg = request.app.state.db, request.app.state.cfg
+    scope = await _scope(request)
+
+    boards = []
+    for account in scope["visible"]:
+        ig_user_id = account["ig_user_id"]
+        rows = await db.published_media(conn, ig_user_id)
+        readings = await db.latest_insights(conn, ig_user_id)
+        funnels = await db.per_post_funnel(conn, ig_user_id)
+
+        posts, totals = [], dict.fromkeys(
+            ("views", "reach", "likes", "comments", "saved", "shares",
+             "comments_seen", "links_sent"), 0
+        )
+        for row in rows:
+            seen = funnels.get(row["media_id"], {})
+            reading = readings.get(row["media_id"])
+            posts.append(
+                {
+                    "row": row,
+                    "insights": reading,
+                    "funnel": seen,
+                    # Of the people who asked, how many got the link. The
+                    # denominator is comments we matched, not total comments,
+                    # because the rest were never asking for anything.
+                    "conversion": (
+                        seen.get("links_sent", 0) / seen["comments_seen"]
+                        if seen.get("comments_seen")
+                        else None
+                    ),
+                }
+            )
+            for key in ("views", "reach", "likes", "comments", "saved", "shares"):
+                totals[key] += int(reading[key]) if reading else 0
+            for key in ("comments_seen", "links_sent"):
+                totals[key] += seen.get(key, 0)
+
+        boards.append(
+            {
+                "account": account,
+                "posts": posts,
+                "totals": totals,
+                # An average is the only fair way to compare a Reel published
+                # this morning with one from last week.
+                "avg_views": totals["views"] // len(posts) if posts else 0,
+                "measured": sum(1 for p in posts if p["insights"]),
+            }
+        )
+
+    return templates.TemplateResponse(
+        request,
+        "posts.html",
+        {"boards": boards, "cfg": cfg, "page": "posts", "scope": scope},
     )
 
 
 @router.get("/health", response_class=HTMLResponse, name="health_page")
 async def health_page(request: Request) -> Any:
     conn, cfg = request.app.state.db, request.app.state.cfg
+    scope = await _scope(request)
     moment = db.now()
 
     accounts = []
-    for account in await _accounts(request):
+    for account in scope["visible"]:
+        ig_user_id = account["ig_user_id"]
         expires = db.parse_iso(account["token_expires_at"])
+        published = await db.published_media(conn, ig_user_id, limit=1)
+        slots = await db.active_slots(conn, ig_user_id)
+        depth = await db.queue_depth(conn, ig_user_id)
+        # Days of posting the queue can still cover. The number that says
+        # whether to go and render, and the one a stacked board buried.
+        approved = depth.get(db.QUEUE_APPROVED, 0)
         accounts.append(
             {
                 "row": account,
                 "expires": expires,
                 "days_left": (expires - moment).total_seconds() / 86_400 if expires else None,
-                "depth": await db.queue_depth(conn, account["ig_user_id"]),
-                "funnel": await db.funnel(conn, account["ig_user_id"]),
+                "depth": depth,
+                "funnel": await db.funnel(conn, ig_user_id),
+                "last_published": published[0] if published else None,
+                "slots_per_day": len(slots),
+                "runway_days": (approved / len(slots)) if slots else None,
+                "insights_last": db.parse_iso(await db.last_insight_fetch(conn, ig_user_id)),
             }
         )
 
@@ -318,14 +422,17 @@ async def health_page(request: Request) -> Any:
             "accounts": accounts,
             "cfg": cfg,
             "page": "health",
+            "scope": scope,
             "poller_last": _gauge_time(metrics.poller_last_success),
             "scheduler_last": _gauge_time(metrics.scheduler_last_success),
+            "insights_last": _gauge_time(metrics.insights_last_success),
             "counters": {
                 "published": _counter(metrics.posts_published),
                 "publish_failures": _counter(metrics.publish_failures),
                 "slots_starved": _counter(metrics.slots_starved),
                 "graph_errors": _counter(metrics.graph_errors),
                 "signature_failures": _counter(metrics.webhook_signature_failures),
+                "insights_fetched": _counter(metrics.insights_fetched),
             },
         },
     )

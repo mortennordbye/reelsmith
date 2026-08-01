@@ -22,10 +22,13 @@
     <div><span class="n">{{ counters.graph_errors }}</span><span class="l">Meta API errors</span></div>
     <div><span class="n" {% if counters.signature_failures %}style="color:var(--bad)"{% endif %}>
       {{ counters.signature_failures }}</span><span class="l">bad webhook signatures</span></div>
+    <div><span class="n">{{ counters.insights_fetched }}</span>
+      <span class="l">insight readings</span></div>
   </div>
   <p class="small muted" style="margin:16px 0 0">
     Comment sweep {{ poller_last | ago }}.
     Scheduler tick {{ scheduler_last | ago }}{% if not cfg.scheduler_enabled %} (disabled){% endif %}.
+    Insights sweep {{ insights_last | ago }}{% if not cfg.insights_enabled %} (disabled){% endif %}.
     Counters reset when the process restarts, so a low number is not proof of a
     quiet week.
   </p>
@@ -49,10 +52,39 @@
           <span class="l">{{ state }}</span>
         </div>
       {% endfor %}
+      {# Days of posting the queue can still cover. The number that decides
+         whether to go and render, which a queue depth alone does not say. #}
+      <div>
+        <span class="n" {% if item.runway_days is not none and item.runway_days < 1 %}
+              style="color:var(--warn)"{% endif %}>
+          {{ item.runway_days | round(1) if item.runway_days is not none else '?' }}
+        </span>
+        <span class="l">days of runway</span>
+      </div>
     </div>
     <p class="small muted" style="margin:14px 0 0">
       A long-lived token cannot be refreshed once it has expired, so this
       number reaching zero ends posting and messaging together.
+      {% if item.slots_per_day %}
+        Runway is what is approved divided by {{ item.slots_per_day }}
+        slot{{ '' if item.slots_per_day == 1 else 's' }} a day.
+      {% else %}
+        No active slots, so nothing has a time to go out at.
+      {% endif %}
+    </p>
+    <p class="small muted" style="margin:8px 0 0">
+      {% if item.last_published %}
+        Last published
+        <strong>{{ item.last_published['repo_full_name'] or 'a post' }}</strong>
+        {{ (item.last_published['published_at'] or '')[:16] | replace('T', ' ') }}.
+      {% else %}
+        Nothing published yet.
+      {% endif %}
+      {% if item.insights_last %}
+        Insights last stored {{ item.insights_last | ago }}.
+      {% else %}
+        No insights stored yet.
+      {% endif %}
     </p>
   </div>
 

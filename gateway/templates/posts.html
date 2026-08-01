@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Posts{% endblock %}
+
+{% block body %}
+<h1>Posts</h1>
+<p class="sub">
+  What each published Reel did, and how many people it sent a link to. Meta's
+  numbers keep climbing for days, so a post from this morning is not yet
+  comparable with one from last week.
+</p>
+
+{% for board in boards %}
+  {% if boards | length > 1 %}
+    <h2>
+      {{ board.account['username'] or board.account['ig_user_id'] }}
+      {% if not board.account['active'] %}<span class="tag failed">paused</span>{% endif %}
+    </h2>
+  {% endif %}
+
+  {% if board.posts %}
+    <div class="card">
+      <div class="stat">
+        <div><span class="n">{{ board.posts | length }}</span><span class="l">posts</span></div>
+        <div><span class="n">{{ board.totals.views }}</span><span class="l">views</span></div>
+        <div><span class="n">{{ board.avg_views }}</span><span class="l">avg views</span></div>
+        <div><span class="n">{{ board.totals.reach }}</span><span class="l">reach</span></div>
+        <div><span class="n">{{ board.totals.saved }}</span><span class="l">saves</span></div>
+        <div><span class="n">{{ board.totals.shares }}</span><span class="l">shares</span></div>
+        <div>
+          <span class="n">{{ board.totals.links_sent }}</span>
+          <span class="l">links sent</span>
+        </div>
+      </div>
+      {% if board.measured < board.posts | length %}
+        <p class="small muted" style="margin:10px 0 0">
+          {{ board.posts | length - board.measured }} of these have no reading yet.
+          Meta has nothing for a Reel published in the last few hours.
+        </p>
+      {% endif %}
+    </div>
+
+    {% for post in board.posts %}
+      {% set row = post.row %}
+      <div class="card">
+        <div class="row">
+          {% if row['cover_name'] %}
+            <video controls preload="none" poster="/media/{{ row['cover_name'] }}"
+                   src="/media/{{ row['video_name'] }}"></video>
+          {% elif row['video_name'] %}
+            <video controls preload="none" src="/media/{{ row['video_name'] }}"></video>
+          {% endif %}
+
+          <div class="grow">
+            <div class="row" style="align-items:center;gap:8px">
+              <strong>{{ row['repo_full_name'] or row['video_name'] }}</strong>
+              <span class="grow"></span>
+              <span class="small muted">
+                {{ (row['published_at'] or '')[:16] | replace('T', ' ') }}
+              </span>
+              {% if row['permalink'] %}
+                <a class="small" href="{{ row['permalink'] }}" rel="noreferrer">open</a>
+              {% endif %}
+            </div>
+
+            {% if post.insights %}
+              <div class="metrics">
+                <div><span class="n">{{ post.insights['views'] }}</span><span class="l">views</span></div>
+                <div><span class="n">{{ post.insights['reach'] }}</span><span class="l">reach</span></div>
+                <div><span class="n">{{ post.insights['likes'] }}</span><span class="l">likes</span></div>
+                <div><span class="n">{{ post.insights['comments'] }}</span><span class="l">comments</span></div>
+                <div><span class="n">{{ post.insights['saved'] }}</span><span class="l">saves</span></div>
+                <div><span class="n">{{ post.insights['shares'] }}</span><span class="l">shares</span></div>
+              </div>
+            {% else %}
+              <p class="small muted" style="margin:8px 0 0">
+                No reading yet.
+              </p>
+            {% endif %}
+
+            {# The half this service owns. Nothing else can report it, because
+               the DM funnel never leaves this database. #}
+            <div class="metrics" style="border-top:1px solid var(--line);padding-top:8px">
+              <div>
+                <span class="n {{ 'none' if not post.funnel.get('comments_seen') }}">
+                  {{ post.funnel.get('comments_seen', 0) }}
+                </span>
+                <span class="l">asked</span>
+              </div>
+              <div>
+                <span class="n {{ 'none' if not post.funnel.get('links_sent') }}">
+                  {{ post.funnel.get('links_sent', 0) }}
+                </span>
+                <span class="l">links sent</span>
+              </div>
+              <div>
+                <span class="n {{ 'none' if post.conversion is none }}">
+                  {% if post.conversion is not none %}
+                    {{ (post.conversion * 100) | round | int }}%
+                  {% else %}&mdash;{% endif %}
+                </span>
+                <span class="l">converted</span>
+              </div>
+              <div>
+                <span class="n mono" style="font-size:13px">{{ row['keyword'] }}</span>
+                <span class="l">keyword</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  {% else %}
+    <div class="card empty">Nothing published yet.</div>
+  {% endif %}
+{% else %}
+  <div class="card empty">No accounts registered yet.</div>
+{% endfor %}
+{% endblock %}

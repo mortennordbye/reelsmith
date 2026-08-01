@@ -69,6 +69,19 @@ class GatewaySettings(BaseSettings):
     token_refresh_margin_days: int = 15
     token_refresh_interval_s: int = 86_400
 
+    # --- Insights ------------------------------------------------------------
+    # Reads how published Reels are doing. Read only against Meta: it creates
+    # nothing, publishes nothing and messages nobody, which is why it is on by
+    # default where the scheduler is not.
+    insights_enabled: bool = True
+    # Meta updates these roughly daily and a Reel keeps moving for days, so
+    # anything faster spends Graph calls to redraw the same numbers. Six hours
+    # gives four chances to catch the day rather than one.
+    insights_interval_s: int = 21_600
+    # Past this a Reel has stopped moving, and re-reading every post ever made
+    # would grow a Graph call a day forever.
+    insights_max_age_days: int = 30
+
     # --- Scheduled publishing ----------------------------------------------
     # The whole queue is off unless this is on. A gateway that only answers
     # comments should not grow the ability to post to the feed by upgrading.

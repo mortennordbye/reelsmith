@@ -178,7 +178,9 @@ async def test_an_unreferenced_file_is_still_pruned(client, cfg, monkeypatch):
 # --- The panel ------------------------------------------------------------
 
 
-@pytest.mark.parametrize("path", ["/admin/", "/admin/slots", "/admin/health"])
+@pytest.mark.parametrize(
+    "path", ["/admin/", "/admin/posts", "/admin/slots", "/admin/health"]
+)
 async def test_the_pages_render(client, path):
     http, _ = client
     response = await http.get(path)
@@ -466,7 +468,9 @@ async def anon(cfg):
             yield http, app
 
 
-@pytest.mark.parametrize("path", ["/admin/", "/admin/slots", "/admin/health"])
+@pytest.mark.parametrize(
+    "path", ["/admin/", "/admin/posts", "/admin/slots", "/admin/health"]
+)
 async def test_a_stranger_is_sent_to_the_login_page(anon, path):
     http, _ = anon
     response = await http.get(path, headers={"accept": "text/html"})
@@ -673,3 +677,82 @@ async def test_our_own_referer_is_honoured(client):
         headers={"referer": f"{BASE}/admin/slots"},
     )
     assert response.headers["location"] == f"{BASE}/admin/slots"
+
+
+# --- Posts and account scoping ----------------------------------------------
+
+
+async def test_the_posts_page_shows_what_a_reel_did(client):
+    """The page exists to answer "did that one work", which needs both halves:
+    Meta's numbers and the funnel only this service can see."""
+    http, app = client
+    queued = await queue(http, approved=True)
+    await db.mark_queue_published(
+        app.state.db, queued["id"], media_id="media-1", permalink="https://ig/p/1"
+    )
+    await db.record_insights(
+        app.state.db, media_id="media-1", ig_user_id=ACCOUNT,
+        metrics={"views": 1500, "reach": 1173, "likes": 23, "comments": 0,
+                 "saved": 20, "shares": 9},
+    )
+    await db.claim_comment(
+        app.state.db, comment_id="c1", media_id="media-1",
+        ig_user_id=ACCOUNT, author_id="a1",
+    )
+    await db.record_delivery(
+        app.state.db, igsid="a1", ig_user_id=ACCOUNT, media_id="media-1"
+    )
+
+    body = (await http.get("/admin/posts")).text
+
+    assert "astral-sh/uv" in body
+    assert "1500" in body, "the view count"
+    assert "1173" in body, "reach"
+    assert "100%" in body, "one person asked and one got the link"
+
+
+async def test_a_reel_with_no_reading_yet_says_so_rather_than_showing_zero(client):
+    """Zero views and "not measured yet" are different facts, and the second one
+    is what is true for a post published this morning."""
+    http, app = client
+    queued = await queue(http, approved=True)
+    await db.mark_queue_published(
+        app.state.db, queued["id"], media_id="fresh", permalink=None
+    )
+
+    body = (await http.get("/admin/posts")).text
+
+    assert "No reading yet" in body
+
+
+async def test_the_switcher_appears_only_once_there_is_a_choice(client):
+    """At one account a switcher offering one option is furniture."""
+    http, app = client
+    assert 'class="switcher' not in (await http.get("/admin/")).text
+
+    await db.upsert_account(
+        app.state.db, ig_user_id="17841400000000009", access_token="t2", username="second"
+    )
+    assert 'class="switcher' in (await http.get("/admin/")).text
+
+
+async def test_scoping_to_an_account_hides_the_others(client):
+    http, app = client
+    other = "17841400000000009"
+    await db.upsert_account(
+        app.state.db, ig_user_id=other, access_token="t2", username="second"
+    )
+
+    body = (await http.get(f"/admin/?account={other}")).text
+
+    assert "second" in body
+    # The scoped page must not still be rendering a board for the other one.
+    assert body.count("nightly") <= 1, "only the switcher may still name it"
+
+
+async def test_an_unknown_account_falls_back_to_everything(client):
+    """A bookmark that outlived its account should show the panel, not a 404."""
+    http, _ = client
+    response = await http.get("/admin/?account=does-not-exist")
+    assert response.status_code == 200
+    assert "nightly" in response.text

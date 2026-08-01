@@ -81,6 +81,24 @@
     .stat div span { display: block; }
     .stat .n { font-size: 22px; font-weight: 600; }
     .stat .l { font-size: 12px; color: var(--dim); }
+    /* The account switcher. Sits at the far right of the header so the nav
+       keeps its place when a second account appears and the row grows. */
+    .switcher { margin-left: auto; display: flex; gap: 4px; align-items: center; }
+    .switcher a {
+      color: var(--dim); padding: 3px 9px; border-radius: 999px;
+      border: 1px solid transparent;
+    }
+    .switcher a.on { color: var(--ink); border-color: var(--line); background: #21262d; }
+    /* Per-post numbers. A fixed grid rather than a table, because the row has
+       a thumbnail beside it and a table would fight the video element. */
+    .metrics { display: flex; gap: 20px; flex-wrap: wrap; margin: 8px 0 0; }
+    .metrics div { min-width: 54px; }
+    .metrics .n { font-size: 17px; font-weight: 600; display: block; }
+    .metrics .l {
+      font-size: 11px; color: var(--dim); text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .metrics .none { color: var(--dim); font-weight: 400; }
     .empty { color: var(--dim); padding: 18px 0; text-align: center; }
     video { width: 150px; border-radius: 6px; border: 1px solid var(--line); display: block; }
     details summary { cursor: pointer; color: var(--dim); font-size: 13px; }
@@ -102,11 +120,30 @@
   <header>
     <span class="brand">reelsmith</span>
     {% if page != 'login' %}
+      {# The account choice rides on every link, or navigating away from an
+         account silently widens the page back to all of them. #}
+      {% set q = scope.query if scope else '' %}
       <nav>
-        <a href="{{ url_for('queue_page') }}" class="{{ 'on' if page == 'queue' }}">Queue</a>
-        <a href="{{ url_for('slots_page') }}" class="{{ 'on' if page == 'slots' }}">Slots</a>
-        <a href="{{ url_for('health_page') }}" class="{{ 'on' if page == 'health' }}">Health</a>
+        <a href="{{ url_for('queue_page') }}{{ q }}" class="{{ 'on' if page == 'queue' }}">Queue</a>
+        <a href="{{ url_for('posts_page') }}{{ q }}" class="{{ 'on' if page == 'posts' }}">Posts</a>
+        <a href="{{ url_for('slots_page') }}{{ q }}" class="{{ 'on' if page == 'slots' }}">Slots</a>
+        <a href="{{ url_for('health_page') }}{{ q }}" class="{{ 'on' if page == 'health' }}">Health</a>
       </nav>
+
+      {# Only worth screen space once there is a choice to make. At one account
+         a switcher offering one option is furniture. #}
+      {% if scope and scope.accounts | length > 1 %}
+        <span class="switcher small">
+          <a href="?" class="{{ 'on' if not scope.selected }}">All</a>
+          {% for a in scope.accounts %}
+            <a href="?account={{ a['ig_user_id'] }}"
+               class="{{ 'on' if scope.selected and scope.selected['ig_user_id'] == a['ig_user_id'] }}">
+              {{ a['username'] or a['ig_user_id'][:8] }}
+              {% if not a['active'] %}&#9679;{% endif %}
+            </a>
+          {% endfor %}
+        </span>
+      {% endif %}
       {% if not cfg.admin_trust_proxy_auth %}
         <form method="post" action="{{ url_for('logout') }}" style="margin-left:auto">
           <button class="link">Sign out</button>

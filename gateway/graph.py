@@ -73,6 +73,40 @@ class Profile:
     follows_us: bool | None  # None means Meta would not say
 
 
+# The metrics asked for on a Reel. `views` replaced `plays` and `impressions`
+# for this media type, and asking for a retired one fails the whole call rather
+# than omitting that metric, which is why this list is fixed here rather than
+# assembled per request.
+MEDIA_METRICS = ("views", "reach", "likes", "comments", "saved", "shares")
+
+
+@dataclass(frozen=True)
+class MediaInsights:
+    media_id: str
+    views: int
+    reach: int
+    likes: int
+    comments: int
+    saved: int
+    shares: int
+
+    @property
+    def interactions(self) -> int:
+        """Everything a viewer had to choose to do."""
+        return self.likes + self.comments + self.saved + self.shares
+
+
+def _first_value(item: Any) -> int:
+    """Pull the number out of Meta's {values: [{value: n}]} wrapper."""
+    values = item.get("values") or []
+    if not values:
+        return 0
+    try:
+        return int(values[0].get("value") or 0)
+    except (AttributeError, TypeError, ValueError):
+        return 0
+
+
 class GraphClient:
     def __init__(self, http: httpx.AsyncClient, cfg: GatewaySettings):
         self._http = http
@@ -186,6 +220,44 @@ class GraphClient:
                 )
             )
         return [c for c in out if c.id]
+
+    async def media_insights(self, *, media_id: str, token: str) -> MediaInsights | None:
+        """How one published Reel is doing, or None if Meta will not say yet.
+
+        Returns None rather than raising for the two normal cases: a Reel
+        published minutes ago has no insights row yet, and a media id that has
+        been deleted from the account is gone for good. Neither is a fault
+        worth failing a refresh sweep over, and a sweep that dies on the first
+        young post never reaches the older ones behind it.
+
+        **An auth failure is re-raised.** It is not a property of this media,
+        it will be true of every one behind it, and swallowing it would leave a
+        sweep reading nothing at all while reporting no errors, which is the
+        worst of the available outcomes.
+        """
+        try:
+            data = await self._request(
+                "GET",
+                f"{self._cfg.graph_base}/{media_id}/insights",
+                token=token,
+                params={"metric": ",".join(MEDIA_METRICS)},
+            )
+        except GraphError as exc:
+            if exc.is_auth:
+                raise
+            log.info("No insights for %s yet (%s)", media_id, exc)
+            return None
+
+        # Meta returns a list of {name, values: [{value}]}, and omits a metric
+        # entirely rather than reporting zero when it has nothing.
+        values = {
+            str(item.get("name")): _first_value(item)
+            for item in (data.get("data") or [])
+        }
+        return MediaInsights(
+            media_id=media_id,
+            **{name: values.get(name, 0) for name in MEDIA_METRICS},
+        )
 
     async def get_profile(self, *, igsid: str, token: str) -> Profile:
         """Whether this person follows the account.

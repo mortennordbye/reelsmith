@@ -28,7 +28,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -189,6 +189,35 @@ _MIGRATIONS: tuple[str, ...] = (
     # rollout would silently undo.
     """
     ALTER TABLE schedule_slots ADD COLUMN source TEXT NOT NULL DEFAULT 'ui';
+    """,
+    # v6. What a published Reel actually did. Until now the service could say
+    # a post went out and nothing about whether it worked, so the only way to
+    # judge a video was to open the app.
+    #
+    # One row per media per day, not one row per media. A Reel's numbers keep
+    # climbing for days after it publishes, and a single mutable row would
+    # answer "how is it doing" while making "was the 19:20 slot better than
+    # 08:10" unanswerable forever. The cost of keeping the history is a few
+    # hundred bytes a post a day.
+    #
+    # `fetched_on` is a local date string rather than a timestamp because the
+    # question it serves is "do we already have today's reading", and a day is
+    # the resolution Meta updates these at anyway.
+    """
+    CREATE TABLE insights (
+        media_id   TEXT NOT NULL,
+        ig_user_id TEXT NOT NULL,
+        fetched_on TEXT NOT NULL,
+        views      INTEGER NOT NULL DEFAULT 0,
+        reach      INTEGER NOT NULL DEFAULT 0,
+        likes      INTEGER NOT NULL DEFAULT 0,
+        comments   INTEGER NOT NULL DEFAULT 0,
+        saved      INTEGER NOT NULL DEFAULT 0,
+        shares     INTEGER NOT NULL DEFAULT 0,
+        fetched_at TEXT NOT NULL,
+        PRIMARY KEY (media_id, fetched_on)
+    );
+    CREATE INDEX insights_by_account ON insights (ig_user_id, fetched_on);
     """,
 )
 
@@ -1037,6 +1066,180 @@ async def attach_fire(
     await conn.commit()
 
 
+async def record_insights(
+    conn: aiosqlite.Connection,
+    *,
+    media_id: str,
+    ig_user_id: str,
+    metrics: Mapping[str, int],
+    on: str | None = None,
+    moment: datetime | None = None,
+) -> None:
+    """Store today's reading for one Reel, replacing an earlier one same day.
+
+    Upsert rather than insert, so a manual refresh an hour after the daily
+    sweep updates today's row instead of failing on the primary key or
+    inventing a second reading for the same date.
+    """
+    moment = moment or now()
+    await conn.execute(
+        """
+        INSERT INTO insights
+            (media_id, ig_user_id, fetched_on, views, reach, likes, comments,
+             saved, shares, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (media_id, fetched_on) DO UPDATE SET
+            views = excluded.views, reach = excluded.reach,
+            likes = excluded.likes, comments = excluded.comments,
+            saved = excluded.saved, shares = excluded.shares,
+            fetched_at = excluded.fetched_at
+        """,
+        (
+            media_id,
+            ig_user_id,
+            on or moment.date().isoformat(),
+            int(metrics.get("views", 0)),
+            int(metrics.get("reach", 0)),
+            int(metrics.get("likes", 0)),
+            int(metrics.get("comments", 0)),
+            int(metrics.get("saved", 0)),
+            int(metrics.get("shares", 0)),
+            moment.isoformat(),
+        ),
+    )
+    await conn.commit()
+
+
+async def latest_insights(
+    conn: aiosqlite.Connection, ig_user_id: str | None = None
+) -> dict[str, Any]:
+    """The most recent reading per media, keyed by media id.
+
+    A Reel's numbers climb for days, so "latest" is the honest answer to how it
+    is doing. The per-date history stays in the table for the questions this
+    cannot answer, such as whether an evening slot outperforms a morning one.
+    """
+    where, args = ("WHERE ig_user_id = ?", (ig_user_id,)) if ig_user_id else ("", ())
+    rows = await _all(
+        conn,
+        f"""
+        SELECT i.* FROM insights i
+        JOIN (
+            SELECT media_id, MAX(fetched_on) AS newest
+            FROM insights {where}
+            GROUP BY media_id
+        ) latest ON latest.media_id = i.media_id AND latest.newest = i.fetched_on
+        """,
+        args,
+    )
+    return {row["media_id"]: row for row in rows}
+
+
+async def last_insight_fetch(
+    conn: aiosqlite.Connection, ig_user_id: str | None = None
+) -> str | None:
+    """When insights were last stored, so Health can say if the sweep is alive.
+
+    A page showing numbers with no indication of their age invites trusting a
+    reading from a week ago.
+    """
+    where, args = ("WHERE ig_user_id = ?", (ig_user_id,)) if ig_user_id else ("", ())
+    row = await _one(conn, f"SELECT MAX(fetched_at) FROM insights {where}", args)
+    return row[0] if row and row[0] else None
+
+
+async def per_post_funnel(
+    conn: aiosqlite.Connection, ig_user_id: str | None = None
+) -> dict[str, dict[str, int]]:
+    """The DM funnel broken down by the Reel that produced it.
+
+    Every number here was already being written; `funnel` only ever summed it
+    account-wide, so "which video actually converted" could not be asked. It is
+    the question that decides what to make more of, which makes the aggregate
+    the less useful of the two.
+    """
+    where, args = ("WHERE ig_user_id = ?", (ig_user_id,)) if ig_user_id else ("", ())
+    out: dict[str, dict[str, int]] = {}
+
+    for key, sql in (
+        (
+            "comments_seen",
+            f"SELECT media_id, COUNT(*) FROM comments_handled {where} GROUP BY media_id",
+        ),
+        (
+            "private_replies",
+            f"SELECT media_id, COUNT(*) FROM comments_handled {where}"
+            f"{' AND' if where else ' WHERE'} replied_at IS NOT NULL GROUP BY media_id",
+        ),
+        (
+            "links_sent",
+            f"SELECT media_id, COUNT(*) FROM deliveries {where} GROUP BY media_id",
+        ),
+    ):
+        for row in await _all(conn, sql, args):
+            media_id = row[0]
+            if media_id:
+                out.setdefault(media_id, {})[key] = int(row[1])
+
+    # Absent means zero, and every consumer would otherwise have to say so.
+    for counts in out.values():
+        for key in ("comments_seen", "private_replies", "links_sent"):
+            counts.setdefault(key, 0)
+    return out
+
+
+async def published_media(
+    conn: aiosqlite.Connection, ig_user_id: str | None = None, limit: int = 100
+) -> list[Any]:
+    """Published queue rows, newest first, for the Posts page.
+
+    Reads from `queued_posts` rather than `posts`, because that is the table
+    holding the repo name, the cover and the caption. `posts` only knows what
+    the poller needs.
+    """
+    where, args = (["state = ?"], [QUEUE_PUBLISHED])
+    if ig_user_id:
+        where.append("ig_user_id = ?")
+        args.append(ig_user_id)
+    args.append(limit)
+    return await _all(
+        conn,
+        f"""
+        SELECT * FROM queued_posts
+        WHERE {' AND '.join(where)} AND media_id IS NOT NULL
+        ORDER BY published_at DESC, id DESC LIMIT ?
+        """,
+        args,
+    )
+
+
+async def insights_stale_media(
+    conn: aiosqlite.Connection, *, ig_user_id: str, on: str, within_days: int = 30
+) -> list[Any]:
+    """Published Reels with no reading for `on` yet.
+
+    Bounded by age because a Reel stops moving long before it stops existing,
+    and a sweep that re-reads every post ever made grows a Graph call a day
+    forever. Thirty days is well past where these settle.
+    """
+    cutoff = (now() - timedelta(days=within_days)).isoformat()
+    return await _all(
+        conn,
+        """
+        SELECT q.media_id FROM queued_posts q
+        LEFT JOIN insights i
+               ON i.media_id = q.media_id AND i.fetched_on = ?
+        WHERE q.ig_user_id = ?
+          AND q.state = ?
+          AND q.media_id IS NOT NULL
+          AND q.published_at >= ?
+          AND i.media_id IS NULL
+        ORDER BY q.published_at DESC
+        """,
+        (on, ig_user_id, QUEUE_PUBLISHED, cutoff),
+    )
+
+
 async def funnel(conn: aiosqlite.Connection, ig_user_id: str | None = None) -> dict[str, int]:
     """The five numbers the whole mechanic exists to move."""
     where, args = ("WHERE ig_user_id = ?", (ig_user_id,)) if ig_user_id else ("", ())
@@ -1054,9 +1257,13 @@ async def funnel(conn: aiosqlite.Connection, ig_user_id: str | None = None) -> d
             " last_inbound_at IS NOT NULL",
         ),
         (
+            # Counted from `deliveries`, which is per person and per post.
+            # `conversations.link_sent_at` is per person and overwritten, so
+            # counting it reported one conversion for someone who converted on
+            # three Reels. That is the same per-person assumption the v2
+            # migration removed from the state machine and this had kept.
             "links_sent",
-            f"SELECT COUNT(*) FROM conversations {where}{' AND' if where else 'WHERE'}"
-            " link_sent_at IS NOT NULL",
+            f"SELECT COUNT(*) FROM deliveries {where}",
         ),
     ):
         row = await _one(conn, sql, args)

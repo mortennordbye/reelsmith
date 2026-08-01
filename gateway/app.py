@@ -20,7 +20,7 @@ import aiosqlite
 import httpx
 from fastapi import FastAPI
 
-from gateway import admin, api, db, poller, schedule, scheduler, webhook
+from gateway import admin, api, db, insights, poller, schedule, scheduler, webhook
 from gateway.config import (
     GatewaySettings,
     get_gateway_settings,
@@ -133,6 +133,20 @@ def create_app(
                 ),
             ]
             log.info("Polling comments every %ds", cfg.poll_interval_s)
+
+            # On by default, unlike the scheduler. This one only reads: it
+            # creates nothing, publishes nothing and messages nobody, so
+            # gaining it by upgrading is not a surprise worth guarding.
+            if cfg.insights_enabled:
+                tasks.append(
+                    asyncio.create_task(
+                        insights.insights_loop(
+                            conn, app.state.graph, cfg, app.state.metrics
+                        ),
+                        name="insights",
+                    )
+                )
+                log.info("Insights on, refreshing every %ds", cfg.insights_interval_s)
 
             # Off unless asked for. Publishing to the feed is a bigger power
             # than answering comments, and a gateway that gained it by being

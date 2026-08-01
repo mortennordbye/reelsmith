@@ -39,6 +39,10 @@ class FakeMeta:
     profile_error: dict[str, Any] | None = None
     calls: list[str] = field(default_factory=list)
     recipient_id: str | None = IGSID
+    # Per media id. A media absent from here answers the way Meta does for a
+    # Reel too young to have numbers, which is an error rather than zeroes.
+    insights: dict[str, dict[str, int]] = field(default_factory=dict)
+    insights_error: dict[str, Any] | None = None
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self._handle)
@@ -65,6 +69,27 @@ class FakeMeta:
 
         if path.endswith("/comments"):
             return httpx.Response(200, json={"data": self.comments})
+
+        if path.endswith("/insights"):
+            if self.insights_error:
+                return httpx.Response(400, json={"error": self.insights_error})
+            media_id = path.rstrip("/").split("/")[-2]
+            values = self.insights.get(media_id)
+            if values is None:
+                # What Meta says for a Reel with nothing yet.
+                return httpx.Response(
+                    400,
+                    json={"error": {"message": "Insights are not available", "code": 100}},
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"name": name, "values": [{"value": n}]}
+                        for name, n in values.items()
+                    ]
+                },
+            )
 
         if path.endswith("/subscribed_apps"):
             return httpx.Response(200, json={"success": True})

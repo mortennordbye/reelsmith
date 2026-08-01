@@ -98,6 +98,16 @@ class Metrics:
         self.queue_depth = Gauge(
             "reelsmith_queue_depth", "Posts in the queue, by state", ["state"], registry=reg
         )
+        self.insights_fetched = Counter(
+            "reelsmith_insights_fetched_total",
+            "Per-media insight readings stored",
+            registry=reg,
+        )
+        self.insights_last_success = Gauge(
+            "reelsmith_insights_last_success_timestamp",
+            "Unix time of the last insights sweep that finished",
+            registry=reg,
+        )
 
     def export(self) -> bytes:
         return generate_latest(self.registry)
