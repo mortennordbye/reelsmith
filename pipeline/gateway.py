@@ -29,10 +29,17 @@ from config import Settings
 
 log = logging.getLogger(__name__)
 
-# Any line that asks the viewer to comment a word, whatever wording it uses.
 # The scriptwriter is told the caption gets a call to action appended, but it
-# writes its own anyway often enough to matter, and its phrasing varies.
-_ANY_CTA_RE = re.compile(r"^\s*comment\s+([A-Za-z0-9]{2,})\b", re.IGNORECASE)
+# writes its own anyway often enough to matter, and neither its wording nor its
+# placement is predictable. Two shapes, both seen for real in one evening:
+#
+#   a line of its own       "Comment ADHD and I will send you the link."
+#   the tail of a paragraph "...patched only afterwards. Comment REVIEW for the link."
+_CTA_LINE_RE = re.compile(r"^\s*comment\s+[A-Za-z0-9]{2,}\b.*$", re.IGNORECASE)
+# Inside a paragraph the keyword must be capitalised to count, which every
+# instance of the ask is. That keeps ordinary prose such as "Comment on the
+# issue and the maintainer replies" from being mistaken for one.
+_CTA_SENTENCE_RE = re.compile(r"\s*Comment\s+[A-Z][A-Z0-9]+\b[^.!?\n]*[.!?]")
 
 # Words too ordinary to use as the ask. `comment_matches` in the gateway tests
 # whole words against the comment text, so a keyword of OPEN on a video about
@@ -138,7 +145,8 @@ def add_caption_cta(caption: str, cfg: Settings, *, keyword: str | None = None) 
     word = (keyword or cfg.gateway_keyword).strip().upper()
     cta = f"Comment {word} if you want the link."
 
-    lines = [ln for ln in caption.rstrip().splitlines() if not _ANY_CTA_RE.match(ln)]
+    lines = [ln for ln in caption.rstrip().splitlines() if not _CTA_LINE_RE.match(ln)]
+    lines = [_CTA_SENTENCE_RE.sub("", ln).rstrip() for ln in lines]
     # Hashtags live in a trailing block. Find where it starts so the call to
     # action lands in the prose rather than after a wall of tags nobody reads.
     first_tag = next(

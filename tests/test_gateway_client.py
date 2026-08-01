@@ -215,6 +215,25 @@ def test_any_wording_of_the_ask_is_replaced(cfg, written):
     assert asks == ["Comment SEND if you want the link."]
 
 
+def test_an_ask_at_the_tail_of_a_paragraph_is_removed_too(cfg):
+    """Seen on alibaba/open-code-review: the ask rode the end of the prose.
+
+    A line-anchored rule misses this, and the caption ends up asking for REVIEW
+    in the paragraph and OPENCODEREVIEW two lines below it.
+    """
+    caption = (
+        "It is the reviewer they ran internally for two years. "
+        "Comment REVIEW for the link.\n"
+        "\n"
+        "#golang\n"
+    )
+    out = gateway.add_caption_cta(caption, cfg, keyword="OPENCODEREVIEW")
+
+    assert "Comment REVIEW" not in out
+    assert out.count("Comment ") == 1
+    assert "ran internally for two years." in out, "the prose it rode on must survive"
+
+
 def test_prose_that_merely_mentions_commenting_is_left_alone(cfg):
     """Only a line that *opens* with the ask is one. Prose about comments is not."""
     caption = "The maintainer will comment on your issue within a day.\n\n#devtools\n"
