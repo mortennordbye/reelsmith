@@ -108,6 +108,25 @@ class GraphClient:
             raise GraphError(f"HTTP {response.status_code} from {url}")
         return payload if isinstance(payload, dict) else {}
 
+    async def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        token: str,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """The same call `_request` makes, for callers outside this class.
+
+        `publisher.py` drives a three-call sequence that is nobody's business
+        but its own, so it gets the transport rather than three thin wrappers
+        here. Error translation and the token parameter stay in one place.
+        """
+        return await self._request(
+            method, url, token=token, params=params, json_body=json_body
+        )
+
     # --- Messaging ---------------------------------------------------------
 
     async def send_private_reply(

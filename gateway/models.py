@@ -7,6 +7,8 @@ naming the field, not as a row with an empty column in it.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -49,6 +51,64 @@ class AccountRegistration(BaseModel):
     # Whether to call subscribed_apps. Off in tests and when the subscription is
     # already known good.
     subscribe: bool = True
+
+
+class QueueSubmission(BaseModel):
+    """A rendered Reel the gateway should publish on the next due slot.
+
+    The files are uploaded through `/api/media` first, and what arrives here is
+    the stored filename rather than a URL: the public hostname has changed once
+    already, and a URL baked into a row that sits for a week would rot with it.
+    """
+
+    ig_user_id: str = Field(min_length=1)
+    video_name: str = Field(min_length=1)
+    cover_name: str | None = None
+    caption: str = ""
+    keyword: str = "send"
+    link: str = Field(min_length=1)
+    repo_full_name: str | None = None
+    # Off by default. See db.QUEUE_DRAFT for why arming is a separate act.
+    approved: bool = False
+    # Pins this post to a wall-clock time instead of the next free slot.
+    slot_override: datetime | None = None
+
+    @field_validator("link")
+    @classmethod
+    def _http_only(cls, v: str) -> str:
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("link must be an http or https URL")
+        return v
+
+    @field_validator("keyword")
+    @classmethod
+    def _one_word(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v.split()) != 1:
+            raise ValueError("keyword must be a single word")
+        return v
+
+    @field_validator("video_name", "cover_name")
+    @classmethod
+    def _basename_only(cls, v: str | None) -> str | None:
+        """No separators, so a queued name can never walk out of covers_dir.
+
+        The serving routes rebuild from the basename too, but a row that cannot
+        hold a traversal in the first place is one fewer thing to get right.
+        """
+        if v is None:
+            return None
+        if "/" in v or "\\" in v or v in {".", ".."}:
+            raise ValueError("must be a bare filename")
+        return v
+
+
+class Queued(BaseModel):
+    """What the Mac gets back after pushing a post."""
+
+    id: int
+    state: str
+    detail: str = ""
 
 
 class CoverUploaded(BaseModel):

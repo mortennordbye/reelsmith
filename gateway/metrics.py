@@ -74,5 +74,30 @@ class Metrics:
             registry=reg,
         )
 
+        # --- The scheduled queue -------------------------------------------
+        self.posts_published = Counter(
+            "reelsmith_posts_published_total", "Reels published from the queue", registry=reg
+        )
+        self.publish_failures = Counter(
+            "reelsmith_publish_failures_total", "Publish attempts that did not complete",
+            registry=reg,
+        )
+        # The one to alert on. A slot firing into an empty queue is the shape of
+        # "the account went quiet three days ago and nobody noticed", and it is
+        # invisible from every other counter here.
+        self.slots_starved = Counter(
+            "reelsmith_slots_starved_total",
+            "Slots that came due with nothing approved to publish",
+            registry=reg,
+        )
+        self.scheduler_last_success = Gauge(
+            "reelsmith_scheduler_last_success_timestamp",
+            "Unix time of the last scheduler tick that finished",
+            registry=reg,
+        )
+        self.queue_depth = Gauge(
+            "reelsmith_queue_depth", "Posts in the queue, by state", ["state"], registry=reg
+        )
+
     def export(self) -> bytes:
         return generate_latest(self.registry)

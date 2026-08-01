@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Health{% endblock %}
+{# Refreshes itself, because the two questions this page answers are "is it
+   still running" and "when did it last do anything", and both go stale while
+   you look at them. No JS needed for that. #}
+{% block head %}<meta http-equiv="refresh" content="60">{% endblock %}
+
+{% block body %}
+<h1>Health</h1>
+<p class="sub">
+  The numbers that decide whether any of this is still working. Everything here
+  is also at <span class="mono">/metrics</span> for Prometheus.
+</p>
+
+<div class="card">
+  <div class="stat">
+    <div><span class="n">{{ counters.published }}</span><span class="l">published</span></div>
+    <div><span class="n" {% if counters.publish_failures %}style="color:var(--bad)"{% endif %}>
+      {{ counters.publish_failures }}</span><span class="l">publish failures</span></div>
+    <div><span class="n" {% if counters.slots_starved %}style="color:var(--warn)"{% endif %}>
+      {{ counters.slots_starved }}</span><span class="l">slots with nothing to post</span></div>
+    <div><span class="n">{{ counters.graph_errors }}</span><span class="l">Meta API errors</span></div>
+    <div><span class="n" {% if counters.signature_failures %}style="color:var(--bad)"{% endif %}>
+      {{ counters.signature_failures }}</span><span class="l">bad webhook signatures</span></div>
+  </div>
+  <p class="small muted" style="margin:16px 0 0">
+    Comment sweep {{ poller_last | ago }}.
+    Scheduler tick {{ scheduler_last | ago }}{% if not cfg.scheduler_enabled %} (disabled){% endif %}.
+    Counters reset when the process restarts, so a low number is not proof of a
+    quiet week.
+  </p>
+</div>
+
+{% for item in accounts %}
+  {% set account = item.row %}
+  <h2>{{ account['username'] or account['ig_user_id'] }}</h2>
+  <div class="card">
+    <div class="stat">
+      <div>
+        <span class="n" {% if item.days_left is not none and item.days_left < 15 %}
+              style="color:var(--bad)"{% endif %}>
+          {{ item.days_left | round | int if item.days_left is not none else '?' }}
+        </span>
+        <span class="l">days of token left</span>
+      </div>
+      {% for state in ['draft', 'approved', 'published', 'failed'] %}
+        <div>
+          <span class="n">{{ item.depth.get(state, 0) }}</span>
+          <span class="l">{{ state }}</span>
+        </div>
+      {% endfor %}
+    </div>
+    <p class="small muted" style="margin:14px 0 0">
+      A long-lived token cannot be refreshed once it has expired, so this
+      number reaching zero ends posting and messaging together.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="stat">
+      {% for label, key in [
+          ('comments seen', 'comments_seen'), ('private replies', 'private_replies'),
+          ('replied in DM', 'replied_in_dm'), ('links sent', 'links_sent')] %}
+        <div>
+          <span class="n">{{ item.funnel.get(key, 0) }}</span>
+          <span class="l">{{ label }}</span>
+        </div>
+      {% endfor %}
+    </div>
+    <p class="small muted" style="margin:14px 0 0">
+      The funnel, all time. Links sent is the only one that is a conversion.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="row" style="align-items:center">
+      <div class="grow small">
+        <strong>Outbound DMs</strong>
+        <span class="muted">
+          {{ 'on' if account['dm_enabled'] else 'off, nothing is being sent' }}
+        </span>
+      </div>
+      <form class="inline" method="post"
+            action="{{ url_for('set_flags', ig_user_id=account['ig_user_id']) }}">
+        <input type="hidden" name="field" value="dm_enabled">
+        <input type="hidden" name="value" value="{{ '0' if account['dm_enabled'] else '1' }}">
+        <button class="{{ 'danger' if account['dm_enabled'] else 'primary' }}">
+          {{ 'Stop DMs' if account['dm_enabled'] else 'Resume DMs' }}
+        </button>
+      </form>
+    </div>
+    <div class="row" style="align-items:center;margin-top:12px">
+      <div class="grow small">
+        <strong>Account</strong>
+        <span class="muted">
+          {{ 'active' if account['active'] else 'paused, nothing polls or publishes' }}
+        </span>
+      </div>
+      <form class="inline" method="post"
+            action="{{ url_for('set_flags', ig_user_id=account['ig_user_id']) }}">
+        <input type="hidden" name="field" value="active">
+        <input type="hidden" name="value" value="{{ '0' if account['active'] else '1' }}">
+        <button class="{{ 'danger' if account['active'] else 'primary' }}">
+          {{ 'Pause everything' if account['active'] else 'Resume' }}
+        </button>
+      </form>
+    </div>
+    <p class="small muted" style="margin:14px 0 0">
+      Stopping DMs leaves the webhook subscription alone, so turning it back on
+      needs nothing re-approved. Pausing the account stops the comment poller
+      and the scheduler as well.
+    </p>
+  </div>
+{% else %}
+  <div class="card empty">No accounts registered yet.</div>
+{% endfor %}
+{% endblock %}

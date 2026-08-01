@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}Queue{% endblock %}
+
+{% block body %}
+<h1>Queue</h1>
+<p class="sub">
+  What goes out next, and when. Times are the slot's local time, jitter
+  included, so what is shown is what will happen.
+</p>
+
+{% for board in boards %}
+  {% set account = board.account %}
+  <h2>
+    {{ account['username'] or account['ig_user_id'] }}
+    {% if not account['active'] %}<span class="tag failed">paused</span>{% endif %}
+  </h2>
+
+  {% if not board.has_slots %}
+    <div class="card muted small">
+      No slots for this account, so nothing has a time to go out at.
+      <a href="{{ url_for('slots_page') }}">Add one</a>.
+    </div>
+  {% endif %}
+
+  {% if board.upcoming %}
+    {% for row, when in board.upcoming %}
+      <div class="card">
+        <div class="row">
+          {% if row['video_name'] %}
+            {# Served from the same public route Meta fetches from, so the
+               preview is the exact file that will be published. #}
+            <video controls preload="none"
+                   {% if row['cover_name'] %}poster="/media/{{ row['cover_name'] }}"{% endif %}
+                   src="/media/{{ row['video_name'] }}"></video>
+          {% endif %}
+          <div class="grow">
+            <div class="row" style="align-items:center;gap:8px">
+              <span class="tag {{ row['state'] }}">{{ row['state'] }}</span>
+              <strong>{{ row['repo_full_name'] or row['video_name'] }}</strong>
+              <span class="grow"></span>
+              <span class="small {{ 'muted' if row['state'] == 'draft' }}">
+                {% if row['state'] == 'draft' %}
+                  not armed
+                {% else %}
+                  {{ when | fmt(board.tz) }}{% if row['slot_override'] %} (pinned){% endif %}
+                {% endif %}
+              </span>
+            </div>
+
+            <p class="small muted" style="margin:6px 0">
+              comment <strong>{{ row['keyword'] }}</strong> for
+              <span class="mono">{{ row['link'] }}</span>
+            </p>
+
+            {% if row['failure'] %}
+              <p class="small" style="color:var(--bad)">{{ row['failure'] }}</p>
+            {% endif %}
+
+            <div>
+              {% if row['state'] == 'draft' or row['state'] == 'failed' %}
+                <form class="inline" method="post"
+                      action="{{ url_for('approve', queued_id=row['id']) }}">
+                  <button class="primary">Approve</button>
+                </form>
+              {% else %}
+                <form class="inline" method="post"
+                      action="{{ url_for('hold', queued_id=row['id']) }}">
+                  <button>Hold</button>
+                </form>
+              {% endif %}
+              <form class="inline" method="post"
+                    action="{{ url_for('move', queued_id=row['id']) }}">
+                <input type="hidden" name="direction" value="up">
+                <button class="link" title="Earlier in the line">&uarr;</button>
+              </form>
+              <form class="inline" method="post"
+                    action="{{ url_for('move', queued_id=row['id']) }}">
+                <input type="hidden" name="direction" value="down">
+                <button class="link" title="Later in the line">&darr;</button>
+              </form>
+              <form class="inline" method="post"
+                    action="{{ url_for('cancel', queued_id=row['id']) }}">
+                <button class="danger">Cancel</button>
+              </form>
+            </div>
+
+            <details style="margin-top:10px">
+              <summary>Caption, keyword and timing</summary>
+              <form method="post" action="{{ url_for('edit', queued_id=row['id']) }}"
+                    style="margin-top:10px">
+                <textarea name="caption" rows="6">{{ row['caption'] }}</textarea>
+                <div style="margin-top:8px">
+                  <label class="small muted">keyword
+                    <input name="keyword" value="{{ row['keyword'] }}" size="12">
+                  </label>
+                  <label class="small muted">link
+                    <input name="link" value="{{ row['link'] }}" size="34">
+                  </label>
+                  <label class="small muted">pin to
+                    <input name="pin" placeholder="2026-08-04T18:00"
+                           value="{{ row['slot_override'] or '' }}" size="20">
+                  </label>
+                  <button class="primary">Save</button>
+                </div>
+                <p class="small muted" style="margin:8px 0 0">
+                  Leaving the pin empty puts this post back in the ordinary line.
+                </p>
+              </form>
+            </details>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  {% else %}
+    <div class="card empty">
+      Nothing queued. Render on the Mac and push with
+      <span class="mono">main.py --enqueue &lt;date&gt;/&lt;slug&gt;</span>.
+    </div>
+  {% endif %}
+
+  {% if board.recent %}
+    <h2 class="muted small" style="text-transform:uppercase;letter-spacing:.05em">Recent</h2>
+    <div class="card">
+      <table>
+        <tr><th></th><th>Post</th><th>When</th><th>Result</th></tr>
+        {% for row in board.recent %}
+          <tr>
+            <td><span class="tag {{ row['state'] }}">{{ row['state'] }}</span></td>
+            <td>{{ row['repo_full_name'] or row['video_name'] }}</td>
+            <td class="small muted">
+              {{ (row['published_at'] or row['created_at'])[:16] | replace('T', ' ') }}
+            </td>
+            <td class="small">
+              {% if row['permalink'] %}
+                <a href="{{ row['permalink'] }}" rel="noreferrer">view</a>
+              {% elif row['failure'] %}
+                <span style="color:var(--bad)">{{ row['failure'][:90] }}</span>
+                {# A failed post is the one thing in this table that still
+                   needs a decision, so the decision lives next to the reason
+                   rather than somewhere else. #}
+                <form class="inline" method="post"
+                      action="{{ url_for('approve', queued_id=row['id']) }}">
+                  <button {% if row['container_id'] %}
+                    title="Meta had already accepted a container for this one, so check the account for a duplicate before retrying"
+                  {% endif %}>
+                    Retry{% if row['container_id'] %} &#9888;{% endif %}
+                  </button>
+                </form>
+                <form class="inline" method="post"
+                      action="{{ url_for('cancel', queued_id=row['id']) }}">
+                  <button class="link">Give up</button>
+                </form>
+              {% else %}
+                <span class="muted">{{ row['media_id'] or '' }}</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </table>
+    </div>
+  {% endif %}
+{% else %}
+  <div class="card empty">No accounts registered yet.</div>
+{% endfor %}
+{% endblock %}

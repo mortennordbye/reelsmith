@@ -194,6 +194,76 @@ def upload_media(
     return public_url
 
 
+def enqueue(
+    video_name: str,
+    link: str,
+    cfg: Settings,
+    *,
+    caption: str = "",
+    keyword: str | None = None,
+    cover_name: str | None = None,
+    repo_full_name: str | None = None,
+    approved: bool = False,
+    client: httpx.Client | None = None,
+) -> dict | None:
+    """Hand a rendered Reel to the gateway's schedule. None means it did not take.
+
+    The odd one out in this module: everything else here shrugs on failure
+    because a publish has already happened and the video exists either way.
+    This one *is* the publish, so the caller treats None as a failure and says
+    so. It still returns rather than raising, because the caller is the one that
+    knows whether the cooldown has been started yet.
+
+    Filenames rather than URLs, because `/api/media` already stored them and a
+    URL baked into a row that sits in a queue for a week would rot with the
+    hostname.
+    """
+    if not _configured(cfg):
+        return None
+
+    url = f"{cfg.gateway_url.rstrip('/')}/api/queue"
+    payload = {
+        "ig_user_id": cfg.ig_user_id,
+        "video_name": video_name,
+        "cover_name": cover_name,
+        "caption": caption,
+        "keyword": keyword or cfg.gateway_keyword,
+        "link": link,
+        "repo_full_name": repo_full_name,
+        "approved": approved,
+    }
+    try:
+        with client or httpx.Client(timeout=_TIMEOUT) as http:
+            response = http.post(url, headers=_headers(cfg), json=payload)
+            response.raise_for_status()
+            return response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        detail = ""
+        if isinstance(exc, httpx.HTTPStatusError):
+            detail = f" ({exc.response.text[:200]})"
+        log.warning("Queueing %s with the gateway failed: %s%s", video_name, exc, detail)
+        return None
+
+
+def fetch_queue(cfg: Settings, *, client: httpx.Client | None = None) -> list[dict] | None:
+    """What the gateway already holds, so a second push can be refused.
+
+    None means the question could not be asked, which is different from "the
+    queue is empty" and is why the caller must not read it as a green light.
+    """
+    if not _configured(cfg):
+        return None
+    url = f"{cfg.gateway_url.rstrip('/')}/api/queue"
+    try:
+        with client or httpx.Client(timeout=_TIMEOUT) as http:
+            response = http.get(url, headers=_headers(cfg))
+            response.raise_for_status()
+            return list(response.json().get("queue") or [])
+    except (httpx.HTTPError, ValueError) as exc:
+        log.debug("Could not read the gateway queue: %s", exc)
+        return None
+
+
 def register_post(
     media_id: str,
     link: str,

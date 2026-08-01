@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Slots{% endblock %}
+
+{% block body %}
+<h1>Slots</h1>
+<p class="sub">
+  When the queue drains. Each slot takes the next armed post, at most once a
+  day, and moves by up to its jitter so the account is not posting at the same
+  second every evening.
+</p>
+
+{% for board in boards %}
+  {% set account = board.account %}
+  <h2>{{ account['username'] or account['ig_user_id'] }}</h2>
+
+  <div class="card">
+    {% if board.slots %}
+      <table>
+        <tr><th>Time</th><th>Days</th><th>Next</th><th></th></tr>
+        {% for item in board.slots %}
+          <tr>
+            <td>
+              <strong>{{ '%02d'|format(item.row['hour']) }}:{{ '%02d'|format(item.row['minute']) }}</strong>
+              <span class="muted small">{{ item.row['tz'] }}</span>
+              {% if item.row['jitter_minutes'] %}
+                <span class="muted small">&plusmn;{{ item.row['jitter_minutes'] }}m</span>
+              {% endif %}
+            </td>
+            <td class="small">{{ item.slot.day_names }}</td>
+            <td class="small {{ 'muted' if not item.row['active'] }}">
+              {% if item.row['active'] %}
+                {{ item.next | fmt(item.row['tz']) }}
+              {% else %}
+                paused
+              {% endif %}
+            </td>
+            <td>
+              {# Pausing a config slot is honest, because it is a decision the
+                 next rollout will undo and that is usually what you want from
+                 a stop. Deleting one is not: it would come straight back. #}
+              <form class="inline" method="post"
+                    action="{{ url_for('toggle_slot', slot_id=item.row['id']) }}">
+                <input type="hidden" name="active"
+                       value="{{ '0' if item.row['active'] else '1' }}">
+                <button>{{ 'Pause' if item.row['active'] else 'Resume' }}</button>
+              </form>
+              {% if item.row['source'] == 'config' %}
+                <span class="tag" title="Declared in GATEWAY_SLOTS. Edit the ConfigMap; a change here would be undone by the next rollout.">config</span>
+              {% else %}
+                <form class="inline" method="post"
+                      action="{{ url_for('remove_slot', slot_id=item.row['id']) }}">
+                  <button class="danger">Delete</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% else %}
+      <p class="empty">No slots, so nothing publishes on its own.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <form method="post" action="{{ url_for('add_slot') }}">
+      <input type="hidden" name="ig_user_id" value="{{ account['ig_user_id'] }}">
+      <label class="small muted">at
+        <input name="hour" type="number" min="0" max="23" value="18" size="2" required>
+        :
+        <input name="minute" type="number" min="0" max="59" value="0" size="2">
+      </label>
+      <label class="small muted">zone
+        <input name="tz" value="{{ cfg.default_timezone }}" size="18">
+      </label>
+      <label class="small muted">jitter
+        <input name="jitter_minutes" type="number" min="0" max="120"
+               value="{{ cfg.default_jitter_minutes }}" size="3"> min
+      </label>
+      <span class="small muted" style="margin-left:10px">
+        {% for n, name in [(1,'Mon'),(2,'Tue'),(3,'Wed'),(4,'Thu'),(5,'Fri'),(6,'Sat'),(7,'Sun')] %}
+          <label><input type="checkbox" name="days" value="{{ n }}"> {{ name }}</label>
+        {% endfor %}
+      </span>
+      <button class="primary">Add slot</button>
+      <p class="small muted" style="margin:10px 0 0">
+        No days ticked means every day. A named zone rather than an offset, so
+        the slot stays at the same local hour across a daylight saving change.
+        The jitter also avoids landing on :00, :15, :30 and :45, and lands on a
+        second rather than on the minute, because a post that arrives at
+        exactly 18:00:00 every evening is the cheapest thing in the world to
+        spot.
+      </p>
+      <p class="small muted" style="margin:6px 0 0">
+        Slots that should survive a redeploy belong in
+        <span class="mono">GATEWAY_SLOTS</span> instead, one per line, for
+        example <span class="mono">18:00 Europe/Oslo jitter=15</span>. Those
+        show as <span class="tag">config</span> and are rewritten on every boot.
+      </p>
+    </form>
+  </div>
+{% else %}
+  <div class="card empty">No accounts registered yet.</div>
+{% endfor %}
+{% endblock %}

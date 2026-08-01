@@ -69,6 +69,67 @@ class GatewaySettings(BaseSettings):
     token_refresh_margin_days: int = 15
     token_refresh_interval_s: int = 86_400
 
+    # --- Scheduled publishing ----------------------------------------------
+    # The whole queue is off unless this is on. A gateway that only answers
+    # comments should not grow the ability to post to the feed by upgrading.
+    scheduler_enabled: bool = False
+    # How often the due check runs. A slot's jitter is minutes wide, so a minute
+    # of granularity is plenty and the tick is nearly free: one query against a
+    # table with tens of rows.
+    scheduler_interval_s: int = 60
+    # How late a missed slot may still fire. Longer than this and the day is
+    # written off, because a pod that was down all night should not publish at
+    # breakfast to an audience that is not there.
+    scheduler_grace_minutes: int = 90
+    # A publish that keeps failing stops asking. Each attempt costs an upload
+    # fetch on Meta's side and the failure is nearly always structural.
+    max_publish_attempts: int = 3
+    # Meta transcodes an 8 MB Reel in about 35 seconds. The ceiling is generous
+    # because the container stays valid for 24 hours either way.
+    publish_timeout_s: int = 600
+    publish_poll_interval_s: float = 5.0
+    # Where the thumbnail comes from when no cover was uploaded. 90 frames at
+    # 30fps, the same moment `cover.png` is rendered from in the pipeline, so
+    # the fallback loses the hook band and nothing else.
+    cover_thumb_offset_ms: int = 3000
+    # Defaults for a slot created without them, and what the admin UI prefills.
+    default_timezone: str = "UTC"
+    default_jitter_minutes: int = 15
+
+    # The schedule itself, declared rather than clicked. One slot per line, so
+    # it drops into a ConfigMap as a block string:
+    #
+    #   GATEWAY_SLOTS: |
+    #     18:00 Europe/Oslo jitter=15
+    #     08:30 Europe/Oslo jitter=20 days=6,7
+    #
+    # Applied at startup and owned by config from then on: these rows are
+    # replaced on every boot, so editing one in the admin UI would be undone by
+    # the next rollout and the UI says so rather than letting it look sticky.
+    # Slots added in the UI are a separate set and survive.
+    slots: str = ""
+    # Which account a config-declared slot belongs to. One account is the
+    # normal case; with several, declare slots in the UI instead.
+    slots_account: str = ""
+
+    # --- Admin UI ----------------------------------------------------------
+    # Off by default, and that default is deliberate. This service is publicly
+    # reachable by necessity: Meta fetches `/media/*` and posts to `/webhook`
+    # from its own servers, so there is no network boundary to hide behind. An
+    # admin panel that publishes to a real account cannot default to on.
+    admin_enabled: bool = False
+    # The panel's own password. Set this, or `admin_trust_proxy_auth` when
+    # something in front is already authenticating. With neither, a panel that
+    # is switched on refuses to start rather than serving itself to the
+    # internet.
+    admin_token: str = ""
+    # Say explicitly that forward-auth (Authentik at Traefik, here) protects
+    # /admin. An opt-in rather than an assumption, because "I thought the
+    # ingress was doing it" is how these get exposed.
+    admin_trust_proxy_auth: bool = False
+    # Session length for the panel's cookie.
+    admin_session_hours: int = 12
+
     # --- Storage -----------------------------------------------------------
     db_path: Path = Path("gateway/dev.sqlite3")
     covers_dir: Path = Path("gateway/covers")
@@ -94,6 +155,10 @@ class GatewayConfigError(RuntimeError):
     """A configuration problem that has to be fixed before serving."""
 
 
+# Enough that guessing is not the attack. `openssl rand -hex 24` gives 48.
+MIN_ADMIN_TOKEN_CHARS = 24
+
+
 def require_secrets(cfg: GatewaySettings) -> None:
     """Fail at startup rather than on the first request.
 
@@ -111,6 +176,38 @@ def require_secrets(cfg: GatewaySettings) -> None:
     ]
     if missing:
         raise GatewayConfigError(f"Not set: {', '.join(missing)}")
+
+    require_admin_auth(cfg)
+
+
+def require_admin_auth(cfg: GatewaySettings) -> None:
+    """Refuse to serve an unauthenticated control panel.
+
+    Checked at startup rather than per request, and it fails the boot on
+    purpose. The panel can publish to a real Instagram account, flip the kill
+    switch and rewrite captions, and this service has to be publicly reachable
+    for Meta to fetch media from it. A crashlooping pod is a much better
+    outcome than a control panel someone finds.
+    """
+    if not cfg.admin_enabled:
+        return
+    if cfg.admin_token:
+        # A short token on a route reachable from the internet is a password
+        # someone will guess. Refused here rather than warned about, because a
+        # warning in a startup log is a thing nobody reads.
+        if len(cfg.admin_token) < MIN_ADMIN_TOKEN_CHARS:
+            raise GatewayConfigError(
+                f"GATEWAY_ADMIN_TOKEN is shorter than {MIN_ADMIN_TOKEN_CHARS} characters. "
+                f"Generate one with `openssl rand -hex 24`."
+            )
+        return
+    if cfg.admin_trust_proxy_auth:
+        return
+    raise GatewayConfigError(
+        "GATEWAY_ADMIN_ENABLED is on with no authentication. Set "
+        "GATEWAY_ADMIN_TOKEN, or GATEWAY_ADMIN_TRUST_PROXY_AUTH=true if "
+        "forward-auth already protects /admin."
+    )
 
 
 @lru_cache(maxsize=1)

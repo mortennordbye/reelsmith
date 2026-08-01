@@ -16,6 +16,7 @@ import hashlib
 import hmac
 import logging
 import re
+from collections.abc import Container
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
@@ -25,7 +26,14 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 
 from gateway import db
 from gateway.graph import GraphError
-from gateway.models import AccountRegistration, CoverUploaded, PostRegistration, Registered
+from gateway.models import (
+    AccountRegistration,
+    CoverUploaded,
+    PostRegistration,
+    Queued,
+    QueueSubmission,
+    Registered,
+)
 
 log = logging.getLogger(__name__)
 
@@ -155,12 +163,18 @@ async def serve_cover(request: Request, name: str) -> FileResponse:
     return FileResponse(path, media_type="image/png")
 
 
-def _prune_media(directory: Path) -> int:
+def _prune_media(directory: Path, *, keep: Container[str] = frozenset()) -> int:
     """Drop anything older than the TTL. Returns how many went.
 
     Called on upload rather than on a timer: uploads are the only thing that
     grows this directory, so that is exactly when it needs bounding, and it
     saves a background task that could fail silently.
+
+    `keep` is the queue's exemption list, and it is load bearing. Age alone is
+    the wrong rule once posts are scheduled days out: a ten post queue at one a
+    day would have its last three videos deleted before their turn, and the
+    symptom would be a publish failing with a 404 from Meta's fetcher a week
+    after the upload that caused it.
     """
     cutoff = db.now() - timedelta(days=_MEDIA_TTL_DAYS)
     removed = 0
@@ -170,6 +184,8 @@ def _prune_media(directory: Path) -> int:
         # gateway.sqlite3 and every conversation in it. Only files this service
         # put here are eligible.
         if path.suffix.lower() not in _MEDIA_TYPES:
+            continue
+        if path.name in keep:
             continue
         try:
             if path.is_file() and datetime.fromtimestamp(path.stat().st_mtime, UTC) < cutoff:
@@ -209,7 +225,7 @@ async def upload_media(
     cfg = request.app.state.cfg
     media_dir = Path(cfg.covers_dir)
     media_dir.mkdir(parents=True, exist_ok=True)
-    pruned = _prune_media(media_dir)
+    pruned = _prune_media(media_dir, keep=await db.live_media_names(request.app.state.db))
     if pruned:
         log.info("Pruned %d media files past %d days", pruned, _MEDIA_TTL_DAYS)
 
@@ -217,6 +233,71 @@ async def upload_media(
     (media_dir / name).write_bytes(payload)
     log.info("Hosting %s (%.1f MB)", name, len(payload) / 1_048_576)
     return CoverUploaded(name=name, url=f"{cfg.public_base_url}/media/{name}")
+
+
+@router.post("/api/queue", response_model=Queued, dependencies=[Depends(require_token)])
+async def enqueue(request: Request, body: QueueSubmission) -> Queued:
+    """Take a rendered Reel into the schedule.
+
+    The files are expected to be up already, through `/api/media`. This is
+    checked rather than assumed: a row pointing at a file that is not there
+    would fail at publish time, days later, with nobody watching.
+    """
+    cfg = request.app.state.cfg
+    media_dir = Path(cfg.covers_dir)
+    for name in (body.video_name, body.cover_name):
+        if name and not (media_dir / name).is_file():
+            raise HTTPException(status_code=400, detail=f"no uploaded media named {name!r}")
+
+    if not cfg.scheduler_enabled:
+        # Accepted anyway, because refusing would strand a video that is already
+        # uploaded. Said plainly, because a queue nothing drains looks identical
+        # to a queue that is working right up until the first slot is missed.
+        log.warning("Post queued while GATEWAY_SCHEDULER_ENABLED is off; nothing will publish it")
+
+    queued_id = await db.enqueue_post(
+        request.app.state.db,
+        ig_user_id=body.ig_user_id,
+        video_name=body.video_name,
+        cover_name=body.cover_name,
+        caption=body.caption,
+        keyword=body.keyword,
+        link=body.link,
+        repo_full_name=body.repo_full_name,
+        approved=body.approved,
+        slot_override=body.slot_override,
+    )
+    state = db.QUEUE_APPROVED if body.approved else db.QUEUE_DRAFT
+    detail = (
+        "queued and armed" if body.approved else "queued as a draft, approve it to arm it"
+    )
+    if not cfg.scheduler_enabled:
+        detail += " (the scheduler is off, so nothing will publish it)"
+    log.info("Queued %s as %d (%s)", body.video_name, queued_id, state)
+    return Queued(id=queued_id, state=state, detail=detail)
+
+
+@router.get("/api/queue", dependencies=[Depends(require_token)])
+async def list_queue(request: Request, ig_user_id: str | None = None) -> dict:
+    """The queue as the Mac sees it, so `--enqueue` can refuse a duplicate."""
+    rows = await db.queued_posts(request.app.state.db, ig_user_id=ig_user_id)
+    return {
+        "queue": [
+            {
+                "id": row["id"],
+                "state": row["state"],
+                "video_name": row["video_name"],
+                "repo_full_name": row["repo_full_name"],
+                "keyword": row["keyword"],
+                "media_id": row["media_id"],
+                "permalink": row["permalink"],
+                "created_at": row["created_at"],
+                "published_at": row["published_at"],
+                "failure": row["failure"],
+            }
+            for row in rows
+        ]
+    }
 
 
 @router.get("/media/{name}")

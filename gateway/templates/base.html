@@ -1,0 +1,127 @@
+{# The whole design system. One file, no build step, no external requests:
+   this page has to render inside a cluster that cannot reach a CDN, and a
+   control panel that fails to style itself is a control panel nobody trusts.
+
+   Colours are the repo's palette, GitHub-dark-adjacent on purpose, so the
+   panel looks like it belongs to the thing it controls. #}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}reelsmith{% endblock %}</title>
+  {% block head %}{% endblock %}
+  <style>
+    :root {
+      --bg: #0d1117; --panel: #161b22; --line: #30363d; --ink: #e6edf3;
+      --dim: #8b949e; --accent: #58a6ff; --good: #3fb950; --warn: #d29922;
+      --bad: #f85149;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font: 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header {
+      border-bottom: 1px solid var(--line); padding: 0 20px;
+      display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
+      background: var(--panel); position: sticky; top: 0; z-index: 5;
+    }
+    header .brand { font-weight: 600; padding: 14px 0; margin-right: 8px; }
+    header nav a {
+      display: inline-block; padding: 14px 2px; color: var(--dim);
+      border-bottom: 2px solid transparent; margin-right: 16px;
+    }
+    header nav a.on { color: var(--ink); border-bottom-color: #f78166; }
+    main { padding: 20px; max-width: 1100px; margin: 0 auto; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    h2 { font-size: 16px; margin: 28px 0 10px; }
+    .sub { color: var(--dim); font-size: 13px; margin: 0 0 20px; }
+    .card {
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 8px; padding: 14px 16px; margin-bottom: 14px;
+    }
+    .row { display: flex; gap: 14px; align-items: flex-start; }
+    .row > .grow { flex: 1; min-width: 0; }
+    .muted { color: var(--dim); }
+    .small { font-size: 13px; }
+    .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+    .tag {
+      display: inline-block; font-size: 11px; text-transform: uppercase;
+      letter-spacing: .04em; padding: 2px 7px; border-radius: 999px;
+      border: 1px solid var(--line); color: var(--dim);
+    }
+    .tag.approved { color: var(--good); border-color: #1f6f34; }
+    .tag.draft { color: var(--warn); border-color: #6b4d10; }
+    .tag.failed, .tag.cancelled { color: var(--bad); border-color: #7d2019; }
+    .tag.published { color: var(--accent); border-color: #1f4b7d; }
+    .tag.claimed { color: var(--warn); border-color: #6b4d10; }
+    button, .btn {
+      font: inherit; font-size: 13px; padding: 5px 11px; border-radius: 6px;
+      border: 1px solid var(--line); background: #21262d; color: var(--ink);
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--dim); }
+    button.primary { background: #1f6f34; border-color: #2ea043; }
+    button.danger { background: #4a1a16; border-color: #7d2019; }
+    button.link { background: none; border: none; color: var(--dim); padding: 5px 4px; }
+    form.inline { display: inline; }
+    input, select, textarea {
+      font: inherit; font-size: 13px; background: #0d1117; color: var(--ink);
+      border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px;
+    }
+    textarea { width: 100%; font-family: ui-monospace, Menlo, monospace; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+    th { color: var(--dim); font-weight: 500; font-size: 12px; text-transform: uppercase; }
+    tr:last-child td { border-bottom: none; }
+    .stat { display: flex; gap: 26px; flex-wrap: wrap; }
+    .stat div span { display: block; }
+    .stat .n { font-size: 22px; font-weight: 600; }
+    .stat .l { font-size: 12px; color: var(--dim); }
+    .empty { color: var(--dim); padding: 18px 0; text-align: center; }
+    video { width: 150px; border-radius: 6px; border: 1px solid var(--line); display: block; }
+    details summary { cursor: pointer; color: var(--dim); font-size: 13px; }
+    .banner {
+      border: 1px solid #7d2019; background: #2d1214; color: #ffb3ad;
+      border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 14px;
+    }
+    /* The queue is the reason to open this, so it stays readable on a phone:
+       the kill switch and the cancel button are the two things most likely to
+       be wanted from somewhere other than a desk. */
+    @media (max-width: 700px) {
+      .row { flex-direction: column; }
+      video { width: 100%; }
+      th:nth-child(n+4), td:nth-child(n+4) { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="brand">reelsmith</span>
+    {% if page != 'login' %}
+      <nav>
+        <a href="{{ url_for('queue_page') }}" class="{{ 'on' if page == 'queue' }}">Queue</a>
+        <a href="{{ url_for('slots_page') }}" class="{{ 'on' if page == 'slots' }}">Slots</a>
+        <a href="{{ url_for('health_page') }}" class="{{ 'on' if page == 'health' }}">Health</a>
+      </nav>
+      {% if not cfg.admin_trust_proxy_auth %}
+        <form method="post" action="{{ url_for('logout') }}" style="margin-left:auto">
+          <button class="link">Sign out</button>
+        </form>
+      {% endif %}
+    {% endif %}
+  </header>
+  <main>
+    {% if page != 'login' and not cfg.scheduler_enabled %}
+      <div class="banner">
+        The scheduler is off, so nothing in the queue will publish itself.
+        Set <span class="mono">GATEWAY_SCHEDULER_ENABLED=true</span> to arm it.
+      </div>
+    {% endif %}
+    {% block body %}{% endblock %}
+  </main>
+</body>
+</html>

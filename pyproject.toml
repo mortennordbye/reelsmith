@@ -31,6 +31,8 @@ gateway = [
     "aiosqlite>=0.20",        # one file of state, no ORM
     "prometheus-client>=0.21",
     "python-multipart>=0.0.9", # the cover upload is multipart
+    "jinja2>=3.1",            # the admin UI, server-rendered, no build step
+    "tzdata>=2024.1",         # slim images ship no tz database; slots need one
 ]
 
 [project.scripts]

@@ -14,6 +14,10 @@ comment "SEND" on the Reel
               └─ no  ─► nudge, re-check on the next message
 ```
 
+It also holds the **scheduled queue**: the Mac renders a batch of Reels, pushes
+them here, and this service publishes them on a schedule. The laptop is only
+needed while rendering.
+
 It runs in the homelab cluster. The pipeline, the voice and the rendering stay
 on the Mac, and nothing here could reproduce the voice.
 
@@ -108,11 +112,121 @@ curl -s -X POST localhost:8000/api/accounts \
 That call also subscribes the account to `messages`. Skipping it produces no
 error and no webhooks, which looks exactly like nobody messaging the account.
 
+## The scheduled queue
+
+```
+Mac:  render  ─►  --enqueue  ─►  /api/media (the MP4)  +  /api/queue (the rest)
+Gateway:  a slot comes due  ─►  claim  ─►  create container  ─►  publish
+                                                             └─►  register the
+                                                                  post so the
+                                                                  keyword works
+```
+
+Off unless `GATEWAY_SCHEDULER_ENABLED=true`. Publishing to the feed is a bigger
+power than answering comments, and gaining it by upgrading would be a surprise
+rather than a decision.
+
+**Two claims, both committed before any call to Meta.** The slot fire is keyed
+on (slot, local date), so a restart cannot make one evening fire twice. The post
+is claimed by compare and swap on `state = approved`, so two ticks cannot take
+the same one.
+
+**A failure is retried only when a retry is provably safe.** The line is whether
+a container exists. Before that, Meta was never asked to make anything, so the
+slot gets its turn back and one dropped connection does not cost the day. After
+it, a Reel may already be live and no error text proves otherwise, so the row
+stops in `failed` and waits for a person. The admin UI offers a Retry, marked
+with a warning when a container existed, because that decision is a human's.
+
+### Declaring the schedule
+
+Slots live in config so they survive a redeploy. One per line, which drops into
+a ConfigMap as a block string:
+
+```yaml
+GATEWAY_SLOTS: |
+  18:00 Europe/Oslo jitter=15
+  08:30 Europe/Oslo jitter=20 days=6,7
+  # only the time is required; days are ISO weekdays, 1 for Monday
+```
+
+Applied at startup and owned by config from then on: these rows are replaced on
+every boot, so the admin UI shows them as `config` and does not offer a delete
+the next rollout would undo. Slots added in the UI are a separate set and
+survive. A line that does not parse **fails the boot**, because a schedule that
+silently drops the line with the typo is a schedule that quietly stops posting.
+
+**The jitter is derived, never rolled.** Each firing moves by up to
+`jitter` minutes either way, so the account is not posting at 18:00:00 every
+evening. A random offset picked at tick time would be re-rolled on every
+restart, and a slot judged not-yet-due at 17:55 could come due at 17:50 after a
+pod restart, publishing twice or slipping a day. Hashing the slot id and the
+local date gives an offset that is stable for the day, different the next, and
+identical across replicas and replays. Two further details are on purpose:
+resolution is seconds rather than minutes, and offsets that would land on :00,
+:15, :30 or :45 are skipped. A column of timestamps on a fifteen minute grid is
+the cheapest automation tell there is.
+
+Because the slot id seeds the jitter, the config sync keeps the id of any slot
+whose definition has not changed. Rewriting the rows every boot would reshuffle
+every offset on every restart, which is the instability this all exists to
+avoid.
+
+### The admin UI
+
+`/admin`, server rendered, no build step and no external requests. Three pages:
+the queue (approve, hold, reorder, pin, edit the caption, cancel, and the video
+plays inline from the same public route Meta fetches from), the slots, and
+health (token expiry, queue depth, the funnel, and the kill switch).
+
+### Getting into the panel
+
+**Off by default, and it will not start unauthenticated.** This service is
+publicly reachable by necessity: Meta fetches `/media/*` and posts to
+`/webhook` from its own servers, so there is no network boundary to hide behind.
+A panel that publishes to a real account, rewrites captions and holds the kill
+switch cannot rely on an ingress rule someone might reorder. Three states, no
+fourth:
+
+| Config | Result |
+|---|---|
+| `GATEWAY_ADMIN_ENABLED=false` | no `/admin` routes at all (the default) |
+| enabled + `GATEWAY_ADMIN_TOKEN` | this service checks the token itself |
+| enabled + `GATEWAY_ADMIN_TRUST_PROXY_AUTH=true` | forward-auth in front is doing it |
+
+Enabled with neither **fails the boot**, naming what to set. A crashlooping pod
+is a better outcome than a control panel someone finds. A token under 24
+characters is refused for the same reason; `openssl rand -hex 24` is the
+intended way to make one.
+
+Forward-auth at Traefik is still the intended front door for the deployed
+instance, and `GATEWAY_ADMIN_TRUST_PROXY_AUTH` is how you say so. It is an
+explicit statement rather than a header this service trusts, because every
+header is attacker-settable on a service this exposed.
+
+The session cookie is HttpOnly, `SameSite=Strict` and Secure on https.
+SameSite is the primary CSRF defence, since every control is a form POST; the
+Origin check is the second lock, and the Referer is only honoured for the
+post-redirect-get when it points back here, so none of these controls can be
+turned into an open redirect.
+
+`/webhook`, `/covers/*`, `/media/*` and the bearer-token `/api/*` routes are
+deliberately outside all of this, because neither Meta nor the Mac can log in.
+
+One consequence worth knowing: **`/media/<name>` is public**, which is what lets
+Meta fetch a video, and therefore an unpublished queued Reel is readable by
+anyone who knows its filename. The name carries a 48 bit digest of the file's
+own bytes, so knowing it means already having it.
+
 ## State
 
-One SQLite file, four tables, `PRAGMA user_version` for migrations. Postgres is
+One SQLite file, seven tables, `PRAGMA user_version` for migrations. Postgres is
 the migration path the day this needs a second replica; nothing here makes that
 hard.
+
+The single replica is now load bearing rather than merely tidy. Two pods would
+mean two schedulers, and the slot-fire claim only protects against that because
+they would share the one SQLite file.
 
 Times are stored as ISO 8601 strings in UTC. They survive a dump, they sort as
 text, and they come back as the string that went in, which matters when the

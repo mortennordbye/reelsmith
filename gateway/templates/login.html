@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Sign in{% endblock %}
+
+{% block body %}
+<div class="card" style="max-width:380px;margin:60px auto">
+  <h1>Sign in</h1>
+  <p class="sub">The control panel for the queue and the account.</p>
+  {% if failed %}
+    {# Says nothing about which part was wrong, and never echoes what was
+       typed, so the page cannot be used to confirm a guess. #}
+    <div class="banner">That did not work.</div>
+  {% endif %}
+  <form method="post" action="{{ url_for('do_login') }}">
+    <input type="password" name="token" autocomplete="current-password"
+           placeholder="Admin token" style="width:100%" autofocus required>
+    <button class="primary" style="margin-top:12px;width:100%">Sign in</button>
+  </form>
+</div>
+{% endblock %}

@@ -131,6 +131,16 @@ def run(
         str | None,
         typer.Option("--publish", help="Publish an existing run, e.g. '2026-07-30/astral-sh-uv'"),
     ] = None,
+    enqueue: Annotated[
+        str | None,
+        typer.Option(
+            "--enqueue", help="Send an existing run to the gateway's schedule"
+        ),
+    ] = None,
+    approve: Annotated[
+        bool,
+        typer.Option("--approve", help="Arm the queued post, so a slot may publish it"),
+    ] = False,
     refresh_token: Annotated[
         bool,
         typer.Option("--refresh-token", help="Renew the Instagram token; run at least monthly"),
@@ -204,6 +214,10 @@ def run(
     if publish:
         _preflight(need_github=False, need_claude=False, need_instagram=True)
         _publish_run(cfg, cfg.build_dir / publish, cover_url=cover_url)
+        return
+
+    if enqueue:
+        _enqueue_run(cfg, cfg.build_dir / enqueue, approved=approve)
         return
 
     if preview_voice:
@@ -521,6 +535,118 @@ def _publish_run(cfg: Settings, run_dir: Path, *, cover_url: str | None = None) 
         scraper.mark_featured(cfg, repo.full_name)
         console.print(
             f"[dim]{repo.full_name} is on cooldown for {cfg.repo_cooldown_days} days.[/]"
+        )
+    else:
+        console.print(
+            "[yellow]No repo.json in this run, so no cooldown was started.[/] "
+            "[dim]Run --posted <owner/repo> by hand.[/]"
+        )
+
+
+def _enqueue_run(cfg: Settings, run_dir: Path, *, approved: bool) -> None:
+    """Hand a finished run to the gateway and start its cooldown.
+
+    The unattended counterpart to `_publish_run`. The gateway publishes it on
+    the next due slot, so the laptop is only needed for the render.
+
+    **The cooldown starts here, not at publish.** `_publish_run` could mark the
+    repo because it was standing there when the media id appeared; nothing on
+    this machine is standing there when a queued post goes out days later.
+    Queueing a repo is committing it, so that is the moment, and `--unmark`
+    undoes it if the post is cancelled. This is the one place where posting and
+    the cooldown deliberately came apart.
+    """
+    if not run_dir.is_dir():
+        console.print(f"[bold red]No such build dir:[/] {run_dir}")
+        raise typer.Exit(1)
+
+    video_path = run_dir / "out.mp4"
+    if not video_path.exists():
+        console.print(f"[bold red]No video in {run_dir}[/] [dim](expected out.mp4)[/]")
+        raise typer.Exit(1)
+
+    if not cfg.gateway_url or not cfg.gateway_token:
+        console.print(
+            "[bold red]No gateway configured.[/]\n"
+            "[dim]Set GATEWAY_URL and GATEWAY_TOKEN, or use --post to publish from here.[/]"
+        )
+        raise typer.Exit(1)
+
+    # Same guard as --publish, for the same reason: unattended is exactly where
+    # posting the same Reel twice goes unnoticed.
+    receipt_path = run_dir / "published.json"
+    if receipt_path.exists():
+        prior = json.loads(receipt_path.read_text())
+        console.print(
+            f"[yellow]Already published[/] on {prior.get('published_at', '?')}. "
+            f"[dim]Delete {receipt_path} to queue it anyway.[/]"
+        )
+        return
+
+    queue_receipt = run_dir / "queued.json"
+    if queue_receipt.exists():
+        prior = json.loads(queue_receipt.read_text())
+        console.print(
+            f"[yellow]Already queued[/] as #{prior.get('id')} on "
+            f"{prior.get('queued_at', '?')}.\n"
+            f"[dim]Cancel it in the admin UI, or delete {queue_receipt} to queue it again.[/]"
+        )
+        return
+
+    repo_path = run_dir / "repo.json"
+    repo = RepoCandidate.model_validate_json(repo_path.read_text()) if repo_path.exists() else None
+    caption_path = run_dir / "caption.txt"
+    caption = caption_path.read_text().strip() if caption_path.exists() else ""
+
+    with console.status("Uploading the video..."):
+        video_url = gateway.upload_media(video_path, run_dir.name, cfg)
+    if not video_url:
+        console.print("[bold red]Upload failed[/] [dim](is the gateway reachable?)[/]")
+        raise typer.Exit(1)
+
+    with console.status("Uploading the cover..."):
+        cover_url = gateway.upload_media(run_dir / "cover.png", run_dir.name, cfg)
+
+    keyword = gateway.keyword_for(repo.full_name, cfg) if repo else cfg.gateway_keyword
+    result = gateway.enqueue(
+        video_url.rsplit("/", 1)[-1],
+        repo.url if repo else "",
+        cfg,
+        caption=caption,
+        keyword=keyword,
+        cover_name=cover_url.rsplit("/", 1)[-1] if cover_url else None,
+        repo_full_name=repo.full_name if repo else None,
+        approved=approved,
+    )
+    if result is None:
+        console.print(
+            "[bold red]The gateway would not take it.[/] "
+            "[dim]Nothing was queued and no cooldown was started.[/]"
+        )
+        raise typer.Exit(1)
+
+    queue_receipt.write_text(
+        json.dumps(
+            {
+                "id": result.get("id"),
+                "state": result.get("state"),
+                "queued_at": datetime.now(UTC).isoformat(),
+                "repo": repo.full_name if repo else None,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+    console.print(f"[bold green]Queued[/] as #{result.get('id')} [dim]({result.get('detail')})[/]")
+    if not approved:
+        console.print("[dim]Approve it in the admin UI, or re-run with --approve.[/]")
+
+    if repo:
+        scraper.mark_featured(cfg, repo.full_name)
+        console.print(
+            f"[dim]{repo.full_name} is on cooldown for {cfg.repo_cooldown_days} days. "
+            f"Cancelling the post means running --unmark {repo.full_name}.[/]"
         )
     else:
         console.print(

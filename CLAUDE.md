@@ -135,13 +135,18 @@ repo spent a while believing were required. Setup is
 
 Four things here are load bearing:
 
-- **Posting is the only thing that starts a cooldown.** Not rendering, not
-  uploading, not a failed publish. `_publish_run` in `main.py` is the single
-  place that calls `mark_featured`, and `--post` and `--publish` both go
-  through it so there cannot be two answers to what posting means.
+- **Committing to a post is what starts a cooldown.** Not rendering, not
+  uploading, not a failed publish. There are exactly two places that call
+  `mark_featured`: `_publish_run`, at the moment a media id exists, and
+  `_enqueue_run`, at the moment a video is handed to the gateway's schedule.
+  The second exists because nothing on this machine is present when a queued
+  post goes out days later, and queueing a repo is committing it. `--unmark`
+  undoes it if the post is cancelled.
 - **`published.json` is a duplicate guard, not a log.** `--publish` refuses a
   folder that already has one. Unattended is exactly where posting the same
   Reel twice goes unnoticed, and the receipt is cheaper than noticing.
+  `queued.json` is the same guard for `--enqueue`, and both are checked by
+  both, so a run cannot be published one way and queued the other.
 - **The publish path raises where the cover path logs.** A half-finished
   upload is worth stopping on. That is the opposite of `render_covers` and
   `copy_to_clipboard`, and the difference is deliberate.
@@ -159,10 +164,23 @@ loses the hook band and nothing else.
 ## The gateway
 
 `gateway/` is a separate FastAPI service, not a pipeline stage. It turns
-"comment SEND and I will DM you the link" into something that happens. It
-imports nothing from `pipeline/` or `config.py`, which is what keeps its
-container image free of the models and the voice. Its own README carries the
-three Meta rules it exists to obey.
+"comment SEND and I will DM you the link" into something that happens, and it
+holds the scheduled queue that publishes a batch of Reels over the following
+days. It imports nothing from `pipeline/` or `config.py`, which is what keeps
+its container image free of the models and the voice. Its own README carries
+the three Meta rules it exists to obey.
+
+Two things about the queue are load bearing and easy to undo by accident:
+
+- **Media retention is keyed on the queue, not on age.** `_prune_media` sweeps
+  by mtime, and a post scheduled eight days out is older than the TTL by the
+  time its turn comes. `db.live_media_names` is the exemption list, and without
+  it the back of a ten post queue is deleted before it publishes and fails with
+  a 404 from Meta's fetcher a week after the upload that caused it.
+- **The slot jitter is derived from the slot id and the local date, never
+  rolled.** A random offset is re-rolled on every restart, which lets one
+  evening's slot fire twice. This is also why the config sync keeps the id of
+  an unchanged slot rather than recreating the row.
 
 ## Working on this repo
 

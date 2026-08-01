@@ -28,7 +28,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -120,6 +120,76 @@ _MIGRATIONS: tuple[str, ...] = (
     ALTER TABLE comments_handled ADD COLUMN author_id TEXT;
     CREATE INDEX comments_by_author ON comments_handled (media_id, author_id);
     """,
+    # v4. The scheduled queue. The Mac renders a batch and pushes it here; this
+    # service publishes them on a schedule, so the laptop is only needed while
+    # rendering.
+    #
+    # `queued_posts.state` is a claim, in the same sense `comments_handled` is:
+    # the move to `claimed` is committed before the first Graph call, so a crash
+    # mid-publish leaves a row that is visibly stuck rather than one a retry
+    # turns into a second identical Reel.
+    #
+    # `slot_fires` is the other half of that. A slot fires at most once per
+    # local date, and the primary key is what enforces it across restarts,
+    # concurrent ticks and a clock that steps backwards.
+    """
+    CREATE TABLE queued_posts (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        ig_user_id     TEXT NOT NULL,
+        state          TEXT NOT NULL,
+        -- Filenames under covers_dir rather than URLs: the public base URL can
+        -- change (it did once already) and a stored absolute URL would rot.
+        video_name     TEXT NOT NULL,
+        cover_name     TEXT,
+        caption        TEXT NOT NULL DEFAULT '',
+        repo_full_name TEXT,
+        keyword        TEXT NOT NULL,
+        link           TEXT NOT NULL,
+        -- Set to pin one post to a wall-clock time instead of the next slot.
+        slot_override  TEXT,
+        position       INTEGER NOT NULL DEFAULT 0,
+        container_id   TEXT,
+        media_id       TEXT,
+        permalink      TEXT,
+        attempts       INTEGER NOT NULL DEFAULT 0,
+        failure        TEXT,
+        created_at     TEXT NOT NULL,
+        published_at   TEXT
+    );
+    CREATE INDEX queued_by_state ON queued_posts (ig_user_id, state, position, id);
+
+    CREATE TABLE schedule_slots (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        ig_user_id TEXT NOT NULL,
+        -- Local wall-clock time plus an IANA zone, not a UTC offset. Storing
+        -- the offset would move the slot by an hour every DST change.
+        hour       INTEGER NOT NULL,
+        minute     INTEGER NOT NULL,
+        tz         TEXT NOT NULL DEFAULT 'UTC',
+        -- Plus or minus this many minutes, so the account does not post at
+        -- exactly the same second every day. Derived per date, never rolled.
+        jitter_minutes INTEGER NOT NULL DEFAULT 0,
+        -- Comma separated ISO weekdays (1=Monday). Empty means every day.
+        days       TEXT NOT NULL DEFAULT '',
+        active     INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX slots_by_account ON schedule_slots (ig_user_id, active);
+
+    CREATE TABLE slot_fires (
+        slot_id    INTEGER NOT NULL,
+        local_date TEXT NOT NULL,
+        claimed_at TEXT NOT NULL,
+        queued_id  INTEGER,
+        PRIMARY KEY (slot_id, local_date)
+    );
+    """,
+    # v5. Where a slot came from. Config-declared slots are replaced wholesale
+    # on every boot, so the UI has to know not to offer edits that the next
+    # rollout would silently undo.
+    """
+    ALTER TABLE schedule_slots ADD COLUMN source TEXT NOT NULL DEFAULT 'ui';
+    """,
 )
 
 # Conversation states. `replied` means the private reply went out and we are
@@ -128,6 +198,26 @@ _MIGRATIONS: tuple[str, ...] = (
 STATE_REPLIED = "replied"
 STATE_AWAITING_FOLLOW = "awaiting_follow"
 STATE_CONVERTED = "converted"
+
+# Queue states.
+#
+# `draft` is the default on arrival and never publishes. Arming is a separate
+# act because the failure mode of the other default is a bad video posting
+# itself while nobody is watching.
+#
+# `claimed` is held only for the length of one publish attempt. A row sitting in
+# it means the process died mid-publish, and it is deliberately not swept back
+# to `approved` by anything automatic: Meta may well have accepted the post.
+QUEUE_DRAFT = "draft"
+QUEUE_APPROVED = "approved"
+QUEUE_CLAIMED = "claimed"
+QUEUE_PUBLISHED = "published"
+QUEUE_FAILED = "failed"
+QUEUE_CANCELLED = "cancelled"
+
+# The states whose media files must survive the retention sweep, and which the
+# admin UI shows as still in the line.
+QUEUE_LIVE_STATES = (QUEUE_DRAFT, QUEUE_APPROVED, QUEUE_CLAIMED, QUEUE_FAILED)
 
 
 def now() -> datetime:
@@ -556,6 +646,393 @@ async def update_conversation(
     args.extend([igsid, ig_user_id])
     await conn.execute(
         f"UPDATE conversations SET {', '.join(sets)} WHERE igsid = ? AND ig_user_id = ?", args
+    )
+    await conn.commit()
+
+
+# --------------------------------------------------------------------------
+# The queue
+# --------------------------------------------------------------------------
+
+
+async def enqueue_post(
+    conn: aiosqlite.Connection,
+    *,
+    ig_user_id: str,
+    video_name: str,
+    cover_name: str | None,
+    caption: str,
+    keyword: str,
+    link: str,
+    repo_full_name: str | None = None,
+    approved: bool = False,
+    slot_override: datetime | None = None,
+) -> int:
+    """Put a rendered Reel in the line. Returns its queue id."""
+    row = await _one(
+        conn, "SELECT COALESCE(MAX(position), 0) + 1 FROM queued_posts WHERE ig_user_id = ?",
+        (ig_user_id,),
+    )
+    position = int(row[0]) if row else 1
+    async with conn.execute(
+        """
+        INSERT INTO queued_posts
+            (ig_user_id, state, video_name, cover_name, caption, repo_full_name,
+             keyword, link, slot_override, position, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            ig_user_id,
+            QUEUE_APPROVED if approved else QUEUE_DRAFT,
+            video_name,
+            cover_name,
+            caption,
+            repo_full_name,
+            keyword,
+            link,
+            iso(slot_override),
+            position,
+            iso(now()),
+        ),
+    ) as cur:
+        queued_id = int(cur.lastrowid or 0)
+    await conn.commit()
+    return queued_id
+
+
+async def get_queued(conn: aiosqlite.Connection, queued_id: int) -> Mapping[str, Any] | None:
+    return await _one(conn, "SELECT * FROM queued_posts WHERE id = ?", (queued_id,))
+
+
+async def queued_posts(
+    conn: aiosqlite.Connection,
+    *,
+    ig_user_id: str | None = None,
+    states: Iterable[str] | None = None,
+    limit: int = 200,
+) -> list[Any]:
+    where, args = [], []
+    if ig_user_id:
+        where.append("ig_user_id = ?")
+        args.append(ig_user_id)
+    states = tuple(states) if states else ()
+    if states:
+        where.append(f"state IN ({','.join('?' * len(states))})")
+        args.extend(states)
+    clause = f"WHERE {' AND '.join(where)}" if where else ""
+    args.append(limit)
+    return await _all(
+        conn,
+        f"SELECT * FROM queued_posts {clause} ORDER BY position, id LIMIT ?",
+        args,
+    )
+
+
+async def live_media_names(conn: aiosqlite.Connection) -> set[str]:
+    """Every file the queue still needs.
+
+    The retention sweep in `api._prune_media` deletes by age, which on its own
+    would eat the back of a ten-post queue three days before its turn and then
+    fail the publish with a 404 from Meta's fetcher. This is the exemption list.
+    """
+    rows = await _all(
+        conn,
+        f"""
+        SELECT video_name, cover_name FROM queued_posts
+        WHERE state IN ({','.join('?' * len(QUEUE_LIVE_STATES))})
+        """,
+        QUEUE_LIVE_STATES,
+    )
+    names: set[str] = set()
+    for row in rows:
+        names.update(name for name in (row["video_name"], row["cover_name"]) if name)
+    return names
+
+
+async def set_queue_state(
+    conn: aiosqlite.Connection,
+    queued_id: int,
+    state: str,
+    *,
+    failure: str | None = None,
+    bump_attempts: bool = False,
+    reset_attempts: bool = False,
+) -> None:
+    sets = ["state = ?"]
+    args: list[Any] = [state]
+    # Cleared rather than left behind, so a row that failed and was re-approved
+    # does not still show yesterday's reason in the UI.
+    sets.append("failure = ?")
+    args.append(failure[:500] if failure else None)
+    if bump_attempts:
+        sets.append("attempts = attempts + 1")
+    if reset_attempts:
+        # A person who looked at the failure and chose to retry is a better
+        # signal than the counter that gave up, so they get a fresh budget.
+        sets.append("attempts = 0")
+    args.append(queued_id)
+    await conn.execute(f"UPDATE queued_posts SET {', '.join(sets)} WHERE id = ?", args)
+    await conn.commit()
+
+
+async def claim_queued(conn: aiosqlite.Connection, queued_id: int) -> bool:
+    """Move an approved post to `claimed`. True means this caller may publish.
+
+    The `state = approved` predicate is the whole point: it is a compare and
+    swap, so two ticks racing for the same row produce one publish and one
+    caller that quietly does nothing.
+    """
+    async with conn.execute(
+        "UPDATE queued_posts SET state = ?, attempts = attempts + 1 WHERE id = ? AND state = ?",
+        (QUEUE_CLAIMED, queued_id, QUEUE_APPROVED),
+    ) as cur:
+        won = cur.rowcount == 1
+    await conn.commit()
+    return won
+
+
+async def next_approved(
+    conn: aiosqlite.Connection, ig_user_id: str, *, before: datetime | None = None
+) -> Mapping[str, Any] | None:
+    """The post a due slot should take.
+
+    A pinned post wins if its time has come, because pinning is an explicit
+    instruction and the queue order is only a default. Otherwise it is the head
+    of the line.
+    """
+    moment = iso(before or now())
+    pinned = await _one(
+        conn,
+        """
+        SELECT * FROM queued_posts
+        WHERE ig_user_id = ? AND state = ? AND slot_override IS NOT NULL
+          AND slot_override <= ?
+        ORDER BY slot_override
+        LIMIT 1
+        """,
+        (ig_user_id, QUEUE_APPROVED, moment),
+    )
+    if pinned is not None:
+        return pinned
+    return await _one(
+        conn,
+        """
+        SELECT * FROM queued_posts
+        WHERE ig_user_id = ? AND state = ? AND slot_override IS NULL
+        ORDER BY position, id
+        LIMIT 1
+        """,
+        (ig_user_id, QUEUE_APPROVED),
+    )
+
+
+async def mark_queue_published(
+    conn: aiosqlite.Connection, queued_id: int, *, media_id: str, permalink: str | None
+) -> None:
+    await conn.execute(
+        """
+        UPDATE queued_posts
+        SET state = ?, media_id = ?, permalink = ?, published_at = ?, failure = NULL
+        WHERE id = ?
+        """,
+        (QUEUE_PUBLISHED, media_id, permalink, iso(now()), queued_id),
+    )
+    await conn.commit()
+
+
+async def set_container(conn: aiosqlite.Connection, queued_id: int, container_id: str) -> None:
+    """Record the container before waiting on it.
+
+    This is what tells a later attempt whether Meta was ever asked to make
+    something. A failure with no container id here is safe to retry; one with a
+    container id is not, because the publish may have landed.
+    """
+    await conn.execute(
+        "UPDATE queued_posts SET container_id = ? WHERE id = ?", (container_id, queued_id)
+    )
+    await conn.commit()
+
+
+async def update_queued(
+    conn: aiosqlite.Connection,
+    queued_id: int,
+    *,
+    caption: str | None = None,
+    keyword: str | None = None,
+    link: str | None = None,
+    position: int | None = None,
+    slot_override: datetime | None = None,
+    clear_override: bool = False,
+) -> None:
+    sets, args = [], []
+    for column, value in (
+        ("caption", caption), ("keyword", keyword), ("link", link), ("position", position)
+    ):
+        if value is not None:
+            sets.append(f"{column} = ?")
+            args.append(value)
+    if clear_override:
+        sets.append("slot_override = NULL")
+    elif slot_override is not None:
+        sets.append("slot_override = ?")
+        args.append(iso(slot_override))
+    if not sets:
+        return
+    args.append(queued_id)
+    await conn.execute(f"UPDATE queued_posts SET {', '.join(sets)} WHERE id = ?", args)
+    await conn.commit()
+
+
+async def queue_depth(conn: aiosqlite.Connection, ig_user_id: str | None = None) -> dict[str, int]:
+    where, args = ("WHERE ig_user_id = ?", (ig_user_id,)) if ig_user_id else ("", ())
+    rows = await _all(
+        conn, f"SELECT state, COUNT(*) FROM queued_posts {where} GROUP BY state", args
+    )
+    return {str(row[0]): int(row[1]) for row in rows}
+
+
+# --------------------------------------------------------------------------
+# Slots
+# --------------------------------------------------------------------------
+
+
+SLOT_SOURCE_UI = "ui"
+SLOT_SOURCE_CONFIG = "config"
+
+
+async def add_slot(
+    conn: aiosqlite.Connection,
+    *,
+    ig_user_id: str,
+    hour: int,
+    minute: int,
+    tz: str = "UTC",
+    jitter_minutes: int = 0,
+    days: str = "",
+    source: str = SLOT_SOURCE_UI,
+) -> int:
+    async with conn.execute(
+        """
+        INSERT INTO schedule_slots
+            (ig_user_id, hour, minute, tz, jitter_minutes, days, source, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (ig_user_id, hour, minute, tz, jitter_minutes, days, source, iso(now())),
+    ) as cur:
+        slot_id = int(cur.lastrowid or 0)
+    await conn.commit()
+    return slot_id
+
+
+async def sync_config_slots(
+    conn: aiosqlite.Connection, ig_user_id: str, specs: Iterable[Any]
+) -> int:
+    """Make the config-declared slots for one account match the config exactly.
+
+    Replace rather than merge, because the config file is the truth for these
+    and a slot deleted from it has to disappear. Slots added in the UI carry a
+    different source and are left alone.
+
+    A slot's id is what seeds its jitter, so rewriting the rows every boot
+    would reshuffle the offsets on every restart, which is precisely the
+    instability the derived jitter exists to avoid. The id is therefore kept
+    for any slot whose definition has not changed.
+    """
+    specs = list(specs)
+    existing = await _all(
+        conn,
+        "SELECT * FROM schedule_slots WHERE ig_user_id = ? AND source = ?",
+        (ig_user_id, SLOT_SOURCE_CONFIG),
+    )
+
+    def shape(row: Any) -> tuple:
+        return (
+            int(row["hour"]), int(row["minute"]), str(row["tz"]),
+            int(row["jitter_minutes"]), str(row["days"] or ""),
+        )
+
+    wanted = {
+        (s.hour, s.minute, s.tz, s.jitter_minutes, s.days): s for s in specs
+    }
+    keep = {shape(row) for row in existing} & set(wanted)
+
+    for row in existing:
+        if shape(row) not in keep:
+            await conn.execute("DELETE FROM schedule_slots WHERE id = ?", (row["id"],))
+    for key, spec in wanted.items():
+        if key in keep:
+            continue
+        await add_slot(
+            conn,
+            ig_user_id=ig_user_id,
+            hour=spec.hour,
+            minute=spec.minute,
+            tz=spec.tz,
+            jitter_minutes=spec.jitter_minutes,
+            days=spec.days,
+            source=SLOT_SOURCE_CONFIG,
+        )
+    await conn.commit()
+    return len(specs)
+
+
+async def active_slots(conn: aiosqlite.Connection, ig_user_id: str | None = None) -> list[Any]:
+    where, args = ("AND ig_user_id = ?", (ig_user_id,)) if ig_user_id else ("", ())
+    return await _all(
+        conn, f"SELECT * FROM schedule_slots WHERE active = 1 {where} ORDER BY hour, minute", args
+    )
+
+
+async def all_slots(conn: aiosqlite.Connection, ig_user_id: str | None = None) -> list[Any]:
+    where, args = ("WHERE ig_user_id = ?", (ig_user_id,)) if ig_user_id else ("", ())
+    return await _all(
+        conn, f"SELECT * FROM schedule_slots {where} ORDER BY hour, minute", args
+    )
+
+
+async def set_slot_active(conn: aiosqlite.Connection, slot_id: int, active: bool) -> None:
+    await conn.execute(
+        "UPDATE schedule_slots SET active = ? WHERE id = ?", (int(active), slot_id)
+    )
+    await conn.commit()
+
+
+async def delete_slot(conn: aiosqlite.Connection, slot_id: int) -> None:
+    await conn.execute("DELETE FROM schedule_slots WHERE id = ?", (slot_id,))
+    await conn.commit()
+
+
+async def claim_slot_fire(conn: aiosqlite.Connection, *, slot_id: int, local_date: str) -> bool:
+    """Take this slot's turn for this local date. True means it is ours.
+
+    Once claimed it stays claimed, including when the publish that follows
+    fails. That is the same trade `claim_comment` makes, for the same reason:
+    the alternative to one missed post is an unknown number of duplicate ones.
+    The scheduler releases it explicitly in the one case that is provably safe.
+    """
+    async with conn.execute(
+        "INSERT OR IGNORE INTO slot_fires (slot_id, local_date, claimed_at) VALUES (?, ?, ?)",
+        (slot_id, local_date, iso(now())),
+    ) as cur:
+        won = cur.rowcount == 1
+    await conn.commit()
+    return won
+
+
+async def release_slot_fire(conn: aiosqlite.Connection, *, slot_id: int, local_date: str) -> None:
+    """Give the slot its turn back. Only safe before a container exists."""
+    await conn.execute(
+        "DELETE FROM slot_fires WHERE slot_id = ? AND local_date = ?", (slot_id, local_date)
+    )
+    await conn.commit()
+
+
+async def attach_fire(
+    conn: aiosqlite.Connection, *, slot_id: int, local_date: str, queued_id: int
+) -> None:
+    await conn.execute(
+        "UPDATE slot_fires SET queued_id = ? WHERE slot_id = ? AND local_date = ?",
+        (queued_id, slot_id, local_date),
     )
     await conn.commit()
 

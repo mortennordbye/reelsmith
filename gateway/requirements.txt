@@ -12,3 +12,9 @@ uvicorn[standard]>=0.32
 aiosqlite>=0.20
 prometheus-client>=0.21
 python-multipart>=0.0.9
+# The admin UI. Server-rendered, so this is the whole frontend stack.
+jinja2>=3.1
+# zoneinfo reads the system tz database, and python:3.13-slim does not ship
+# one. Without this every named zone falls back to UTC and every slot fires an
+# hour or two from where it was set, which looks like a scheduler bug.
+tzdata>=2024.1
