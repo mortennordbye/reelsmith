@@ -59,7 +59,9 @@ without it; `.env.example` has the four-step setup.
 
 ```bash
 python main.py                        # full run
+python main.py --batch 3              # render the top 3 repos back to back
 python main.py --candidates           # just show today's ranked repos
+python main.py --covered              # list every repo already made into a Reel
 python main.py --repo astral-sh/uv    # skip discovery, use a specific repo
 python main.py --stop-after script    # stop early to inspect an artifact
 python main.py --no-research          # skip Claude's web search (faster)
@@ -357,7 +359,16 @@ rather than failing the run.
 - **The cooldown store is what makes this runnable daily.** Star velocity is
   sticky; without `data/used_repos.json` the same three repos win all month.
   It is written by `--posted`, not by the render, so rejected videos cost
-  nothing. `--unmark` is the escape hatch.
+  nothing. `--unmark` is the escape hatch, and `--covered` prints the list.
+- **A covered repo is dropped during discovery, not scored to zero.** Same
+  rule, applied before enrichment rather than after, so a repo we have already
+  featured never costs a README fetch and a Hacker News lookup on its way to
+  losing. On a normal day that is most of the store: yesterday's winners are
+  still climbing, so they still come back in the search.
+- **`--batch N` ranks once and renders N.** Ranking per video would pick the
+  same winner every time, because nothing marks a repo as taken until it is
+  published or queued, and a batch is neither. One repo failing drops one
+  video rather than the whole day.
 - **`video/public/` is a staging area, not a store.** Remotion can only load
   assets from there, so each render copies its audio and screenshot in and
   prunes the previous run's. Everything in it is regenerated from `build/`.

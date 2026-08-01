@@ -191,6 +191,12 @@ Two things about the queue are load bearing and easy to undo by accident:
 - `pytest` and `ruff check` before considering a change done.
 - Rendering does not start the repo cooldown. `main.py --posted <owner/repo>`
   does, and it is deliberately manual so a rejected video costs nothing.
+- **A batch ranks once, not once per video.** `--batch N` fills the gateway's
+  three daily slots from one sitting. It cannot rank per video, because the
+  cooldown only starts at publish or enqueue, so a freshly rendered repo is
+  still the top candidate and every run in the batch would pick it again.
+  `--covered` prints the store; covered repos are dropped during discovery,
+  before enrichment, so they cost no README fetch on their way to losing.
 - **This repo is public.** `PROFILE.md`, `PLAN.md`, `.env`, `data/` and the
   voice recording are gitignored and hold the private half. Before adding a
   file, decide which half it belongs to. `scripts/backup-secrets.sh` backs up
