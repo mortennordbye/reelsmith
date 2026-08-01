@@ -87,6 +87,13 @@ def _configure_logging(cfg: GatewaySettings) -> None:
     # The access log is the noise this was drowning in. Health checks arrive
     # every ten seconds from the kubelet and say nothing.
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    # httpx logs the full request URL at INFO, and every Graph call carries
+    # `access_token` as a query parameter. Turning this package's logging on
+    # therefore started writing a live Instagram token, with publishing and
+    # messaging rights, into the pod log every twenty seconds and from there
+    # into the log store. WARNING keeps the failures and drops the URLs.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def create_app(

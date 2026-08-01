@@ -598,6 +598,22 @@ async def test_the_login_form_posts_to_the_scheme_the_page_was_served_over(anon)
     assert action.startswith(f"{BASE}/"), action
 
 
+def test_the_access_token_cannot_reach_the_log(tmp_path, caplog):
+    """httpx logs the full request URL at INFO, and every Graph call carries
+    `access_token` as a query parameter.
+
+    Turning this package's logging on therefore started writing a live token
+    with publishing and messaging rights into the pod log every twenty seconds,
+    and from there into the log store. Found in production the same minute the
+    logging change shipped.
+    """
+    import logging
+
+    create_app(settings(tmp_path), http=FakeMeta().client(), background=False)
+    assert logging.getLogger("httpx").level >= logging.WARNING
+    assert logging.getLogger("httpcore").level >= logging.WARNING
+
+
 def test_the_image_tells_uvicorn_to_trust_the_proxy():
     """Guards the other half, which no request through ASGI can reach.
 
