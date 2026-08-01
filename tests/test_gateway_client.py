@@ -149,7 +149,7 @@ def test_the_cta_lands_above_the_hashtags(cfg):
 
 def test_a_caption_with_no_hashtags_still_gets_the_cta(cfg):
     out = gateway.add_caption_cta("One sentence.", cfg)
-    assert "Comment SEND and I will send you the link." in out
+    assert "Comment SEND if you want the link." in out
 
 
 def test_the_cta_is_not_added_twice(cfg):
@@ -173,12 +173,12 @@ def test_the_cta_obeys_the_repo_text_rules(cfg):
 
 def test_the_keyword_is_configurable_and_shown_uppercase(cfg):
     cfg = cfg.model_copy(update={"gateway_keyword": "link"})
-    assert "Comment LINK and I will send you the link." in gateway.add_caption_cta("B.", cfg)
+    assert "Comment LINK if you want the link." in gateway.add_caption_cta("B.", cfg)
 
 
 def test_a_per_post_keyword_overrides_the_default(cfg):
     out = gateway.add_caption_cta("B.", cfg, keyword="GROK")
-    assert "Comment GROK and I will send you the link." in out
+    assert "Comment GROK if you want the link." in out
 
 
 # --- Per-post keywords ------------------------------------------------------
@@ -216,7 +216,7 @@ def test_the_keyword_is_always_a_single_typable_word(cfg):
 
 
 def test_the_voice_reads_the_ask(cfg):
-    assert gateway.spoken_cta("GROK", cfg) == "Comment GROK and I send you the link."
+    assert gateway.spoken_cta("GROK", cfg) == "Comment GROK if you want the link."
 
 
 def test_no_spoken_ask_when_nothing_is_listening(off):

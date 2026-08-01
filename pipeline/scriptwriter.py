@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import time
 from typing import Any
 
 from pydantic import ValidationError
@@ -37,10 +38,26 @@ log = logging.getLogger(__name__)
 # One generation plus two corrections. Past that the model is not going to get
 # there and the run should fail loudly rather than keep spending.
 _MAX_SCRIPT_ATTEMPTS = 3
+# The CLI dying is usually the network rather than the request. Retried with a
+# short backoff, because the alternative is what happened on 2026-08-01: a
+# dropped connection five minutes into the daily run threw the whole thing
+# away, and the day produced no video at all.
+_MAX_CLI_ATTEMPTS = 3
+_CLI_BACKOFF_S = 20
 
 
 class ScriptGenerationError(RuntimeError):
     """Claude Code failed to produce a usable script."""
+
+
+class TransientScriptError(ScriptGenerationError):
+    """The CLI failed in a way that another attempt might survive.
+
+    A non-zero exit is nearly always the connection rather than the prompt: a
+    bad prompt comes back as a valid envelope carrying a bad answer, which the
+    validator handles separately. So this is retried and a validation failure
+    is not.
+    """
 
 
 SYSTEM_PROMPT = """\
@@ -149,6 +166,14 @@ spoken_script
     what to do next. Write for the ear. No semicolons, no parentheses, and
     expand symbols ("about 20 percent", not "~20%").
 
+    **Never restate the hook.** The hook is already on screen, read in under a
+    second, and the viewer is still there because of it. Saying it again in the
+    first spoken sentence spends the three seconds that decide whether they stay
+    on an idea they already have. The first line must move to the NEXT beat: the
+    consequence, the cost, the number. If the hook is "Your agent codes before
+    it understands you", open on "Twenty minutes later you delete all of it",
+    not on "Your coding agent starts writing before it understands the ask".
+
     Open on the PROBLEM, not on the project. The first two sentences must
     describe a frustration the viewer has actually felt, in plain language,
     before the project is named. "Your coding agent builds a custom date picker
@@ -178,7 +203,7 @@ spoken_script
     sentences have a similar shape, rewrite one.
 
 visual_cues
-    3 to 6 ordered beats describing what is on screen. Each cue's
+    5 to 8 ordered beats describing what is on screen. Each cue's
     spoken_excerpt must be the portion of spoken_script playing during that
     beat -- concatenated in order they should reconstruct the whole script,
     because the renderer uses them to allocate screen time. Available kinds:
@@ -186,12 +211,46 @@ visual_cues
       repo_card  title=repo name, subtitle=one-line description
       code       code=a SHORT snippet (max 12 lines, max 60 chars per line --
                  it must be legible on a phone), code_language=the language
-      terminal   code=the install or run command, code_language="bash"
+      terminal   code=the tool being run, code_language="bash"
       stat       stat_value=a short number/figure, stat_label=what it measures
       bullets    bullets=2 to 4 lines, each 6 words or fewer
 
+    **Every word of spoken_script is burned onto the video as captions**, synced
+    to the voice, along the bottom of the frame. The viewer is already reading
+    what they are hearing. So any `title`, `bullets` or `stat_label` that
+    restates the narration puts the same words on screen twice, and the screen
+    is the scarcest thing in the video.
+
+    Cue text must add something the sentence being spoken does not:
+
+      say "slash grill me interviews you first"   show the command itself
+      say "it drags on interface work"            show a labelled bullet, "interface work"
+      say "small markdown files"                  show the file tree, or a snippet
+      say "built for solo devs"                   show nothing, or the repo card
+
+    `title` is a label, not a sentence, and it is optional. Two or three words
+    naming what the viewer is looking at. Leave it out rather than paraphrase
+    the voiceover into it. `bullets` are keywords and fragments, never the
+    script's own sentences rewritten.
+
+    When a beat has nothing to show that the words do not already carry, prefer
+    `code`, `terminal`, `repo_card` or `stat`, which show a thing rather than
+    describe one.
+
+    Keep each spoken_excerpt to about 15 words. A cue's screen time comes from
+    how long its excerpt takes to say, so a 40 word excerpt becomes a ten second
+    static hold, and a static hold is where a viewer scrolls. More cues with
+    shorter excerpts is the same script with more cuts in it.
+
     Use at least one `code` or `terminal` cue -- this audience wants to see the
     actual interface. Only cite a `stat` you are confident is real.
+
+    **Never show an install, add or setup command, and never read one aloud.**
+    Explain what the project is and how it works; getting hold of it is the
+    viewer's next step, not this video's. They can search the name, or comment
+    the keyword and the account sends them the link. That is what makes the ask
+    worth answering rather than decoration, so a video that hands the install
+    line over for free has given away the only thing it had to trade.
 
 caption_text
     The Instagram caption: two or three sentences, then 5-8 relevant hashtags.
@@ -226,9 +285,13 @@ def _run_claude(prompt: str, schema: dict[str, Any], cfg: Settings) -> dict[str,
         ) from exc
 
     if proc.returncode != 0:
-        raise ScriptGenerationError(
+        # stdout, not just stderr. With --output-format json the CLI puts its
+        # error envelope on stdout, so reporting stderr alone produced a blank
+        # message and the real reason had to be dug out of ~/.claude/projects.
+        raise TransientScriptError(
             f"claude exited {proc.returncode}.\n"
-            f"stderr: {proc.stderr[:800]}\n"
+            f"stderr: {proc.stderr[:400]}\n"
+            f"stdout: {proc.stdout[:400]}\n"
             f"If this says you are not authenticated, run `claude` once interactively "
             f"to sign in."
         )
@@ -248,6 +311,29 @@ def _run_claude(prompt: str, schema: dict[str, Any], cfg: Settings) -> dict[str,
     return envelope
 
 
+def _run_claude_with_retry(
+    prompt: str, schema: dict[str, Any], cfg: Settings
+) -> dict[str, Any]:
+    """`_run_claude`, but a dropped connection does not cost the day.
+
+    Separate from the validation retry below on purpose. That one hands the
+    model its own rejected answer and asks for a fix; this one simply tries the
+    same call again, because there is nothing to correct.
+    """
+    for attempt in range(1, _MAX_CLI_ATTEMPTS + 1):
+        try:
+            return _run_claude(prompt, schema, cfg)
+        except TransientScriptError as exc:
+            if attempt == _MAX_CLI_ATTEMPTS:
+                raise
+            log.warning(
+                "Claude Code failed (attempt %d/%d), retrying in %ds: %s",
+                attempt, _MAX_CLI_ATTEMPTS, _CLI_BACKOFF_S, str(exc).splitlines()[0],
+            )
+            time.sleep(_CLI_BACKOFF_S)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 def write_script(repo: RepoCandidate, cfg: Settings) -> tuple[VideoScript, dict[str, Any]]:
     """Generate the script. Returns (script, raw_envelope) so callers can
     persist the envelope for auditing -- it carries the web-search count and
@@ -264,7 +350,7 @@ def write_script(repo: RepoCandidate, cfg: Settings) -> tuple[VideoScript, dict[
     envelope: dict[str, Any] = {}
     script: VideoScript | None = None
     for attempt in range(_MAX_SCRIPT_ATTEMPTS):
-        envelope = _run_claude(prompt, schema, cfg)
+        envelope = _run_claude_with_retry(prompt, schema, cfg)
 
         payload = envelope.get("structured_output")
         if payload is None:

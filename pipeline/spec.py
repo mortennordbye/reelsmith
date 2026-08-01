@@ -29,11 +29,22 @@ log = logging.getLogger(__name__)
 # Every scene gets at least this long, or fast cuts become unreadable.
 MIN_SCENE_SECONDS = 1.8
 
-# How long the opening README hero holds. Deliberately the longest scene in
-# the video: it is the one shot the maintainer actually designed (logo, title
-# lockup, badges), it carries the most information per second, and it needs
-# time to be read rather than just glimpsed. Everything after it is ours.
-INTRO_SECONDS = 7.0
+# How long the opening README hero holds. Still the longest scene in the video:
+# it is the one shot the maintainer actually designed (logo, title lockup,
+# badges), it carries the most information per second, and it needs time to be
+# read rather than just glimpsed. Everything after it is ours.
+#
+# Trimmed from 7.0 because the hook overlay covers the first 3 seconds of it, so
+# the back half was a static image with nothing new arriving, at exactly the
+# point a viewer decides whether to stay.
+INTRO_SECONDS = 5.5
+
+# No scene should hold longer than this. Nothing enforces it, because a scene's
+# length comes from how long its cue is spoken for and there is no second thing
+# to cut to. It is the prompt's job: more cues and shorter excerpts. This is
+# here so the render says when that failed rather than quietly shipping a ten
+# second static hold.
+MAX_SCENE_SECONDS = 5.5
 
 
 def _norm_words(text: str) -> list[str]:
@@ -208,6 +219,17 @@ def build_spec(
         )
     else:
         log.info("Scenes aligned to spoken word timings.")
+
+    # A static hold is where a viewer scrolls, so say when one got through.
+    overlong = [
+        round(d / fps, 1) for _, d in allocations if d > MAX_SCENE_SECONDS * fps
+    ]
+    if overlong:
+        log.warning(
+            "Scene(s) holding %s seconds, over the %.1fs guideline. The script "
+            "gave too few cues for its length; more cues means more cuts.",
+            ", ".join(str(x) for x in overlong), MAX_SCENE_SECONDS,
+        )
 
     for cue, (from_frame, duration) in zip(script.visual_cues, allocations, strict=True):
         scenes.append(

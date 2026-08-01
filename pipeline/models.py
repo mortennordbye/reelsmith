@@ -138,7 +138,7 @@ class VideoScript(BaseModel):
         description="The voiceover. Under 80 words, no colons, hyphens or dashes."
     )
     visual_cues: list[VisualCue] = Field(
-        description="3-6 ordered beats describing what to show behind the voiceover."
+        description="5-8 ordered beats describing what to show behind the voiceover."
     )
     caption_text: str = Field(
         default="",

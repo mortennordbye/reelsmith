@@ -3,7 +3,7 @@ import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } fr
 
 import { BrowserFrame } from "../components/BrowserFrame";
 import { CodeBlock } from "../components/CodeBlock";
-import { theme } from "../theme";
+import { sceneSafeBottom, theme } from "../theme";
 import type { RepoMeta, Scene } from "../types";
 
 /**
@@ -21,7 +21,9 @@ const Stage: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       style={{
         paddingLeft: theme.padding,
         paddingRight: theme.padding,
-        paddingBottom: 620, // caption safe area
+        // Derived from the caption band in theme.ts, not guessed. See there
+        // for why a hardcoded 620 let three line phrases overlap the scene.
+        paddingBottom: sceneSafeBottom,
         paddingTop: 300,
         justifyContent: "center",
         alignItems: "center",

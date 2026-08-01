@@ -76,7 +76,7 @@ def spoken_cta(keyword: str, cfg: Settings) -> str | None:
     """
     if not _configured(cfg):
         return None
-    return f"Comment {keyword.strip().upper()} and I send you the link."
+    return f"Comment {keyword.strip().upper()} if you want the link."
 
 
 def add_caption_cta(caption: str, cfg: Settings, *, keyword: str | None = None) -> str:
@@ -97,7 +97,7 @@ def add_caption_cta(caption: str, cfg: Settings, *, keyword: str | None = None) 
         return caption
 
     word = (keyword or cfg.gateway_keyword).strip().upper()
-    cta = f"Comment {word} and I will send you the link."
+    cta = f"Comment {word} if you want the link."
     if cta in caption:
         return caption
 

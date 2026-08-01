@@ -2,7 +2,7 @@ import { createTikTokStyleCaptions, type Caption as RemotionCaption } from "@rem
 import React, { useMemo } from "react";
 import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
 
-import { theme } from "../theme";
+import { captionBand, theme } from "../theme";
 import type { Caption } from "../types";
 
 /** Words per on-screen group. Whole phrases read far better than one word at a
@@ -11,17 +11,9 @@ const GROUP_MS = 900;
 
 type Props = {
   captions: Caption[];
-  /**
-   * Stop drawing at this frame. The end card occupies the same band as the
-   * captions (both sit just above Instagram's bottom chrome, which is the only
-   * safe place for either), so without this they overlap and neither is
-   * readable. Nothing is lost by stopping: the card carries the same words the
-   * voice is reading at that moment, set larger.
-   */
-  untilFrame?: number;
 };
 
-export const Captions: React.FC<Props> = ({ captions, untilFrame }) => {
+export const Captions: React.FC<Props> = ({ captions }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const nowMs = (frame / fps) * 1000;
@@ -41,8 +33,6 @@ export const Captions: React.FC<Props> = ({ captions, untilFrame }) => {
       .pages;
   }, [captions]);
 
-  if (untilFrame !== undefined && frame >= untilFrame) return null;
-
   const page = pages.find(
     (p) => nowMs >= p.startMs && nowMs < p.startMs + p.durationMs,
   );
@@ -61,7 +51,7 @@ export const Captions: React.FC<Props> = ({ captions, untilFrame }) => {
         alignItems: "center",
         // Sits above Instagram's bottom UI chrome so captions are never
         // covered by the like/comment column or the caption preview.
-        paddingBottom: 430,
+        paddingBottom: captionBand.fromBottom,
         paddingLeft: theme.padding,
         paddingRight: theme.padding,
       }}
@@ -85,7 +75,7 @@ export const Captions: React.FC<Props> = ({ captions, untilFrame }) => {
                 fontSize: theme.size.caption,
                 fontWeight: 800,
                 letterSpacing: "-0.02em",
-                lineHeight: 1.22,
+                lineHeight: captionBand.lineHeight,
                 color: isActive ? theme.color.accent : theme.color.text,
                 // A hard shadow keeps text legible over any background,
                 // which matters because we never control what's behind it.

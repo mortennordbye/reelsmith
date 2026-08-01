@@ -92,7 +92,15 @@ const Hook: React.FC<{ text: string }> = ({ text }) => {
 
 // How long the end card holds. Long enough to read and act on, short enough
 // that it does not eat the last point the voiceover is making.
-const CTA_SECONDS = 4;
+/**
+ * How far through the video the ask appears, as a fraction of its length.
+ *
+ * It used to be the last four seconds, which had two costs. Anyone who left
+ * before 85% never saw it at all, and because it took the bottom band from the
+ * captions the video ended on a card rather than on content, so there was
+ * nothing to loop back into. Replays are watch time.
+ */
+const CTA_FROM_FRACTION = 0.55;
 
 /**
  * The ask, on screen. The caption carries the same line, but a caption sits
@@ -101,6 +109,11 @@ const CTA_SECONDS = 4;
  *
  * Deliberately plain: no arrows, no emoji, no "link in bio". The instruction is
  * the entire message and anything else competes with it.
+ *
+ * It sits at the TOP of the frame, which is the only strip nothing else uses:
+ * scene content starts at y=300 and the captions own the bottom band. That is
+ * what lets it run for the back half of the video alongside the captions
+ * instead of replacing them for the last four seconds.
  */
 const CallToAction: React.FC<{ keyword: string }> = ({ keyword }) => {
   const frame = useCurrentFrame();
@@ -114,18 +127,18 @@ const CallToAction: React.FC<{ keyword: string }> = ({ keyword }) => {
   return (
     <AbsoluteFill
       style={{
-        justifyContent: "flex-end",
+        justifyContent: "flex-start",
         alignItems: "center",
-        paddingBottom: 420,
+        paddingTop: 96,
         opacity: enter,
       }}
     >
       <div
         style={{
-          transform: `translateY(${(1 - enter) * 24}px)`,
+          transform: `translateY(${(1 - enter) * -18}px)`,
           textAlign: "center",
-          padding: "28px 44px",
-          borderRadius: 28,
+          padding: "18px 32px",
+          borderRadius: 22,
           backgroundColor: "rgba(1, 4, 9, 0.82)",
           border: `2px solid ${theme.color.accent}`,
         }}
@@ -133,7 +146,7 @@ const CallToAction: React.FC<{ keyword: string }> = ({ keyword }) => {
         <div
           style={{
             fontFamily: theme.font.display,
-            fontSize: 62,
+            fontSize: 44,
             fontWeight: 800,
             color: theme.color.text,
             lineHeight: 1.1,
@@ -144,13 +157,13 @@ const CallToAction: React.FC<{ keyword: string }> = ({ keyword }) => {
         <div
           style={{
             fontFamily: theme.font.display,
-            fontSize: 34,
+            fontSize: 26,
             fontWeight: 600,
             color: theme.color.muted,
-            marginTop: 10,
+            marginTop: 6,
           }}
         >
-          and I send you the link
+          if you want the link
         </div>
       </div>
     </AbsoluteFill>
@@ -159,10 +172,10 @@ const CallToAction: React.FC<{ keyword: string }> = ({ keyword }) => {
 
 export const Reel: React.FC<VideoSpec> = (spec) => {
   const { fps } = useVideoConfig();
-  // Where the end card takes over the bottom band from the captions. Undefined
-  // when there is no card, so the captions run to the end as before.
+  // Where the ask appears. It no longer takes anything from the captions, so
+  // they run to the last frame and the video ends on content.
   const ctaFrom = spec.ctaKeyword
-    ? Math.max(0, spec.durationInFrames - CTA_SECONDS * fps)
+    ? Math.round(spec.durationInFrames * CTA_FROM_FRACTION)
     : undefined;
 
   return (
@@ -182,21 +195,23 @@ export const Reel: React.FC<VideoSpec> = (spec) => {
         </Sequence>
       ))}
 
-      <Captions
-        captions={spec.captions}
-        untilFrame={ctaFrom}
-      />
+      <Captions captions={spec.captions} />
 
       <Sequence durationInFrames={HOOK_SECONDS * fps} layout="none">
         <Hook text={spec.hook} />
       </Sequence>
 
-      {/* Anchored to the end rather than given a fixed slot, so it always lands
-          under the closing line of the voiceover however long the script ran.
-          The captions stop at the same frame: both live in the band above
-          Instagram's bottom chrome, and two things there is one too many. */}
+      {/* Runs from the middle to the last frame rather than sitting in a slot at
+          the end, so a viewer who leaves at 70% has still seen the ask. It is at
+          the top of the frame, so the captions keep the bottom band and the
+          video's final frame is scene content, which loops cleanly back into
+          the hook. */}
       {spec.ctaKeyword && ctaFrom !== undefined ? (
-        <Sequence from={ctaFrom} durationInFrames={CTA_SECONDS * fps} layout="none">
+        <Sequence
+          from={ctaFrom}
+          durationInFrames={spec.durationInFrames - ctaFrom}
+          layout="none"
+        >
           <CallToAction keyword={spec.ctaKeyword} />
         </Sequence>
       ) : null}
