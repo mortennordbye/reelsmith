@@ -23,6 +23,10 @@
 PROFILE.md
 PLAN.md
 notes/*.md
+# Session state: what is live, what is queued, what to check next. Private
+# because it carries account performance numbers, and backed up because losing
+# it loses the thread.
+HANDOVER.md
 .env
 data/star_history.json
 data/used_repos.json
