@@ -348,6 +348,27 @@ def _run_claude_with_retry(
     raise AssertionError("unreachable")  # pragma: no cover
 
 
+def web_search_count(envelope: dict[str, Any]) -> int:
+    """How many web searches the run actually made.
+
+    Read from `modelUsage`, not from `usage.server_tool_use`. A web search is
+    carried out by a cheaper model on the run's behalf, so the count is
+    attributed to that model rather than to the one writing the script, and the
+    top level `server_tool_use.web_search_requests` sits at 0 no matter how
+    much research happened.
+
+    This matters because the count is the only evidence that
+    `CLAUDE_RESEARCH=true` bought anything, and both CLAUDE.md and PROFILE.md
+    point at it as the way to audit exactly that. Reading the wrong field made
+    every run since the first look like it had researched nothing.
+    """
+    return sum(
+        model.get("webSearchRequests", 0)
+        for model in (envelope.get("modelUsage") or {}).values()
+        if isinstance(model, dict)
+    )
+
+
 def write_script(repo: RepoCandidate, cfg: Settings) -> tuple[VideoScript, dict[str, Any]]:
     """Generate the script. Returns (script, raw_envelope) so callers can
     persist the envelope for auditing -- it carries the web-search count and
@@ -409,9 +430,7 @@ def write_script(repo: RepoCandidate, cfg: Settings) -> tuple[VideoScript, dict[
             script.word_count, cfg.max_script_words,
         )
 
-    searches = (
-        envelope.get("usage", {}).get("server_tool_use", {}).get("web_search_requests", 0)
-    )
+    searches = web_search_count(envelope)
     log.info(
         "Script ready: %d words, %d cues, %d web searches, $%.4f",
         script.word_count, len(script.visual_cues), searches,

@@ -102,3 +102,32 @@ def test_staging_produces_a_name_pruning_recognises(tmp_path):
 
     assert staged == "owner-repo-voice.wav"
     assert prune_staged_assets(root, "some-other-slug") == 1
+
+
+# --- The research audit signal ----------------------------------------------
+
+
+def test_web_searches_are_counted_from_the_model_that_made_them():
+    """A search is run by a cheaper model, so the top-level counter stays 0.
+
+    Reading `usage.server_tool_use.web_search_requests` made every run since the
+    first report "0 web searches" while research was in fact happening, which
+    quietly disabled the one check CLAUDE.md names for auditing it.
+    """
+    from pipeline.scriptwriter import web_search_count
+
+    envelope = {
+        "usage": {"server_tool_use": {"web_search_requests": 0}},
+        "modelUsage": {
+            "claude-haiku-4-5-20251001": {"webSearchRequests": 3, "costUSD": 0.09},
+            "claude-opus-5": {"webSearchRequests": 0, "costUSD": 0.81},
+        },
+    }
+    assert web_search_count(envelope) == 3
+
+
+def test_an_envelope_without_model_usage_counts_zero_rather_than_raising():
+    from pipeline.scriptwriter import web_search_count
+
+    assert web_search_count({}) == 0
+    assert web_search_count({"modelUsage": None}) == 0
