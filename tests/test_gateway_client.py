@@ -181,6 +181,47 @@ def test_a_per_post_keyword_overrides_the_default(cfg):
     assert "Comment GROK if you want the link." in out
 
 
+def test_a_model_written_cta_is_replaced_rather_than_joined(cfg):
+    """The caption may only ask for one word, and it must be the registered one.
+
+    Seen for real on ayghri/i-have-adhd: Claude wrote "Comment ADHD" while the
+    post was registered for IHAVEADHD. `comment_matches` compares whole words,
+    so every viewer who did as the caption said would have got nothing back.
+    """
+    caption = (
+        "Ten rules, zero lines of code.\n"
+        "\n"
+        "Comment ADHD and I will send you the link.\n"
+        "\n"
+        "#devtools\n"
+    )
+    out = gateway.add_caption_cta(caption, cfg, keyword="IHAVEADHD")
+
+    asks = [line for line in out.splitlines() if line.lower().startswith("comment ")]
+    assert asks == ["Comment IHAVEADHD if you want the link."]
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        "Comment SEND and I will send you the link.",
+        "comment send for the link",
+        "Comment SEND below and I will DM it to you.",
+    ],
+)
+def test_any_wording_of_the_ask_is_replaced(cfg, written):
+    out = gateway.add_caption_cta(f"Body.\n\n{written}\n\n#tag\n", cfg)
+    asks = [line for line in out.splitlines() if line.lower().startswith("comment ")]
+    assert asks == ["Comment SEND if you want the link."]
+
+
+def test_prose_that_merely_mentions_commenting_is_left_alone(cfg):
+    """Only a line that *opens* with the ask is one. Prose about comments is not."""
+    caption = "The maintainer will comment on your issue within a day.\n\n#devtools\n"
+    out = gateway.add_caption_cta(caption, cfg)
+    assert "The maintainer will comment on your issue within a day." in out
+
+
 # --- Per-post keywords ------------------------------------------------------
 
 

@@ -20,6 +20,7 @@ state for anyone who cloned this repo and does not run the gateway.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import httpx
@@ -27,6 +28,11 @@ import httpx
 from config import Settings
 
 log = logging.getLogger(__name__)
+
+# Any line that asks the viewer to comment a word, whatever wording it uses.
+# The scriptwriter is told the caption gets a call to action appended, but it
+# writes its own anyway often enough to matter, and its phrasing varies.
+_ANY_CTA_RE = re.compile(r"^\s*comment\s+([A-Za-z0-9]{2,})\b", re.IGNORECASE)
 
 # Short. Nothing here is worth making a publish wait, and the publish itself
 # already has a much longer clock running.
@@ -90,6 +96,14 @@ def add_caption_cta(caption: str, cfg: Settings, *, keyword: str | None = None) 
     line of a caption competes with the hook for the one line Instagram shows
     before "more", and the hook earns that space.
 
+    **Any call to action the model wrote is removed first**, not just a byte
+    identical one. The scriptwriter writes its own often enough to matter, in
+    its own wording and with its own idea of the word, and `comment_matches` in
+    the gateway compares whole words: a caption asking for ADHD while the post
+    is registered for IHAVEADHD sends nothing to anyone who does as it says.
+    The keyword passed in here is the one the voice reads and the end card
+    shows, so it is the one that survives.
+
     Obeys the same text rules as everything else: no colons, no dashes, no
     hype.
     """
@@ -98,10 +112,8 @@ def add_caption_cta(caption: str, cfg: Settings, *, keyword: str | None = None) 
 
     word = (keyword or cfg.gateway_keyword).strip().upper()
     cta = f"Comment {word} if you want the link."
-    if cta in caption:
-        return caption
 
-    lines = caption.rstrip().splitlines()
+    lines = [ln for ln in caption.rstrip().splitlines() if not _ANY_CTA_RE.match(ln)]
     # Hashtags live in a trailing block. Find where it starts so the call to
     # action lands in the prose rather than after a wall of tags nobody reads.
     first_tag = next(
