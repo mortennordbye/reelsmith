@@ -26,4 +26,16 @@ RUN useradd --create-home --uid 10001 gateway && chown -R gateway /state
 USER gateway
 
 EXPOSE 8000
-CMD ["uvicorn", "gateway.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# --proxy-headers with a wildcard allow-list, because TLS terminates at Traefik
+# and without it the app believes every request arrived over plain http on the
+# pod address. That is not cosmetic: `url_for` then builds the admin login
+# form's action as http://, so the browser warns the password is being sent
+# insecurely, and submitting it becomes a cross-scheme POST that the CSRF check
+# correctly refuses. The panel is unusable and both symptoms point at the wrong
+# thing.
+#
+# The wildcard is safe here specifically: the CiliumNetworkPolicy admits port
+# 8000 only from the Traefik pods and the kubelet, so there is no client that
+# could forge these headers without already being inside the cluster.
+CMD ["uvicorn", "gateway.app:app", "--host", "0.0.0.0", "--port", "8000", \
+     "--proxy-headers", "--forwarded-allow-ips", "*"]

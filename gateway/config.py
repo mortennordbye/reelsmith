@@ -130,6 +130,11 @@ class GatewaySettings(BaseSettings):
     # Session length for the panel's cookie.
     admin_session_hours: int = 12
 
+    # What this service's own loggers emit. The uvicorn access log is held at
+    # WARNING regardless, because health checks every ten seconds bury
+    # everything worth reading.
+    log_level: str = "INFO"
+
     # --- Storage -----------------------------------------------------------
     db_path: Path = Path("gateway/dev.sqlite3")
     covers_dir: Path = Path("gateway/covers")

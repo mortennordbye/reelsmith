@@ -9,6 +9,9 @@ be publicly reachable for Meta to fetch media from it.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -574,6 +577,36 @@ async def test_the_panel_refuses_to_start_with_no_authentication(tmp_path):
     cfg = settings(tmp_path, admin_enabled=True)
     with pytest.raises(GatewayConfigError):
         create_app(cfg, http=FakeMeta().client(), background=False)
+
+
+async def test_the_login_form_posts_to_the_scheme_the_page_was_served_over(anon):
+    """The form action must not drop to http on an https page.
+
+    This broke in production the first time the panel was opened. TLS
+    terminates at Traefik, so without proxy headers the app believes every
+    request is plain http, `url_for` writes an http:// action, and the browser
+    warns that the password is being sent insecurely. Submitting it is then a
+    cross-scheme POST, which the CSRF check below correctly refuses, so the
+    panel cannot be signed into at all.
+
+    The fix is uvicorn's --proxy-headers in the Dockerfile; this test pins the
+    behaviour the app must show once the scheme reaching it is right.
+    """
+    http, _ = anon
+    body = (await http.get("/admin/login", headers={"accept": "text/html"})).text
+    action = re.search(r'action="([^"]+)"', body).group(1)
+    assert action.startswith(f"{BASE}/"), action
+
+
+def test_the_image_tells_uvicorn_to_trust_the_proxy():
+    """Guards the other half, which no request through ASGI can reach.
+
+    `--proxy-headers` is applied by the uvicorn server, not by the ASGI app, so
+    the test above passes in-process no matter what the container does.
+    """
+    dockerfile = (Path(__file__).parent.parent / "gateway" / "Dockerfile").read_text()
+    assert "--proxy-headers" in dockerfile
+    assert "--forwarded-allow-ips" in dockerfile
 
 
 # --- CSRF and redirects ---------------------------------------------------

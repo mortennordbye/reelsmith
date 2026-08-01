@@ -67,6 +67,28 @@ async def _apply_config_slots(conn: aiosqlite.Connection, cfg: GatewaySettings) 
     log.info("Applied %d slot(s) from config for %s", count, account)
 
 
+def _configure_logging(cfg: GatewaySettings) -> None:
+    """Make this service's own logging visible.
+
+    uvicorn configures its own loggers and nothing else, so every `log.info` in
+    this package was landing on a root logger with no handler and disappearing.
+    The symptom was a container whose entire log was a wall of health check
+    lines: which slots were applied, what the scheduler did, and why a publish
+    failed were all invisible, and a failed admin login left no trace at all.
+
+    `force=True` because uvicorn has already touched the root logger by the
+    time this runs.
+    """
+    logging.basicConfig(
+        level=getattr(logging, cfg.log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        force=True,
+    )
+    # The access log is the noise this was drowning in. Health checks arrive
+    # every ten seconds from the kubelet and say nothing.
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
+
 def create_app(
     cfg: GatewaySettings | None = None,
     *,
@@ -75,6 +97,7 @@ def create_app(
     check_secrets: bool = True,
 ) -> FastAPI:
     cfg = cfg or get_gateway_settings()
+    _configure_logging(cfg)
     if check_secrets:
         require_secrets(cfg)
 
