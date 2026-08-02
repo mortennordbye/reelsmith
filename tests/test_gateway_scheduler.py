@@ -400,3 +400,25 @@ async def test_a_draft_does_not_consume_a_slot_in_the_projection(conn, cfg):
     )}
     assert rows["draft.mp4"] is None
     assert rows["armed.mp4"] is not None
+
+
+# --- What Prometheus can see ----------------------------------------------
+#
+# These exist because the alerting lives in homelab as PrometheusRules rather
+# than in this process. A rule can only fire on a metric that moves, so the
+# metric moving is this repo's half of the contract.
+
+
+async def test_a_missing_video_file_is_counted_as_a_failure(conn, cfg):
+    """It is the one failure that never asks Meta for anything, and it was also
+    the one Prometheus could not see. ReelsmithPublishFailing alerts on this
+    counter, so a post dying for want of a file has to reach it."""
+    meta = PublishingMeta()
+    queued_id = await queue_one(conn, name="")
+    await due_slot(conn)
+    metrics = Metrics()
+
+    await scheduler.tick_once(conn, graph_for(meta, cfg), cfg, metrics)
+
+    assert (await db.get_queued(conn, queued_id))["state"] == db.QUEUE_FAILED
+    assert metrics.registry.get_sample_value("reelsmith_publish_failures_total") == 1

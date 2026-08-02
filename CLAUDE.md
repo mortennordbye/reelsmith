@@ -182,6 +182,32 @@ Two things about the queue are load bearing and easy to undo by accident:
   evening's slot fire twice. This is also why the config sync keeps the id of
   an unchanged slot rather than recreating the row.
 
+## Alerting
+
+**Alerting lives in homelab, not in this process.** Prometheus scrapes the
+gateway and `k8s/talos/apps/reelsmith/monitoring.yaml` holds the rules;
+Alertmanager already has a Discord receiver on `#homelab-alerts`. A Discord
+webhook in the gateway was written and thrown away: it duplicated that, needed a
+second webhook secret, and had one fatal gap, which is that an in-process
+notifier is silent exactly when the process is wedged. `ReelsmithPollerStalled`
+and `ReelsmithSchedulerStalled` are the alerts that catch it, and only something
+outside the process can raise them.
+
+What this repo owes that arrangement is metrics that move:
+
+- **Every terminal failure has to reach a counter.** The `no video file` path
+  never asks Meta for anything and for a while it was also the only failure
+  Prometheus could not see, so a post dying for want of a file was invisible to
+  `ReelsmithPublishFailing` while every other failure fired it.
+- **`queue_depth` is filled in at scrape time**, in the `/metrics` route rather
+  than from the scheduler tick. It is a gauge describing a table, so the honest
+  value is what the table says now; and the scheduler is off by default, which
+  would have left the gauge empty on exactly the deployments where a stuck post
+  goes unnoticed longest.
+- **Publish a series per state including the empty ones.** A gauge that only
+  reports what exists leaves `failed` at its last non-zero value forever, and
+  the alert that fired on it never resolves.
+
 ## The cooldown list, on both sides
 
 `data/used_repos.json` is what discovery reads, and it is one JSON file on one

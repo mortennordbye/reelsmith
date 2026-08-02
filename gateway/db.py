@@ -285,6 +285,19 @@ QUEUE_CANCELLED = "cancelled"
 # admin UI shows as still in the line.
 QUEUE_LIVE_STATES = (QUEUE_DRAFT, QUEUE_APPROVED, QUEUE_CLAIMED, QUEUE_FAILED)
 
+# Every state, in the order a post moves through them. The metrics endpoint
+# publishes a series per state including the empty ones, because a gauge that
+# only reports what exists leaves a series at its last non-zero value forever
+# and the alert that fired on it never resolves.
+QUEUE_STATES = (
+    QUEUE_DRAFT,
+    QUEUE_APPROVED,
+    QUEUE_CLAIMED,
+    QUEUE_PUBLISHED,
+    QUEUE_FAILED,
+    QUEUE_CANCELLED,
+)
+
 
 def now() -> datetime:
     return datetime.now(UTC)

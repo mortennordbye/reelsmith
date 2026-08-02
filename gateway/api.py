@@ -19,7 +19,7 @@ import re
 from collections.abc import Container
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, Response
@@ -88,10 +88,31 @@ async def healthz() -> str:
 
 @router.get("/metrics")
 async def metrics(request: Request) -> Response:
+    """Export the counters, filling in the queue gauge as we go.
+
+    `queue_depth` is read here rather than written from the scheduler tick, for
+    two reasons. It is a gauge describing a table, so the truthful value is
+    whatever the table says at scrape time and not whatever the last tick left
+    behind. And the scheduler is off by default, which would have left the
+    gauge empty on exactly the deployments where a stuck post is least likely
+    to be noticed by a person.
+
+    One grouped count over a table with tens of rows, every 30 seconds.
+    """
+    await _refresh_queue_depth(request.app.state.db, request.app.state.metrics)
     return Response(
         content=request.app.state.metrics.export(),
         media_type="text/plain; version=0.0.4; charset=utf-8",
     )
+
+
+async def _refresh_queue_depth(conn: Any, metrics: Any) -> None:
+    depth = await db.queue_depth(conn)
+    # Every state is published, including the ones at zero. Without this a row
+    # leaving `failed` would leave the series at its last non-zero value
+    # forever, so the alert that fired would never resolve.
+    for state in db.QUEUE_STATES:
+        metrics.queue_depth.labels(state=state).set(depth.get(state, 0))
 
 
 @router.post("/api/posts", response_model=Registered, dependencies=[Depends(require_token)])

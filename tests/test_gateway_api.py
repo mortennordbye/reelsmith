@@ -346,3 +346,48 @@ async def test_an_empty_upload_is_refused(client):
     )
 
     assert response.status_code == 400
+
+
+# --- The queue gauge ------------------------------------------------------
+#
+# ReelsmithPostStuck alerts on reelsmith_queue_depth{state="failed"}. The gauge
+# was declared for months and never written to, so the alert it exists for was
+# not expressible.
+
+
+async def test_the_metrics_endpoint_publishes_the_queue_depth(client):
+    http, app = client
+    await db.enqueue_post(
+        app.state.db, ig_user_id=ACCOUNT, video_name="a.mp4", cover_name=None,
+        caption="", keyword="UV", link=LINK, repo_full_name="astral-sh/uv",
+        approved=False,
+    )
+
+    body = (await http.get("/metrics")).text
+
+    assert 'reelsmith_queue_depth{state="draft"} 1.0' in body
+
+
+async def test_every_state_is_published_even_at_zero(client):
+    """A gauge that only reports what exists leaves a series at its last
+    non-zero value forever, so the alert that fired never resolves."""
+    http, _ = client
+
+    body = (await http.get("/metrics")).text
+
+    for state in db.QUEUE_STATES:
+        assert f'reelsmith_queue_depth{{state="{state}"}} 0.0' in body
+
+
+async def test_a_row_leaving_failed_takes_the_gauge_back_down(client):
+    http, app = client
+    queued_id = await db.enqueue_post(
+        app.state.db, ig_user_id=ACCOUNT, video_name="a.mp4", cover_name=None,
+        caption="", keyword="UV", link=LINK, repo_full_name="astral-sh/uv",
+        approved=False,
+    )
+    await db.set_queue_state(app.state.db, queued_id, db.QUEUE_FAILED)
+    assert 'reelsmith_queue_depth{state="failed"} 1.0' in (await http.get("/metrics")).text
+
+    await db.set_queue_state(app.state.db, queued_id, db.QUEUE_CANCELLED)
+    assert 'reelsmith_queue_depth{state="failed"} 0.0' in (await http.get("/metrics")).text

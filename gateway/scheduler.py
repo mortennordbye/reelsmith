@@ -71,6 +71,12 @@ async def publish_queued(
     video = media_url(cfg, queued["video_name"])
     if not video:
         await db.set_queue_state(conn, queued_id, db.QUEUE_FAILED, failure="no video file")
+        # Counted like every other failure. Without this the one path that
+        # never asks Meta anything was also the one path Prometheus could not
+        # see, so a post that died for want of a file was invisible to
+        # ReelsmithPublishFailing while every other failure fired it.
+        metrics.publish_failures.inc()
+        log.error("Queue %d: no video file, nothing to publish", queued_id)
         return False, False
 
     try:
