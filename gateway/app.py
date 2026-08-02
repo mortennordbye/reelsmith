@@ -20,7 +20,17 @@ import aiosqlite
 import httpx
 from fastapi import FastAPI
 
-from gateway import admin, api, db, insights, poller, schedule, scheduler, webhook
+from gateway import (
+    admin,
+    api,
+    backup,
+    db,
+    insights,
+    poller,
+    schedule,
+    scheduler,
+    webhook,
+)
 from gateway.config import (
     GatewaySettings,
     get_gateway_settings,
@@ -150,6 +160,22 @@ def create_app(
                     )
                 )
                 log.info("Insights on, refreshing every %ds", cfg.insights_interval_s)
+
+            # Also on by default, and also because it only reads. What it
+            # protects is `comments_handled`, which cannot be rebuilt and whose
+            # loss means re-replying to every comment still inside Meta's seven
+            # day window.
+            if cfg.backup_enabled:
+                tasks.append(
+                    asyncio.create_task(
+                        backup.backup_loop(conn, cfg, app.state.metrics),
+                        name="backup",
+                    )
+                )
+                log.info(
+                    "Backups on, every %ds to %s, keeping %d",
+                    cfg.backup_interval_s, cfg.backup_dir, cfg.backup_keep,
+                )
 
             # Off unless asked for. Publishing to the feed is a bigger power
             # than answering comments, and a gateway that gained it by being

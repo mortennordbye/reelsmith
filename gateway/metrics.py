@@ -108,6 +108,11 @@ class Metrics:
             "Unix time of the last insights sweep that finished",
             registry=reg,
         )
+        self.backup_last_success = Gauge(
+            "reelsmith_backup_last_success_timestamp",
+            "Unix time of the last state backup that finished",
+            registry=reg,
+        )
 
     def export(self) -> bytes:
         return generate_latest(self.registry)

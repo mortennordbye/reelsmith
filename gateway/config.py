@@ -82,6 +82,20 @@ class GatewaySettings(BaseSettings):
     # would grow a Graph call a day forever.
     insights_max_age_days: int = 30
 
+    # --- Backups -----------------------------------------------------------
+    # On by default and for the same reason insights are: it only reads. The
+    # cost of it running unasked is some disk; the cost of it not running is
+    # `comments_handled`, which cannot be rebuilt and whose loss re-DMs every
+    # commenter still inside Meta's seven day reply window.
+    backup_enabled: bool = True
+    # Six hours, matching the insights sweep. The queue and the conversations
+    # move slowly enough that losing a few hours of either is recoverable by
+    # hand, and a copy is a full database rather than a delta.
+    backup_interval_s: int = 21_600
+    # Roughly three and a half days at six hours. Long enough that damage done
+    # on a Friday is still recoverable on a Monday.
+    backup_keep: int = 14
+
     # --- Scheduled publishing ----------------------------------------------
     # The whole queue is off unless this is on. A gateway that only answers
     # comments should not grow the ability to post to the feed by upgrading.
@@ -159,6 +173,17 @@ class GatewaySettings(BaseSettings):
     @classmethod
     def _no_trailing_slash(cls, v: str) -> str:
         return v.rstrip("/")
+
+    @property
+    def backup_dir(self) -> Path:
+        """Beside the database, on the same volume, on purpose.
+
+        A copy here answers "the file is wrong", which is the failure with no
+        other remedy. It does not answer "the volume is gone", and pretending
+        otherwise by putting it somewhere that merely looks separate would be
+        worse than being clear about what it covers.
+        """
+        return self.db_path.parent / "backups"
 
     @property
     def graph_base(self) -> str:

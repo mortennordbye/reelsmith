@@ -258,3 +258,25 @@ they would share the one SQLite file.
 Times are stored as ISO 8601 strings in UTC. They survive a dump, they sort as
 text, and they come back as the string that went in, which matters when the
 thing being debugged is a 24 hour window.
+
+### Backups
+
+Every six hours, `VACUUM INTO` writes a consistent copy to `backups/` beside the
+database, keeping the newest 14. On by default for the same reason insights are:
+it only reads.
+
+`VACUUM INTO` rather than copying the file, because copying a live SQLite
+database can capture a torn page mid-write and the copy looks fine until the day
+it is needed.
+
+The volume is already NAS backed NFS, so losing a node was never the risk. The
+risk is the file being *wrong*: a bad migration, a mistaken delete, a corrupt
+page. One table makes it worth doing rather than merely tidy. `comments_handled`
+cannot be rebuilt from anywhere, and a poller that starts again with an empty one
+re-replies to every comment still inside Meta's seven day window, which is a spam
+incident on a live account. `insights` cannot be rebuilt either: Meta serves
+current numbers and no history.
+
+**It does not defend against losing the volume**, since the copies live beside
+the original, and the storage class reclaims with `Delete`. Pulling one off the
+cluster is a separate job and still worth doing.
