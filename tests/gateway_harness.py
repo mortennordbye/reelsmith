@@ -38,6 +38,11 @@ class FakeMeta:
     fail_sends_with: dict[str, Any] | None = None
     profile_error: dict[str, Any] | None = None
     calls: list[str] = field(default_factory=list)
+    # Every request exactly as it went out. `calls` is the readable summary;
+    # this is what lets a test look at the headers and the full URL, which is
+    # how "the token is never in a URL" gets asserted over the whole surface
+    # rather than over the one call somebody remembered.
+    requests: list[httpx.Request] = field(default_factory=list)
     recipient_id: str | None = IGSID
     # Per media id. A media absent from here answers the way Meta does for a
     # Reel too young to have numbers, which is an error rather than zeroes.
@@ -57,6 +62,7 @@ class FakeMeta:
     def _handle(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         self.calls.append(f"{request.method} {path}")
+        self.requests.append(request)
 
         if path.endswith("/messages") and request.method == "POST":
             if self.fail_sends_with:

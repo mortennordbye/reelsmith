@@ -7,6 +7,19 @@ async, because it shares a process with a webhook handler that must answer fast.
 
 Errors from Meta arrive as a JSON `error` object with a numeric code. Two of
 those codes decide behaviour rather than just wording, so they are named.
+
+**The token rides in an `Authorization` header, not the query string.** A token
+in the query string is in every URL, and a URL is the thing every layer feels
+free to write down: httpx logs one per request at INFO, proxies keep access
+logs, and a `GraphError` naming a URL could carry it into an alert. Turning
+this package's logging up once put a live token with publishing rights into the
+pod log. Setting the httpx logger to WARNING hid that instance; the header is
+what stops the next one, in a layer nobody here configures.
+
+`refresh_access_token` is the one exception and stays on the query string,
+because Meta documents no header form for it. It fires only inside the refresh
+margin rather than on every call, and `pipeline/publisher.py` carries the same
+exception for the same reason.
 """
 
 from __future__ import annotations
@@ -120,11 +133,21 @@ class GraphClient:
         token: str,
         params: dict[str, Any] | None = None,
         json_body: dict[str, Any] | None = None,
+        token_in_query: bool = False,
     ) -> dict[str, Any]:
         params = dict(params or {})
-        params["access_token"] = token
+        headers: dict[str, str] = {}
+        if token_in_query:
+            params["access_token"] = token
+        else:
+            headers["Authorization"] = f"Bearer {token}"
         response = await self._http.request(
-            method, url, params=params, json=json_body, timeout=self._cfg.graph_timeout_s
+            method,
+            url,
+            params=params,
+            json=json_body,
+            headers=headers,
+            timeout=self._cfg.graph_timeout_s,
         )
         try:
             payload = response.json()
@@ -310,12 +333,18 @@ class GraphClient:
 
         Meta refuses if the token is under 24 hours old, which is not worth
         acting on: a token that new has 59 days left.
+
+        The only call that puts the token in the query string. Meta documents
+        this endpoint with `access_token` as a required query parameter and no
+        header form, and a token nobody could refresh is a browser trip, so it
+        is not the place to find out whether an undocumented form works.
         """
         data = await self._request(
             "GET",
             f"{self._cfg.graph_host.rstrip('/')}/refresh_access_token",
             token=token,
             params={"grant_type": "ig_refresh_token"},
+            token_in_query=True,
         )
         fresh = data.get("access_token")
         if not fresh:
