@@ -73,16 +73,28 @@ def test_the_prompt_asks_for_the_configured_word_budget():
     assert f"{cfg.max_script_words}-words-or-fewer" in prompt
 
 
-def test_the_word_budget_can_reach_the_stated_length_target():
-    """The budget is what decides the runtime, so it has to be able to get there.
+def test_the_prompt_states_the_length_the_budget_actually_produces():
+    """The prompt tells the model what the budget becomes in seconds, and that
+    sentence has been wrong in both directions.
 
-    At the measured 170 words per minute of the cloned voice, plus the seven
-    words of the appended ask, the ceiling has to clear 30 seconds or every
-    script lands under target however well it is written. That is exactly what
-    happened at 80 words, on six runs across three days.
+    It claimed 30 to 45 seconds while the budget capped the video near 31,
+    which is the observation that led to raising the budget to reach the
+    stated target. That was backwards: retention data showed the average
+    viewer leaving at five seconds, so the target was the wrong number rather
+    than the budget. Pinned here so the next person to change one changes the
+    other.
     """
-    words = get_settings().max_script_words + 7
-    assert 30.0 <= words / 170 * 60 <= 45.0
+    cfg = get_settings()
+    # The cloned voice reads ~170 wpm and the appended ask adds ~7 words.
+    seconds = (cfg.max_script_words + 7) / 170 * 60
+    prompt = _build_prompt(candidate("just-vugg/colibri"), cfg)
+
+    low, high = 25, 32
+    assert f"{low} to {high} seconds" in prompt
+    assert low <= seconds <= high, (
+        f"{cfg.max_script_words} words is {seconds:.0f}s, outside the {low} to "
+        f"{high} seconds the prompt promises"
+    )
 
 
 # --------------------------------------------------------------------------

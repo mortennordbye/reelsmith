@@ -145,7 +145,7 @@ class VideoScript(BaseModel):
         )
     )
     visual_cues: list[VisualCue] = Field(
-        description="7-10 ordered beats describing what to show behind the voiceover."
+        description="5-8 ordered beats describing what to show behind the voiceover."
     )
     caption_text: str = Field(
         default="",

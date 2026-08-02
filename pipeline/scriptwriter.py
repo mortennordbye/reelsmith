@@ -196,6 +196,23 @@ characters -- this is validated, and a longer hook fails the run. It must make
     rewrite of YAGNI" fails, because a viewer who does not know the acronym is
     told nothing at all.
 
+    **Apply this test before you settle on it: would the hook still be true if
+    it were about a different project in the same category?** If yes, rewrite
+    it. "Your coding agent builds the wrong thing, fast" is true of every
+    coding agent ever shipped, so it tells the viewer nothing about this one
+    and it is the same sentence they scrolled past yesterday. "744 billion
+    parameters on a 25 gigabyte machine" can only be about one project.
+
+    That is the difference between a hook and a category complaint, and it is
+    the single thing most worth getting right: the first three seconds decide
+    whether the video is watched at all, and nothing later recovers a viewer
+    who has already gone.
+
+    Lead with the most specific true thing you found. A number, a command, a
+    named behaviour, a constraint. If your research turned up nothing specific
+    enough to survive the test above, that is a finding about the project
+    rather than a licence to write a general hook.
+
     No colons and no hyphens or dashes anywhere in the hook. This is validated
     and a violation fails the run. Rewrite around them: "92k stars" not
     "92k-star", "seven words" not "seven-word", and split a colon into two
@@ -203,9 +220,9 @@ characters -- this is validated, and a longer hook fails the run. It must make
     equivalent that reads better on screen.
 
 spoken_script
-    The voiceover, UNDER {cfg.max_script_words} WORDS. This is a hard limit: at
-    normal speaking pace it becomes roughly 30-45 seconds of audio, and going
-    over means the video runs long. Structure it as: what it is -> the specific
+    The voiceover, UNDER {cfg.max_script_words} WORDS. This is a hard limit: it
+    becomes roughly 25 to 32 seconds of audio in this voice, and going over
+    means the video runs long. Structure it as: what it is -> the specific
     problem it solves -> one concrete detail a developer would care about ->
     what to do next. Write for the ear. No semicolons, no parentheses, and
     expand symbols ("about 20 percent", not "~20%").
@@ -218,7 +235,11 @@ spoken_script
     it understands you", open on "Twenty minutes later you delete all of it",
     not on "Your coding agent starts writing before it understands the ask".
 
-    Open on the PROBLEM, not on the project. The first two sentences must
+    Open on the PROBLEM, not on the project, and make it THIS project's
+    problem rather than the category's. The same test as the hook applies: a
+    frustration that every tool in this space claims to solve is not a reason
+    to keep watching, because the viewer has heard it. Name the specific
+    version of it that this project exists for. The first two sentences must
     describe a frustration the viewer has actually felt, in plain language,
     before the project is named. "Your coding agent builds a custom date picker
     when the browser already has one" earns attention. "Ponytail is a skill
@@ -247,7 +268,7 @@ spoken_script
     sentences have a similar shape, rewrite one.
 
 visual_cues
-    7 to 10 ordered beats describing what is on screen. Each cue's
+    5 to 8 ordered beats describing what is on screen. Each cue's
     spoken_excerpt must be the portion of spoken_script playing during that
     beat -- concatenated in order they should reconstruct the whole script,
     because the renderer uses them to allocate screen time. Available kinds:
