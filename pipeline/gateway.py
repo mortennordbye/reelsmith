@@ -462,5 +462,11 @@ def register_post(
         )
         return False
 
-    log.info("Gateway is watching %s for %r", media_id, payload["keyword"])
+    # Says which of the two things was asked for. The guard above already
+    # proved the gateway agreed, and a backfill printing "watching" for eight
+    # old posts reads exactly like the failure that guard exists to catch.
+    if poll_comments:
+        log.info("Gateway is watching %s for %r", media_id, payload["keyword"])
+    else:
+        log.info("Gateway is measuring %s, not watching its comments", media_id)
     return True

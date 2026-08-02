@@ -409,3 +409,29 @@ def test_the_three_channels_agree_on_the_word(cfg):
     keyword = gateway.keyword_for("xai-org/grok-build", cfg)
     assert keyword in gateway.spoken_cta(keyword, cfg)
     assert keyword in gateway.add_caption_cta("Body.", cfg, keyword=keyword)
+
+
+def test_a_measured_post_is_not_logged_as_watched(cfg, caplog):
+    """A backfill printing "watching" for eight old posts reads exactly like the
+    failure the measuring guard exists to catch, which is how it got mistaken
+    for one."""
+    handler = lambda request: httpx.Response(200, json={"detail": "measuring m1"})  # noqa: E731
+
+    with caplog.at_level("INFO"):
+        assert gateway.register_post(
+            "m1", "https://github.com/a/b", cfg, poll_comments=False, client=_client(handler)
+        ) is True
+
+    assert "measuring m1" in caplog.text
+    assert "watching m1 for" not in caplog.text
+
+
+def test_a_polled_post_still_says_watching(cfg, caplog):
+    handler = lambda request: httpx.Response(200, json={"detail": "watching m1"})  # noqa: E731
+
+    with caplog.at_level("INFO"):
+        gateway.register_post(
+            "m1", "https://github.com/a/b", cfg, keyword="UV", client=_client(handler)
+        )
+
+    assert "watching m1 for" in caplog.text
