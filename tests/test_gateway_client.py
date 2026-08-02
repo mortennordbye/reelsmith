@@ -115,6 +115,11 @@ def test_registering_a_post_sends_what_the_poller_needs(cfg):
         "ig_user_id": "17841400000000000",
         "link": "https://github.com/a/b",
         "keyword": "send",
+        # The publisher registers a post the moment its media id exists, so it
+        # wants the poller armed and has nothing to say about a publish date
+        # that `registered_at` is about to record anyway. Only a backfill sends
+        # either of those differently.
+        "poll_comments": True,
     }
 
 

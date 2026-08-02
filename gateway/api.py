@@ -102,7 +102,12 @@ async def register_post(request: Request, body: PostRegistration) -> Registered:
         ig_user_id=body.ig_user_id,
         keyword=body.keyword,
         link=body.link,
+        published_at=body.published_at.isoformat() if body.published_at else None,
+        poll_comments=body.poll_comments,
     )
+    if not body.poll_comments:
+        log.info("Measuring %s, not watching its comments", body.media_id)
+        return Registered(detail=f"measuring {body.media_id}")
     log.info("Watching %s for the keyword %r", body.media_id, body.keyword)
     return Registered(detail=f"watching {body.media_id}")
 

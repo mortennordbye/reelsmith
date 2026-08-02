@@ -204,6 +204,20 @@ does the join and `_results_block` in `pipeline/scriptwriter.py` renders it.
   64 to 80 percent of viewers against a 30 to 40 percent average for the format,
   so the top of a sorted list is still a bad hook and the prompt has to say so or
   the model copies it.
+- **A post that skipped the pipeline joins on its caption instead.**
+  `main.py --backfill` lists the account's live Reels against the run folders
+  and `--yes` registers the ones it matched. The join is the first paragraph of
+  the caption, because the gateway appends the comment ask above the hashtags on
+  one publish path and not the other, so the body is the only part written once.
+  A body two run folders claim matches neither, for the same reason
+  `_hooks_by_repo` ranks them.
+- **A backfilled post is registered to be measured, never to be answered.**
+  `poll_comments=False`, because registering is also what arms the comment
+  poller and the post is days old by then. The flag is decided when the row is
+  inserted and a re-registration never changes it, so running the backfill twice
+  cannot disarm a live post. A gateway older than schema v8 drops the field
+  silently and arms the poller anyway, which is why the reply says "measuring"
+  rather than "watching" and the pipeline reads it.
 - Failure is an empty list everywhere. A gateway that is down costs a run its
   hindsight, which is what every run had before this existed.
 

@@ -28,7 +28,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -235,6 +235,27 @@ _MIGRATIONS: tuple[str, ...] = (
     ALTER TABLE insights ADD COLUMN total_watch_ms INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE insights ADD COLUMN skip_rate      REAL    NOT NULL DEFAULT 0;
     """,
+    # v8. A Reel posted by hand through the app leaves no trace here at all,
+    # and the feedback loop cannot see what it never registered. One of the
+    # first seven was posted that way, and it happens to be one of only two
+    # whose hook was not the formula the loop is meant to argue the account out
+    # of, so its absence cost more than a seventh of the evidence.
+    #
+    # Registering it after the fact needs two things this table could not say.
+    #
+    # `published_at`, because `registered_at` stood in for it, and for a
+    # backfill that is the moment somebody noticed rather than the moment the
+    # post went out. Nullable, so every row written before this keeps meaning
+    # what it meant.
+    #
+    # `poll_comments`, because registering a post is also what arms the comment
+    # poller, and arming it on a post published days ago means replying to
+    # comments whose authors have long since moved on. Measurement and the DM
+    # funnel were the same act until here; a backfill wants only the first.
+    """
+    ALTER TABLE posts ADD COLUMN published_at  TEXT;
+    ALTER TABLE posts ADD COLUMN poll_comments INTEGER NOT NULL DEFAULT 1;
+    """,
 )
 
 # Conversation states. `replied` means the private reply went out and we are
@@ -434,21 +455,43 @@ async def register_post(
     ig_user_id: str,
     keyword: str,
     link: str,
+    published_at: str | None = None,
+    poll_comments: bool = True,
 ) -> None:
     """Record a published Reel so the poller starts watching its comments.
 
     Re-registering updates the keyword and link, which is how a typo in either
     gets fixed after the post is already live.
+
+    **`poll_comments` is decided once, on the way in, and a re-registration
+    never changes it.** The backfill re-sends every post it can match, so an
+    update that carried the flag would quietly disarm the poller on live posts
+    the moment somebody ran it a second time. Fixing a typo is worth an update;
+    turning off the mechanic the post exists for is not.
+
+    `published_at` fills in but is never cleared, since the caller that knows it
+    is the backfill and the caller that does not is the publisher, running at
+    the moment `registered_at` is the same thing anyway.
     """
     await conn.execute(
         """
-        INSERT INTO posts (media_id, ig_user_id, keyword, link, registered_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO posts (media_id, ig_user_id, keyword, link, registered_at,
+                           published_at, poll_comments)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(media_id) DO UPDATE SET
             keyword = excluded.keyword,
-            link = excluded.link
+            link = excluded.link,
+            published_at = COALESCE(excluded.published_at, posts.published_at)
         """,
-        (media_id, ig_user_id, keyword, link, iso(now())),
+        (
+            media_id,
+            ig_user_id,
+            keyword,
+            link,
+            iso(now()),
+            published_at,
+            1 if poll_comments else 0,
+        ),
     )
     await conn.commit()
 
@@ -460,11 +503,17 @@ async def get_post(conn: aiosqlite.Connection, media_id: str) -> Mapping[str, An
 async def pollable_posts(
     conn: aiosqlite.Connection, ig_user_id: str, *, ttl_days: int
 ) -> list[Any]:
-    """Posts still inside the seven day private reply window."""
+    """Posts still inside the seven day private reply window.
+
+    `poll_comments = 0` is how a backfilled post stays invisible here. It was
+    registered to be measured, not to be answered, and it is old enough that
+    answering would surprise whoever commented.
+    """
     cutoff = iso(now() - timedelta(days=ttl_days))
     return await _all(
         conn,
-        "SELECT * FROM posts WHERE ig_user_id = ? AND registered_at >= ? ORDER BY registered_at",
+        "SELECT * FROM posts WHERE ig_user_id = ? AND registered_at >= ? "
+        "AND poll_comments = 1 ORDER BY registered_at",
         (ig_user_id, cutoff),
     )
 
@@ -1254,7 +1303,8 @@ async def published_media(
         UNION ALL
 
         SELECT p.media_id, NULL, NULL, NULL,
-               p.keyword, p.link, NULL, p.registered_at, 'direct' AS source
+               p.keyword, p.link, NULL,
+               COALESCE(p.published_at, p.registered_at), 'direct' AS source
         FROM posts p
         WHERE p.media_id NOT IN (
             SELECT media_id FROM queued_posts WHERE media_id IS NOT NULL
@@ -1293,6 +1343,13 @@ async def insights_stale_media(
     and the results API already make. A real Reel does not score zero, and the
     cost of being wrong is one extra Graph call a sweep for a media that is not
     a Reel and never will have the number.
+
+    The direct half bounds on `registered_at` rather than on the post's real
+    date on purpose, now that a backfill can register something published long
+    before. The window is how long this keeps asking, and it starts when the
+    post becomes known: a backfilled Reel gets one window from registration,
+    which is what gives it a first reading at all. Its numbers settled weeks
+    ago, so one reading is the whole story.
     """
     cutoff = (now() - timedelta(days=within_days)).isoformat()
     # Both publish paths, for the same reason `published_media` reads both: a

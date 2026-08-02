@@ -300,6 +300,37 @@ def _await_container(http: httpx.Client, cfg: Settings, container_id: str, token
     )
 
 
+def list_media(cfg: Settings, *, limit: int = 50, client: httpx.Client | None = None) -> list[dict]:
+    """Everything live on the account, newest first.
+
+    The one call that does not start from something this machine already knows.
+    Every other path here works forwards, from a run folder to a media id; this
+    one works backwards, because a Reel posted by hand through the app left no
+    run folder pointing at it and Meta is the only party that remembers both.
+
+    The caption comes along because it is the join. The gateway holds media ids
+    and numbers, the build folder holds hooks, and the caption is the only
+    string that was ever written into both.
+    """
+    if not cfg.ig_user_id:
+        raise PublishError("IG_USER_ID is not set.")
+
+    token = load_token(cfg).access_token
+    with _client(client, timeout=30) as http:
+        data = _graph_json(
+            http,
+            "GET",
+            f"{cfg.ig_graph_base}/{cfg.ig_user_id}/media",
+            token=token,
+            params={
+                "fields": "id,caption,timestamp,permalink,media_product_type",
+                "limit": str(limit),
+            },
+        )
+    items = data.get("data")
+    return list(items) if isinstance(items, list) else []
+
+
 def _permalink(http: httpx.Client, cfg: Settings, media_id: str, token: str) -> str | None:
     """The post's URL, for the log line. Never worth failing a publish over."""
     try:

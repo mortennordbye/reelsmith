@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import logging
 import re
+from contextlib import AbstractContextManager, nullcontext
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -182,6 +184,20 @@ def add_caption_cta(caption: str, cfg: Settings, *, keyword: str | None = None) 
 
 def _headers(cfg: Settings) -> dict[str, str]:
     return {"authorization": f"Bearer {cfg.gateway_token}"}
+
+
+def _borrow(existing: httpx.Client | None) -> AbstractContextManager[httpx.Client]:
+    """Use the caller's client without closing it, or own one and close it.
+
+    The same seam `publisher._client` opens, and here for the reason it warns
+    about: everything else in this module makes one call and `with client or
+    httpx.Client(...)` closes a borrowed client on the way out, which nothing
+    noticed until the backfill became the first caller to register more than
+    one post through the same client.
+    """
+    if existing is not None:
+        return nullcontext(existing)
+    return httpx.Client(timeout=_TIMEOUT)
 
 
 def upload_cover(
@@ -358,33 +374,60 @@ def register_post(
     cfg: Settings,
     *,
     keyword: str | None = None,
+    published_at: datetime | None = None,
+    poll_comments: bool = True,
     client: httpx.Client | None = None,
 ) -> bool:
     """Tell the gateway to watch this post's comments. True if it took.
 
     Failing here costs a day of the keyword mechanic on one post, not the post
     itself, and it is recoverable by hand for seven days.
+
+    `poll_comments=False` registers a post to be measured and never answered,
+    which is what a backfill wants: see `pipeline/backfill.py`. `published_at`
+    goes with it, because a post registered after the fact would otherwise be
+    dated the moment somebody noticed it was missing.
     """
     if not _configured(cfg):
         return False
 
     url = f"{cfg.gateway_url.rstrip('/')}/api/posts"
-    payload = {
+    payload: dict[str, object] = {
         "media_id": media_id,
         "ig_user_id": cfg.ig_user_id,
         "link": link,
         "keyword": keyword or cfg.gateway_keyword,
+        "poll_comments": poll_comments,
     }
+    if published_at is not None:
+        payload["published_at"] = published_at.isoformat()
     try:
-        with client or httpx.Client(timeout=_TIMEOUT) as http:
+        with _borrow(client) as http:
             response = http.post(url, headers=_headers(cfg), json=payload)
             response.raise_for_status()
-    except httpx.HTTPError as exc:
+            detail = str((response.json() or {}).get("detail", ""))
+    except (httpx.HTTPError, ValueError) as exc:
         log.warning(
             "Registering %s with the gateway failed: %s. "
             "Comments on it will not be answered until it is registered by hand.",
             media_id,
             exc,
+        )
+        return False
+
+    # A gateway older than schema v8 has never heard of `poll_comments`, and
+    # pydantic drops a field a model does not declare rather than complaining.
+    # So asking an old one to measure a post quietly arms its comment poller
+    # instead, and the first anyone would know is a DM going out about a Reel
+    # from last week. The reply is the only evidence available, and it names
+    # which of the two things it did.
+    if not poll_comments and not detail.startswith("measuring"):
+        log.error(
+            "Asked the gateway to measure %s without polling it, and it answered %r. "
+            "That gateway predates the flag and has armed the comment poller instead. "
+            "Deploy the current image before backfilling.",
+            media_id,
+            detail,
         )
         return False
 

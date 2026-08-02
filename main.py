@@ -13,6 +13,7 @@
     python main.py --candidates         rank today's repos, generate nothing
     python main.py --covered            list every repo already made into a Reel
     python main.py --results            how the published Reels did, worst hook last
+    python main.py --backfill           find Reels posted by hand; --yes measures them
     python main.py --snapshot           record star counts only (run daily)
     python main.py --refresh-token      renew the Instagram token by hand
                                         (--snapshot already does it when due)
@@ -44,6 +45,7 @@ from config import (
     require_instagram,
     resolve_claude_cli,
 )
+from pipeline import backfill as backfill_mod
 from pipeline import captions as captions_mod
 from pipeline import gateway, publisher, renderer, scraper, screenshot, tts
 from pipeline import results as results_mod
@@ -115,6 +117,14 @@ def run(
     show_results: Annotated[
         bool,
         typer.Option("--results", help="How the published Reels did, worst hook last"),
+    ] = False,
+    backfill: Annotated[
+        bool,
+        typer.Option("--backfill", help="Find Reels posted by hand and measure them too"),
+    ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", help="With --backfill, register instead of only listing"),
     ] = False,
     batch: Annotated[
         int | None,
@@ -208,6 +218,11 @@ def run(
 
     if show_results:
         _show_results(cfg)
+        return
+
+    if backfill:
+        _preflight(need_github=False, need_claude=False, need_instagram=True)
+        _backfill(cfg, apply=yes)
         return
 
     if snapshot:
@@ -653,6 +668,68 @@ def _show_results(cfg: Settings) -> None:
         "scores the hook alone. Educational Reels average 30 to 40 percent.\n"
         "Recipe is the checkout and settings that wrote the script. Two rows with "
         "different recipes are not comparable.[/]"
+    )
+
+
+def _backfill(cfg: Settings, *, apply: bool) -> None:
+    """Bring a Reel posted outside the pipeline into the feedback loop.
+
+    Lists by default and registers only with `--yes`, because it reads the whole
+    account and matches on text that has been through a phone keyboard. Seeing
+    which run folder it believes made which post costs one command; finding out
+    afterwards that it registered a `.v2` draft costs the loop its credibility.
+    """
+    from rich.table import Table
+
+    try:
+        found = backfill_mod.plan(cfg)
+    except publisher.PublishError as exc:
+        console.print(f"[bold red]Could not read the account's media:[/] {exc}")
+        raise typer.Exit(1) from exc
+
+    if found.ambiguous:
+        console.print(
+            f"[yellow]{len(found.ambiguous)} caption(s) are claimed by more than one run "
+            "folder and were skipped.[/] [dim]Rename or move aside the folders that did "
+            "not ship.[/]"
+        )
+    if found.unmatched:
+        console.print(
+            f"[dim]{len(found.unmatched)} live post(s) match no run folder: "
+            f"{', '.join(m.get('id', '?') for m in found.unmatched)}. A caption edited "
+            "after posting will land here.[/]"
+        )
+    if not found.matched:
+        console.print("[dim]Nothing to backfill.[/]")
+        return
+
+    table = Table(title=f"Matched ({len(found.matched)})", header_style="bold")
+    table.add_column("Published")
+    table.add_column("Repo", style="cyan")
+    table.add_column("Run", style="dim")
+    table.add_column("Hook")
+
+    for match in found.matched:
+        table.add_row(
+            match.published_at.strftime("%Y-%m-%d %H:%M"),
+            match.repo_full_name,
+            f"{match.run.parent.name}/{match.run.name}",
+            match.hook,
+        )
+    console.print(table)
+
+    if not apply:
+        console.print(
+            "[dim]Nothing was registered. Re-run with --yes once the pairings above "
+            "look right. Registering is for measurement only and never replies to a "
+            "comment.[/]"
+        )
+        return
+
+    done = backfill_mod.apply(cfg, found.matched)
+    console.print(
+        f"[bold green]Registered[/] {len(done)} of {len(found.matched)} "
+        "[dim](numbers arrive on the gateway's next insights sweep, within six hours)[/]"
     )
 
 
