@@ -1277,11 +1277,22 @@ async def published_media(
 async def insights_stale_media(
     conn: aiosqlite.Connection, *, ig_user_id: str, on: str, within_days: int = 30
 ) -> list[Any]:
-    """Published Reels with no reading for `on` yet.
+    """Published Reels with no usable reading for `on` yet.
 
     Bounded by age because a Reel stops moving long before it stops existing,
     and a sweep that re-reads every post ever made grows a Graph call a day
     forever. Thirty days is well past where these settle.
+
+    **A row with no retention counts as missing.** Adding the retention metrics
+    would otherwise have taken a day to show anything: every post already had a
+    row for that date, written by the previous image, so the first sweep on the
+    new one skipped all of them and the feedback loop stayed empty until
+    tomorrow. Any future metric would land the same way.
+
+    Reading `skip_rate = 0` as "not measured" is the same call the Posts page
+    and the results API already make. A real Reel does not score zero, and the
+    cost of being wrong is one extra Graph call a sweep for a media that is not
+    a Reel and never will have the number.
     """
     cutoff = (now() - timedelta(days=within_days)).isoformat()
     # Both publish paths, for the same reason `published_media` reads both: a
@@ -1305,7 +1316,10 @@ async def insights_stale_media(
                   SELECT media_id FROM queued_posts WHERE media_id IS NOT NULL
               )
         ) live
-        WHERE live.media_id NOT IN (SELECT media_id FROM insights WHERE fetched_on = ?)
+        WHERE live.media_id NOT IN (
+            SELECT media_id FROM insights
+            WHERE fetched_on = ? AND skip_rate > 0
+        )
         ORDER BY live.at DESC
         """,
         (ig_user_id, QUEUE_PUBLISHED, cutoff, ig_user_id, cutoff, on),

@@ -212,6 +212,35 @@ async def test_a_media_that_is_not_a_reel_still_gets_the_other_numbers(conn, cfg
     assert row["skip_rate"] == 0
 
 
+async def test_a_row_written_before_retention_existed_is_read_again(conn, cfg):
+    """What upgrading actually looked like.
+
+    Every post already had a row for the day, written by the previous image
+    without the retention columns, so the first sweep on the new one skipped
+    all of them and the feedback loop stayed empty until the next day. Any
+    metric added later would land the same way.
+    """
+    await publish_one(conn, media_id="media-1")
+    await db.record_insights(
+        conn, media_id="media-1", ig_user_id=ACCOUNT,
+        metrics={"views": 1500, "reach": 1173, "likes": 23, "comments": 0,
+                 "saved": 20, "shares": 9},  # the old image's shape
+    )
+    graph, metrics = sweep(FakeMeta(insights={"media-1": REELS}), cfg)
+
+    assert await insights.refresh_once(conn, graph, cfg, metrics) == 1
+    assert (await db.latest_insights(conn, ACCOUNT))["media-1"]["skip_rate"] == pytest.approx(64.2)
+
+
+async def test_a_row_that_already_has_retention_is_left_alone(conn, cfg):
+    """The other half: this must not re-read every post on every sweep."""
+    await publish_one(conn, media_id="media-1")
+    graph, metrics = sweep(FakeMeta(insights={"media-1": REELS}), cfg)
+    assert await insights.refresh_once(conn, graph, cfg, metrics) == 1
+
+    assert await insights.refresh_once(conn, graph, cfg, metrics) == 0
+
+
 async def test_a_reel_meta_has_no_retention_for_yet_reads_zero_not_missing(conn, cfg):
     await publish_one(conn, media_id="media-1")
     core = {k: v for k, v in REELS.items() if not k.startswith(("ig_reels", "reels_"))}
