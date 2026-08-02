@@ -17,7 +17,16 @@ import { theme } from "./theme";
 import type { VideoSpec } from "./types";
 
 /** The hook overlay owns the first 3 seconds -- the only part most viewers see. */
-const HOOK_SECONDS = 3;
+/**
+ * How long the hook holds.
+ *
+ * Trimmed from 3.0. Meta's skip rate counts viewers who scroll past inside the
+ * first three seconds, and across the first seven posts this account lost 64 to
+ * 80 percent of them there against a 30 to 40 percent average for the format.
+ * Whatever happens in this window is the whole contest, and the video used to
+ * spend all of it on one static text card.
+ */
+const HOOK_SECONDS = 2.4;
 
 const Hook: React.FC<{ text: string }> = ({ text }) => {
   const frame = useCurrentFrame();
@@ -25,6 +34,24 @@ const Hook: React.FC<{ text: string }> = ({ text }) => {
   const durationInFrames = HOOK_SECONDS * fps;
 
   const enter = spring({ frame, fps, config: { damping: 200, stiffness: 180, mass: 0.6 } });
+  // The hero resolves while the hook is on it, rather than sitting behind a
+  // fixed scrim until the hook leaves.
+  //
+  // Two things were wrong with holding it flat. The point of opening on the
+  // real GitHub page is that the viewer recognises it, and three seconds of
+  // 3px blur is three seconds of deliberately preventing that, during the only
+  // window where recognition decides anything. And a frame where nothing
+  // changes is a frame with no reason to keep watching; the push-in underneath
+  // is 0.5 percent over this stretch, which nobody perceives.
+  //
+  // The scrim thins rather than clearing. It is what keeps the hook legible on
+  // a light README hero, and plenty of them are light.
+  const resolve = interpolate(frame, [0, durationInFrames * 0.75], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const scrim = interpolate(resolve, [0, 1], [0.55, 0.25]);
+  const blur = interpolate(resolve, [0, 1], [6, 0]);
   // Fade out over the last 12 frames rather than cutting, which reads as a
   // glitch at this size.
   const exit = interpolate(
@@ -42,13 +69,14 @@ const Hook: React.FC<{ text: string }> = ({ text }) => {
         paddingLeft: theme.padding,
         paddingRight: theme.padding,
         paddingBottom: 240,
-        // Light scrim + defocus rather than a heavy flat overlay. The point of
-        // opening on the real GitHub page is that the viewer recognises it, so
-        // burying it under 72% black defeats the exercise. Blurring it instead
-        // keeps the hook dominant while the page stays legible behind.
-        backgroundColor: "rgba(1,4,9,0.38)",
-        backdropFilter: "blur(3px)",
-        WebkitBackdropFilter: "blur(3px)",
+        // Scrim plus defocus rather than a heavy flat overlay, and both ease
+        // off across the hold. The point of opening on the real GitHub page is
+        // that the viewer recognises it, so burying it under 72% black defeats
+        // the exercise, and burying it under anything for the full three
+        // seconds defeats it during the seconds that decide.
+        backgroundColor: `rgba(1,4,9,${scrim})`,
+        backdropFilter: `blur(${blur}px)`,
+        WebkitBackdropFilter: `blur(${blur}px)`,
         opacity: exit,
       }}
     >

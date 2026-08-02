@@ -6,10 +6,36 @@ Remotion. If a test needs a fixture file, it is testing the wrong thing.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from config import Settings
 from pipeline.models import Caption, CueKind, RepoCandidate, VideoScript, VisualCue
+
+
+@pytest.fixture(autouse=True)
+def _no_writing_into_the_real_build_dir():
+    """Fail the test that puts something in `build/`, naming it.
+
+    `Settings.build_dir` is a property rooted at the repo and it creates the
+    directory on access, so a test that reads it rather than a tmp_path writes
+    into the developer's real runs. That is not hypothetical: the first version
+    of `tests/test_results.py` left nineteen fixture folders in there, with
+    repo names like `r/7`, and they would have been joined to real Instagram
+    numbers by the feedback loop.
+    """
+    root = Path(__file__).resolve().parent.parent / "build"
+    before = {p.name for day in root.glob("*") if day.is_dir() for p in day.glob("*")}
+
+    yield
+
+    after = {p.name for day in root.glob("*") if day.is_dir() for p in day.glob("*")}
+    added = after - before
+    assert not added, (
+        f"this test wrote {sorted(added)} into the real build/. Pass a tmp_path "
+        f"instead of reading Settings.build_dir."
+    )
 
 
 @pytest.fixture(autouse=True)

@@ -34,10 +34,28 @@ MIN_SCENE_SECONDS = 1.8
 # badges), it carries the most information per second, and it needs time to be
 # read rather than just glimpsed. Everything after it is ours.
 #
-# Trimmed from 7.0 because the hook overlay covers the first 3 seconds of it, so
+# Trimmed from 7.0 because the hook overlay covers the first seconds of it, so
 # the back half was a static image with nothing new arriving, at exactly the
 # point a viewer decides whether to stay.
-INTRO_SECONDS = 5.5
+#
+# Trimmed again from 5.5 on measured retention. Skip rate ran 64 to 80 percent
+# across the first seven posts against a 30 to 40 percent average for the
+# format, and the first cut was landing at 5.5 seconds, well after every one of
+# those viewers had gone. It now lands at 4.0, which leaves the hero 1.6
+# seconds alone after the hook clears at 2.4 and still gets the first cut in
+# while some of the audience is left.
+#
+# There is a floor here worth knowing about. `renderer.COVER_FRAME` is 90, and
+# the cover is rendered from the opening scene, so below 3.0 seconds the
+# renderer clamps to the scene's last frame instead. It handles that, but the
+# cover stops being the frame it was tuned on.
+#
+# A second effect, easy to miss: the audio starts at frame 0 while this holds,
+# so every cue whose spoken boundary falls inside the intro gets pushed to the
+# MIN_SCENE_SECONDS floor. At 5.5 that was flattening four or five scenes per
+# video into 1.8 second slivers. A shorter intro gives them their real timings
+# back.
+INTRO_SECONDS = 4.0
 
 # No scene should hold longer than this. Nothing enforces it, because a scene's
 # length comes from how long its cue is spoken for and there is no second thing
