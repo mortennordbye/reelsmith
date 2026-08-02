@@ -45,7 +45,7 @@ async def test_the_copy_is_a_database_that_remembers_what_was_answered(conn, cfg
         conn, comment_id="c1", media_id="media-1", ig_user_id=ACCOUNT, author_id=IGSID
     )
 
-    path = await backup.backup_once(conn, cfg, metrics)
+    path = await backup.backup_once(cfg, metrics)
 
     assert path is not None
     restored = await aiosqlite.connect(path)
@@ -58,7 +58,7 @@ async def test_the_copy_is_a_database_that_remembers_what_was_answered(conn, cfg
 
 async def test_a_claim_made_after_the_copy_is_not_in_it(conn, cfg, metrics):
     """A point in time copy, not a live mirror. Says what it is."""
-    path = await backup.backup_once(conn, cfg, metrics)
+    path = await backup.backup_once(cfg, metrics)
     await db.claim_comment(
         conn, comment_id="later", media_id="media-1", ig_user_id=ACCOUNT, author_id=IGSID
     )
@@ -73,7 +73,7 @@ async def test_a_claim_made_after_the_copy_is_not_in_it(conn, cfg, metrics):
 async def test_the_backup_directory_is_created(conn, cfg, metrics):
     assert not cfg.backup_dir.exists()
 
-    await backup.backup_once(conn, cfg, metrics)
+    await backup.backup_once(cfg, metrics)
 
     assert cfg.backup_dir.is_dir()
 
@@ -83,17 +83,37 @@ async def test_the_success_gauge_moves(conn, cfg, metrics):
     a backup."""
     assert metrics.backup_last_success._value.get() == 0
 
-    await backup.backup_once(conn, cfg, metrics)
+    await backup.backup_once(cfg, metrics)
 
     assert metrics.backup_last_success._value.get() > 0
 
 
+async def test_it_works_while_the_service_connection_is_mid_transaction(conn, cfg, metrics):
+    """The condition every test here used to miss.
+
+    The gateway shares one connection across the poller, the scheduler and the
+    insights sweep, and SQLite refuses to vacuum a connection with statements
+    in progress. The first deploy raised `cannot VACUUM - SQL statements in
+    progress` every six hours while the whole suite stayed green, because a
+    test connection is idle at the moment it is asked and a live one is not.
+    """
+    await conn.execute(
+        "INSERT INTO comments_handled (comment_id, media_id, ig_user_id, claimed_at) "
+        "VALUES ('open', 'media-1', ?, '2026-08-02T00:00:00+00:00')",
+        (ACCOUNT,),
+    )  # deliberately not committed, so the write transaction stays open
+
+    path = await backup.backup_once(cfg, metrics)
+
+    assert path is not None and path.exists()
+
+
 async def test_a_second_copy_in_the_same_second_is_not_an_error(conn, cfg, metrics):
     """What a restart loop looks like. VACUUM INTO refuses an existing file."""
-    first = await backup.backup_once(conn, cfg, metrics)
+    first = await backup.backup_once(cfg, metrics)
 
     assert first is not None
-    assert await backup.backup_once(conn, cfg, metrics) is None
+    assert await backup.backup_once(cfg, metrics) is None
 
 
 # --- Pruning ----------------------------------------------------------------
@@ -155,7 +175,7 @@ async def test_the_loop_keeps_going_after_a_failure(conn, cfg, metrics, monkeypa
 
     import asyncio
 
-    task = asyncio.create_task(backup.backup_loop(conn, cfg, metrics))
+    task = asyncio.create_task(backup.backup_loop(cfg, metrics))
     while len(calls) < 3:
         await asyncio.sleep(0)
     task.cancel()

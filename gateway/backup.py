@@ -75,13 +75,21 @@ def prune(directory: Path, *, keep: int) -> int:
     return len(stale)
 
 
-async def backup_once(
-    conn: aiosqlite.Connection, cfg: GatewaySettings, metrics: Metrics
-) -> Path | None:
+async def backup_once(cfg: GatewaySettings, metrics: Metrics) -> Path | None:
     """Write one consistent copy and prune the old ones.
 
     Returns the path written, or None if one already exists for this second,
     which is what a restart inside the same second looks like.
+
+    **On its own connection, not the service's.** The whole gateway shares one
+    `aiosqlite.Connection`, and SQLite refuses to vacuum a connection that has
+    statements in progress. On the first deploy this raised `cannot VACUUM -
+    SQL statements in progress` every six hours, forever, while every test
+    passed: a test connection is idle at the moment it is asked, and a live one
+    with a poller, a scheduler and an insights sweep on it is not.
+
+    A second connection is safe here because the database runs in WAL mode, so
+    a reader does not block or get blocked by the writer.
     """
     directory = cfg.backup_dir
     directory.mkdir(parents=True, exist_ok=True)
@@ -90,9 +98,14 @@ async def backup_once(
     if target.exists():
         return None
 
-    # The path is interpolated because SQLite takes no parameter here. It is
-    # built from a timestamp and a configured directory, never from a request.
-    await conn.execute(f"VACUUM INTO '{target}'")  # noqa: S608
+    reader = await aiosqlite.connect(cfg.db_path)
+    try:
+        # The path is interpolated because SQLite takes no parameter here. It
+        # is built from a timestamp and a configured directory, never from a
+        # request.
+        await reader.execute(f"VACUUM INTO '{target}'")  # noqa: S608
+    finally:
+        await reader.close()
 
     dropped = prune(directory, keep=cfg.backup_keep)
     metrics.backup_last_success.set(db.now().timestamp())
@@ -103,12 +116,10 @@ async def backup_once(
     return target
 
 
-async def backup_loop(
-    conn: aiosqlite.Connection, cfg: GatewaySettings, metrics: Metrics
-) -> None:
+async def backup_loop(cfg: GatewaySettings, metrics: Metrics) -> None:
     while True:
         try:
-            await backup_once(conn, cfg, metrics)
+            await backup_once(cfg, metrics)
         except asyncio.CancelledError:
             raise
         except Exception:

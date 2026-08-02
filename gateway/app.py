@@ -168,7 +168,7 @@ def create_app(
             if cfg.backup_enabled:
                 tasks.append(
                     asyncio.create_task(
-                        backup.backup_loop(conn, cfg, app.state.metrics),
+                        backup.backup_loop(cfg, app.state.metrics),
                         name="backup",
                     )
                 )
