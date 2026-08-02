@@ -182,6 +182,37 @@ Two things about the queue are load bearing and easy to undo by accident:
   evening's slot fire twice. This is also why the config sync keeps the id of
   an unchanged slot rather than recreating the row.
 
+## The feedback loop
+
+The scriptwriter is shown what this account's own hooks scored, so a script is
+written with hindsight rather than from scratch every time. `pipeline/results.py`
+does the join and `_results_block` in `pipeline/scriptwriter.py` renders it.
+
+- **The join is on `repo_full_name`, because it is all the two sides share.**
+  The gateway knows the media id and the numbers and has never seen a hook; the
+  run folder holds the hook and never learns its media id, because a queued post
+  is published days later by a service somewhere else. The 30 day cooldown is
+  what makes the repo name unique enough to join on.
+- **A repo has several run folders and only one of them shipped.** Moving a run
+  aside is the documented way to force a regeneration, so `.prev` and `.v2`
+  siblings are normal. `_hooks_by_repo` ranks them: an unsuffixed name first,
+  since `RepoCandidate.slug` turns every dot into a hyphen and a dot can only
+  come from a human; then a publish receipt; then the later date. Taking the
+  last folder in sorted order instead reported a rejected draft as the hook that
+  scored 79.5 percent, which nothing downstream could have caught.
+- **The block states the benchmark next to the list.** Every hook so far skipped
+  64 to 80 percent of viewers against a 30 to 40 percent average for the format,
+  so the top of a sorted list is still a bad hook and the prompt has to say so or
+  the model copies it.
+- Failure is an empty list everywhere. A gateway that is down costs a run its
+  hindsight, which is what every run had before this existed.
+
+`skip_rate` is the metric the loop turns on: the share who scrolled past inside
+the first three seconds, so it scores the opening alone. It arrives from
+`REELS_METRICS` in `gateway/graph.py`, which are Reels-only and therefore
+requested separately, because Meta fails a whole insights call when one metric
+does not apply to the media type.
+
 ## Working on this repo
 
 - `pipeline/models.py` holds the only interface between stages. Change a field

@@ -31,7 +31,9 @@ from typing import Any
 from pydantic import ValidationError
 
 from config import Settings, resolve_claude_cli
+from pipeline import results
 from pipeline.models import RepoCandidate, VideoScript
+from pipeline.results import PastPost
 
 log = logging.getLogger(__name__)
 
@@ -104,7 +106,49 @@ thread mid-sentence, it is too long for short-form.
 """
 
 
-def _build_prompt(repo: RepoCandidate, cfg: Settings) -> str:
+def _results_block(past: list[PastPost]) -> str:
+    """The account's own hooks and what they scored, for the prompt.
+
+    Two decisions in here are load bearing and easy to undo by accident.
+
+    **The benchmark is stated next to the list.** Every hook this account has
+    published skipped between 64 and 80 percent of its viewers against a 30 to
+    40 percent average for the format, so the best line in the block is still a
+    bad one. Without that sentence the model reads the top of a sorted list as
+    a model to copy, and copying the least bad of seven failures is a way to
+    keep failing carefully.
+
+    **It asks for a shape that is not in the list**, rather than naming the
+    shape it should use. Five of the first seven opened "Your coding agent" and
+    then a complaint, which is what a rule like "open on the problem" produces
+    when it is read as a template. Handing over a new template would buy the
+    same thing again in a different costume, and there is one outlier in seven
+    posts here, which is not enough evidence to write a rule from.
+    """
+    if not past:
+        return ""
+    lines = "\n".join(f"  {p.line}" for p in past)
+    return f"""
+## What this account's own videos did
+
+Each line is a hook that ran on this account, with the share of viewers who
+scrolled past inside the first three seconds. Lower is better.
+
+{lines}
+
+Educational videos in this format average 30 to 40 percent, so read the whole
+list as underperforming rather than reading the top of it as something to copy.
+
+Two things to take from it. Do not write a variation on any shape above: a
+viewer meets these in sequence and a repeated formula is visible by the third
+one. And look at what separates the better numbers from the worse, then beat
+both.
+"""
+
+
+def _build_prompt(
+    repo: RepoCandidate, cfg: Settings, past: list[PastPost] | None = None
+) -> str:
     facts = [
         f"Repository: {repo.full_name}",
         f"URL: {repo.url}",
@@ -132,7 +176,7 @@ def _build_prompt(repo: RepoCandidate, cfg: Settings) -> str:
     return f"""{research_note}
 Write a script for a {cfg.max_script_words}-words-or-fewer vertical video about \
 this trending repository.
-
+{_results_block(past or [])}
 ## Facts
 {chr(10).join(facts)}
 
@@ -375,7 +419,15 @@ def write_script(repo: RepoCandidate, cfg: Settings) -> tuple[VideoScript, dict[
     cost, which is how you verify research actually happened."""
     # Generated from the model so the prompt contract and parser cannot drift.
     schema = VideoScript.model_json_schema()
-    prompt = _build_prompt(repo, cfg)
+    # What the last few videos scored. Best effort by design: a gateway that is
+    # down costs this run its hindsight, which is what every run before had.
+    past = results.past_posts(cfg)
+    if past:
+        log.info(
+            "Carrying %d past results into the prompt, skip %.1f%% to %.1f%%",
+            len(past), past[0].skip_rate, past[-1].skip_rate,
+        )
+    prompt = _build_prompt(repo, cfg, past)
 
     # The constraints the model most often trips on -- hook length, and the ban
     # on colons and dashes -- are pydantic validators, which JSON Schema cannot
@@ -408,7 +460,7 @@ def write_script(repo: RepoCandidate, cfg: Settings) -> tuple[VideoScript, dict[
                 "; ".join(e["msg"] for e in exc.errors()),
             )
             prompt = (
-                f"{_build_prompt(repo, cfg)}\n\n"
+                f"{_build_prompt(repo, cfg, past)}\n\n"
                 f"## Your previous answer was rejected\n\n"
                 f"{json.dumps(payload, indent=2)}\n\n"
                 f"It failed validation:\n\n"

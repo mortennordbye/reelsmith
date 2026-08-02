@@ -330,6 +330,28 @@ def fetch_queue(cfg: Settings, *, client: httpx.Client | None = None) -> list[di
         return None
 
 
+def fetch_results(cfg: Settings, *, client: httpx.Client | None = None) -> list[dict]:
+    """How the account's own published Reels did, newest first.
+
+    An empty list for every failure, and for "no gateway configured", because
+    the caller is a prompt builder rather than a guard. Nothing here is worth
+    stopping a render over: the worst case is the script gets written the way
+    every script before it was written, with no idea what happened last time.
+    That is a step backwards from good, not a broken run.
+    """
+    if not _configured(cfg):
+        return []
+    url = f"{cfg.gateway_url.rstrip('/')}/api/results"
+    try:
+        with client or httpx.Client(timeout=_TIMEOUT) as http:
+            response = http.get(url, headers=_headers(cfg))
+            response.raise_for_status()
+            return list(response.json().get("results") or [])
+    except (httpx.HTTPError, ValueError) as exc:
+        log.debug("Could not read the gateway results: %s", exc)
+        return []
+
+
 def register_post(
     media_id: str,
     link: str,

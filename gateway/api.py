@@ -300,6 +300,48 @@ async def list_queue(request: Request, ig_user_id: str | None = None) -> dict:
     }
 
 
+@router.get("/api/results", dependencies=[Depends(require_token)])
+async def list_results(request: Request, ig_user_id: str | None = None) -> dict:
+    """How the published Reels did, for the machine that writes the next one.
+
+    The Posts page answers this for a person. This answers it for the
+    scriptwriter, which until now wrote every script as though it were the
+    first: the pipeline generated, published and measured, and the measurement
+    reached a web page and stopped. Nothing that decided what to say had ever
+    seen what happened last time.
+
+    `skip_rate` is the field worth carrying. It is the share who scrolled past
+    inside the first three seconds, so it scores the opening on its own,
+    separately from the length, the pacing and everything the voice says after
+    it. The repo name comes along because it is what the Mac can join on: this
+    service never sees a hook, and the run folder that does is on the laptop.
+
+    Posts with no reading yet are omitted rather than sent as zeroes. A zero
+    skip rate reads as a perfect hook, and the newest post always has one.
+    """
+    conn = request.app.state.db
+    rows = await db.published_media(conn, ig_user_id)
+    readings = await db.latest_insights(conn, ig_user_id)
+
+    results = []
+    for row in rows:
+        reading = readings.get(row["media_id"])
+        if not reading or not reading["skip_rate"]:
+            continue
+        results.append(
+            {
+                "media_id": row["media_id"],
+                "repo_full_name": row["repo_full_name"],
+                "published_at": row["published_at"],
+                "views": reading["views"],
+                "reach": reading["reach"],
+                "skip_rate": reading["skip_rate"],
+                "avg_watch_ms": reading["avg_watch_ms"],
+            }
+        )
+    return {"results": results}
+
+
 @router.get("/media/{name}")
 async def serve_media(request: Request, name: str) -> FileResponse:
     cleaned = Path(name).name
