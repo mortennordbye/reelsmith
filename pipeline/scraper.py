@@ -32,6 +32,11 @@ from sources.hackernews import HackerNewsClient
 
 log = logging.getLogger(__name__)
 
+# How many candidates get a README and a Hacker News lookup. Each one costs a
+# request, so this is the spend cap on enrichment rather than a ranking rule.
+# `find_trending_repos` raises it to the batch size when that is larger.
+_DEFAULT_ENRICH_TOP = 12
+
 # Licenses permissive enough to feature without caveats. MPL-2.0 is weak
 # copyleft but file-level only, which is fine for "here's a cool tool".
 PERMISSIVE_LICENSES = {
@@ -371,7 +376,7 @@ def _sync_covered(cfg: Settings, used: UsedRepos) -> None:
 
 
 def collect_candidates(
-    cfg: Settings, *, enrich_top: int = 12, on: date | None = None
+    cfg: Settings, *, enrich_top: int = _DEFAULT_ENRICH_TOP, on: date | None = None
 ) -> list[RepoCandidate]:
     """Discover, filter, enrich, and score. Returns best-first."""
     today = on or date.today()
@@ -488,9 +493,17 @@ def find_trending_repos(
     Returns fewer than `count` rather than raising when the pool is thin. A
     batch of three that only found two good repos should still make two videos,
     and the caller says so out loud.
+
+    **Enrichment has to cover the whole batch.** The shortlist that gets a
+    README is picked by velocity, while the final ranking is by score, where the
+    README is only a tenth and velocity is over half. So a repo can place inside
+    the top `count` by score without ever having been enriched, and the
+    scriptwriter then works from the one line description. Invisible at
+    `--batch 3` against the default of 12 and certain at `--batch 15`, which is
+    why the ceiling follows the batch rather than sitting at a constant.
     """
     cfg = cfg or get_settings()
-    ranked = collect_candidates(cfg, on=on)
+    ranked = collect_candidates(cfg, enrich_top=max(_DEFAULT_ENRICH_TOP, count), on=on)
     if not ranked:
         raise RuntimeError(
             "No candidate repositories survived filtering. Either everything "

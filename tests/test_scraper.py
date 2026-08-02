@@ -6,11 +6,14 @@ from datetime import date, timedelta
 
 from conftest import candidate
 
+from pipeline import scraper
 from pipeline.scraper import (
+    _DEFAULT_ENRICH_TOP,
     UsedRepos,
     _cold_start_velocity,
     _is_relevant,
     _readme_quality,
+    find_trending_repos,
     score_candidates,
 )
 
@@ -329,3 +332,41 @@ def test_covered_lists_everything_ever_made_newest_first(tmp_path):
     assert [name for name, _ in store.covered()] == ["new/one", "old/one"]
     # The old one is off cooldown and still on the list.
     assert store.is_covered("old/one", TODAY) is False
+
+
+# --------------------------------------------------------------------------
+# find_trending_repos -- enrichment has to cover the whole batch
+# --------------------------------------------------------------------------
+
+
+def _spy_collect(monkeypatch, pool):
+    """Capture the enrich_top find_trending_repos asks for."""
+    seen = {}
+
+    def fake(cfg, *, enrich_top=_DEFAULT_ENRICH_TOP, on=None):
+        seen["enrich_top"] = enrich_top
+        return pool
+
+    monkeypatch.setattr(scraper, "collect_candidates", fake)
+    return seen
+
+
+def test_a_batch_larger_than_the_default_enriches_the_whole_batch(monkeypatch):
+    """The README shortlist is picked by velocity and the winners by score, so
+    an unenriched repo can place inside the top N and be scripted from its one
+    line description. Certain at --batch 15 against a constant 12."""
+    pool = [candidate(full_name=f"o/r{i}", score=1.0) for i in range(20)]
+    seen = _spy_collect(monkeypatch, pool)
+
+    find_trending_repos(cfg=object(), count=15)
+    assert seen["enrich_top"] == 15
+
+
+def test_a_small_batch_does_not_lower_the_ceiling(monkeypatch):
+    """Enrichment costs a request each, so one video still shortlists 12 and
+    picks the best of them rather than enriching exactly one."""
+    pool = [candidate(full_name=f"o/r{i}", score=1.0) for i in range(20)]
+    seen = _spy_collect(monkeypatch, pool)
+
+    find_trending_repos(cfg=object(), count=1)
+    assert seen["enrich_top"] == _DEFAULT_ENRICH_TOP
