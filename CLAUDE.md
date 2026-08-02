@@ -182,6 +182,29 @@ Two things about the queue are load bearing and easy to undo by accident:
   evening's slot fire twice. This is also why the config sync keeps the id of
   an unchanged slot rather than recreating the row.
 
+## The cooldown list, on both sides
+
+`data/used_repos.json` is what discovery reads, and it is one JSON file on one
+laptop, outside git and outside every backup here. `GET /api/covered` hands the
+same list back from the gateway, whose volume gets `VACUUM INTO` every six
+hours. `_sync_covered` in `pipeline/scraper.py` folds it in before the first
+Search call, so a repo recovered this way costs no query slot and no README
+fetch on its way to being dropped.
+
+- **It merges, it never replaces.** `main.py --posted` marks a repo the account
+  published by hand and the gateway is never told, which is how
+  `DietrichGebert/ponytail` got into the local store. Replacing would un-cover
+  exactly the posts that exist nowhere else. The earlier date wins on a
+  conflict, because taking the later one extends the cooldown by however long
+  the two records disagree.
+- **Committed, not published.** `db.covered_repos` cannot reuse
+  `published_media`, which filters to `state = published` and would omit every
+  post still in the line. The cooldown starts at enqueue, so a draft counts as
+  much as a Reel from three weeks ago. `cancelled` is the one state left out,
+  since cancelling is the moment `--unmark` is meant to run.
+- Failure is an empty dict, like the results loop. A gateway that is down, or
+  one older than this endpoint, leaves discovery behaving exactly as before.
+
 ## The feedback loop
 
 The scriptwriter is shown what this account's own hooks scored, so a script is
@@ -204,6 +227,20 @@ does the join and `_results_block` in `pipeline/scriptwriter.py` renders it.
   64 to 80 percent of viewers against a 30 to 40 percent average for the format,
   so the top of a sorted list is still a bad hook and the prompt has to say so or
   the model copies it.
+- **A post that skipped the pipeline joins on its caption instead.**
+  `main.py --backfill` lists the account's live Reels against the run folders
+  and `--yes` registers the ones it matched. The join is the first paragraph of
+  the caption, because the gateway appends the comment ask above the hashtags on
+  one publish path and not the other, so the body is the only part written once.
+  A body two run folders claim matches neither, for the same reason
+  `_hooks_by_repo` ranks them.
+- **A backfilled post is registered to be measured, never to be answered.**
+  `poll_comments=False`, because registering is also what arms the comment
+  poller and the post is days old by then. The flag is decided when the row is
+  inserted and a re-registration never changes it, so running the backfill twice
+  cannot disarm a live post. A gateway older than schema v8 drops the field
+  silently and arms the poller anyway, which is why the reply says "measuring"
+  rather than "watching" and the pipeline reads it.
 - Failure is an empty list everywhere. A gateway that is down costs a run its
   hindsight, which is what every run had before this existed.
 

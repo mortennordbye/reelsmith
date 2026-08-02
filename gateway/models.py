@@ -21,6 +21,14 @@ class PostRegistration(BaseModel):
     # What the video told people to comment. Per post, because a video about a
     # repo may well ask for something better than "send".
     keyword: str = "send"
+    # When it actually went out, for a post being registered after the fact.
+    # The publisher leaves this off, because it registers seconds after the
+    # media id exists and `registered_at` says the same thing.
+    published_at: datetime | None = None
+    # False registers a post to be measured without arming the comment poller.
+    # A backfilled Reel is days old, and a private reply to a comment its author
+    # has forgotten reads as a bot rather than as an answer.
+    poll_comments: bool = True
 
     @field_validator("link")
     @classmethod

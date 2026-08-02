@@ -146,6 +146,65 @@ async def test_listing_the_queue(client):
     assert body["queue"][0]["repo_full_name"] == "astral-sh/uv"
 
 
+# --- Covered repos, the cooldown list the Mac reads back ------------------
+
+
+async def covered(http) -> dict[str, str]:
+    response = await http.get("/api/covered", headers=AUTH)
+    assert response.status_code == 200, response.text
+    return {row["repo_full_name"]: row["covered_at"] for row in response.json()["covered"]}
+
+
+async def test_covered_needs_the_bearer_token(client):
+    http, _ = client
+    assert (await http.get("/api/covered")).status_code == 401
+
+
+async def test_a_draft_already_counts_as_covered(client):
+    """The cooldown starts at enqueue, so a post still in the line is committed.
+    published_media filters to `published` and would miss exactly this."""
+    http, _ = client
+    await queue(http)
+    assert "astral-sh/uv" in await covered(http)
+
+
+async def test_a_cancelled_post_is_not_covered(client):
+    """Cancelling is the moment --unmark is meant to run. Reporting it as
+    covered would fight that by hand on every discovery."""
+    http, app = client
+    body = await queue(http)
+    await db.set_queue_state(app.state.db, body["id"], db.QUEUE_CANCELLED)
+    assert await covered(http) == {}
+
+
+async def test_a_directly_published_post_is_covered_via_its_link(client):
+    """--publish registers with `posts` and never touches the queue, so the
+    repo has to come back out of the GitHub link."""
+    http, app = client
+    await db.register_post(
+        app.state.db, media_id="1", ig_user_id=ACCOUNT,
+        keyword="UV", link="https://github.com/DietrichGebert/ponytail",
+    )
+    assert "DietrichGebert/ponytail" in await covered(http)
+
+
+async def test_the_earliest_commitment_wins(client):
+    """A repo queued once and published later is one commitment, and the
+    cooldown turned on at the first of the two."""
+    http, app = client
+    await queue(http)
+    await db.register_post(
+        app.state.db, media_id="2", ig_user_id=ACCOUNT,
+        keyword="UV", link=LINK, published_at="2099-01-01T00:00:00+00:00",
+    )
+    assert (await covered(http))["astral-sh/uv"] < "2099"
+
+
+async def test_nothing_committed_is_an_empty_list(client):
+    http, _ = client
+    assert await covered(http) == {}
+
+
 # --- Media retention ------------------------------------------------------
 
 

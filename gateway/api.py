@@ -102,7 +102,12 @@ async def register_post(request: Request, body: PostRegistration) -> Registered:
         ig_user_id=body.ig_user_id,
         keyword=body.keyword,
         link=body.link,
+        published_at=body.published_at.isoformat() if body.published_at else None,
+        poll_comments=body.poll_comments,
     )
+    if not body.poll_comments:
+        log.info("Measuring %s, not watching its comments", body.media_id)
+        return Registered(detail=f"measuring {body.media_id}")
     log.info("Watching %s for the keyword %r", body.media_id, body.keyword)
     return Registered(detail=f"watching {body.media_id}")
 
@@ -298,6 +303,20 @@ async def list_queue(request: Request, ig_user_id: str | None = None) -> dict:
             for row in rows
         ]
     }
+
+
+@router.get("/api/covered", dependencies=[Depends(require_token)])
+async def list_covered(request: Request, ig_user_id: str | None = None) -> dict:
+    """Every repo already committed to, so the Mac can skip it before scraping.
+
+    Discovery drops a covered repo before enrichment, so this arriving first
+    costs nothing and saves a README fetch on every repo it excludes. The Mac
+    merges it into `data/used_repos.json` rather than trusting it outright:
+    `--posted` marks repos this service never hears about, and a merge that
+    replaced would quietly un-cover them.
+    """
+    rows = await db.covered_repos(request.app.state.db, ig_user_id)
+    return {"covered": rows}
 
 
 @router.get("/api/results", dependencies=[Depends(require_token)])

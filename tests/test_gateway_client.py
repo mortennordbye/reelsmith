@@ -97,6 +97,58 @@ def test_nothing_is_uploaded_when_the_gateway_is_not_configured(off, tmp_path):
     assert gateway.upload_cover(cover, "slug", off, client=_client(handler)) is None
 
 
+# --- Covered repos ----------------------------------------------------------
+
+
+def test_covered_repos_come_back_keyed_by_name(cfg):
+    def handler(request):
+        assert request.url.path == "/api/covered"
+        assert request.headers["authorization"] == "Bearer test-token"
+        return httpx.Response(200, json={"covered": [
+            {"repo_full_name": "astral-sh/uv", "covered_at": "2026-07-30T09:00:00+00:00"},
+            {"repo_full_name": "obra/superpowers", "covered_at": "2026-08-02T11:03:34+00:00"},
+        ]})
+
+    assert gateway.fetch_covered(cfg, client=_client(handler)) == {
+        "astral-sh/uv": "2026-07-30",
+        "obra/superpowers": "2026-08-02",
+    }
+
+
+def test_the_timestamp_is_cut_to_a_date(cfg):
+    """UsedRepos stores YYYY-MM-DD and the cooldown counts in days."""
+    handler = lambda request: httpx.Response(200, json={"covered": [  # noqa: E731
+        {"repo_full_name": "a/b", "covered_at": "2026-08-02T23:59:59+00:00"},
+    ]})
+    assert gateway.fetch_covered(cfg, client=_client(handler)) == {"a/b": "2026-08-02"}
+
+
+def test_a_row_missing_either_field_is_skipped(cfg):
+    handler = lambda request: httpx.Response(200, json={"covered": [  # noqa: E731
+        {"repo_full_name": None, "covered_at": "2026-08-02"},
+        {"repo_full_name": "a/b", "covered_at": None},
+        {"repo_full_name": "c/d", "covered_at": "2026-08-02"},
+    ]})
+    assert gateway.fetch_covered(cfg, client=_client(handler)) == {"c/d": "2026-08-02"}
+
+
+def test_a_gateway_that_is_down_costs_discovery_nothing(cfg):
+    """Empty means "add nothing", so the local store is used exactly as before."""
+    def handler(request):
+        raise httpx.ConnectError("cluster is down")
+
+    assert gateway.fetch_covered(cfg, client=_client(handler)) == {}
+
+
+def test_a_500_reading_covered_repos_is_not_fatal(cfg):
+    handler = lambda request: httpx.Response(500, text="boom")  # noqa: E731
+    assert gateway.fetch_covered(cfg, client=_client(handler)) == {}
+
+
+def test_no_gateway_configured_reads_no_covered_repos(off):
+    assert gateway.fetch_covered(off) == {}
+
+
 # --- Post registration ------------------------------------------------------
 
 
@@ -115,6 +167,11 @@ def test_registering_a_post_sends_what_the_poller_needs(cfg):
         "ig_user_id": "17841400000000000",
         "link": "https://github.com/a/b",
         "keyword": "send",
+        # The publisher registers a post the moment its media id exists, so it
+        # wants the poller armed and has nothing to say about a publish date
+        # that `registered_at` is about to record anyway. Only a backfill sends
+        # either of those differently.
+        "poll_comments": True,
     }
 
 

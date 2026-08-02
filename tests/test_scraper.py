@@ -233,6 +233,69 @@ def test_a_corrupt_store_degrades_instead_of_crashing(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# merge -- the gateway's copy folded back in
+# --------------------------------------------------------------------------
+
+
+def test_merge_recovers_a_repo_this_machine_never_knew(tmp_path):
+    path = tmp_path / "used.json"
+    store = UsedRepos(path, cooldown_days=30)
+
+    assert store.merge({"a/b": TODAY.isoformat()}) == ["a/b"]
+    assert store.penalty("a/b", TODAY) == 0.0
+    # Written through, so the next run does not need the gateway to agree.
+    assert UsedRepos(path).used_on("a/b") == TODAY.isoformat()
+
+
+def test_merge_never_drops_a_local_only_repo(tmp_path):
+    """`--posted` marks repos the gateway is never told about. A merge that
+    replaced would hand them straight back to discovery."""
+    store = UsedRepos(tmp_path / "used.json", cooldown_days=30)
+    store.mark_used("hand/posted", TODAY)
+
+    store.merge({"a/b": TODAY.isoformat()})
+    assert store.used_on("hand/posted") == TODAY.isoformat()
+
+
+def test_the_earlier_date_wins_so_a_cooldown_is_never_extended(tmp_path):
+    store = UsedRepos(tmp_path / "used.json", cooldown_days=30)
+    earlier = (TODAY - timedelta(days=10)).isoformat()
+    store.mark_used("a/b", TODAY)
+
+    assert store.merge({"a/b": earlier}) == ["a/b"]
+    assert store.used_on("a/b") == earlier
+
+
+def test_a_later_remote_date_is_ignored(tmp_path):
+    store = UsedRepos(tmp_path / "used.json", cooldown_days=30)
+    earlier = TODAY - timedelta(days=10)
+    store.mark_used("a/b", earlier)
+
+    assert store.merge({"a/b": TODAY.isoformat()}) == []
+    assert store.used_on("a/b") == earlier.isoformat()
+
+
+def test_merging_nothing_does_not_rewrite_the_file(tmp_path):
+    """A gateway that agrees is the normal case on the machine that enqueued."""
+    path = tmp_path / "used.json"
+    store = UsedRepos(path, cooldown_days=30)
+    store.mark_used("a/b", TODAY)
+    before = path.stat().st_mtime_ns
+
+    assert store.merge({"a/b": TODAY.isoformat()}) == []
+    assert path.stat().st_mtime_ns == before
+
+
+def test_an_empty_remote_is_the_documented_failure(tmp_path):
+    """fetch_covered returns {} for every failure, so this is the down path."""
+    store = UsedRepos(tmp_path / "used.json", cooldown_days=30)
+    store.mark_used("a/b", TODAY)
+
+    assert store.merge({}) == []
+    assert store.penalty("a/b", TODAY) == 0.0
+
+
+# --------------------------------------------------------------------------
 # is_covered -- the discovery-time filter, which is what stops the re-scrape
 # --------------------------------------------------------------------------
 

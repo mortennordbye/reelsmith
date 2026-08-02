@@ -96,6 +96,45 @@ async def test_registering_a_post_starts_the_poller_watching_it(client):
     assert row["keyword"] == "SEND"
 
 
+async def test_a_measure_only_registration_says_so_in_its_reply(client):
+    """The wording is a contract, not a log line.
+
+    A gateway older than schema v8 drops `poll_comments` silently, because
+    pydantic ignores a field its model does not declare, and arms the poller
+    instead. `pipeline/gateway.register_post` reads this reply to tell the two
+    apart, so changing "measuring" to anything else turns a caught deploy skew
+    back into a DM going out about a Reel from last week.
+    """
+    http, app = client
+
+    response = await http.post(
+        "/api/posts",
+        json={
+            "media_id": "media-1",
+            "ig_user_id": ACCOUNT,
+            "link": LINK,
+            "poll_comments": False,
+        },
+        headers=AUTH,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["detail"].startswith("measuring")
+    assert await db.pollable_posts(app.state.db, ACCOUNT, ttl_days=7) == []
+
+
+async def test_a_normal_registration_still_says_watching(client):
+    http, app = client
+
+    response = await http.post(
+        "/api/posts",
+        json={"media_id": "media-1", "ig_user_id": ACCOUNT, "link": LINK},
+        headers=AUTH,
+    )
+
+    assert response.json()["detail"].startswith("watching")
+
+
 async def test_re_registering_fixes_a_wrong_link(client):
     http, app = client
     payload = {"media_id": "media-1", "ig_user_id": ACCOUNT, "link": "https://wrong.example"}
