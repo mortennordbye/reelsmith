@@ -25,6 +25,10 @@ from config import get_settings
 # Read once, at import, so the JSON Schema description handed to Claude and the
 # validator that checks his answer can never disagree about the number.
 MAX_HOOK_CHARS = get_settings().max_hook_chars
+# Same reason. This one was a literal 80 in the schema description while the
+# prompt interpolated the setting, so raising the setting left the schema still
+# asking for 80 words in the same request.
+MAX_SCRIPT_WORDS = get_settings().max_script_words
 
 # Colons and every dash variant Claude reaches for, including the ones a model
 # emits without being asked (en dash, em dash, non-breaking hyphen).
@@ -135,10 +139,13 @@ class VideoScript(BaseModel):
         )
     )
     spoken_script: str = Field(
-        description="The voiceover. Under 80 words, no colons, hyphens or dashes."
+        description=(
+            f"The voiceover. Under {MAX_SCRIPT_WORDS} words, "
+            f"no colons, hyphens or dashes."
+        )
     )
     visual_cues: list[VisualCue] = Field(
-        description="5-8 ordered beats describing what to show behind the voiceover."
+        description="7-10 ordered beats describing what to show behind the voiceover."
     )
     caption_text: str = Field(
         default="",

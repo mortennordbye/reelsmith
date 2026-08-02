@@ -8,11 +8,13 @@ delete. Both are cheap to pin down and expensive to notice by eye.
 from __future__ import annotations
 
 import pytest
+from conftest import candidate
 from pydantic import ValidationError
 
 from config import get_settings
 from pipeline.models import MAX_HOOK_CHARS, VideoScript
 from pipeline.renderer import prune_staged_assets, stage_asset
+from pipeline.scriptwriter import _build_prompt
 
 
 def make_script(hook: str) -> VideoScript:
@@ -47,6 +49,40 @@ def test_the_prompt_schema_states_the_same_limit():
 def test_a_trailing_period_is_stripped_before_measuring():
     hook = "x" * MAX_HOOK_CHARS + "."
     assert make_script(hook).hook == "x" * MAX_HOOK_CHARS
+
+
+# --------------------------------------------------------------------------
+# Script length
+#
+# The same drift, found later: the schema description said a flat 80 words
+# while the prompt interpolated the setting, so raising the setting sent Claude
+# one request asking for two different lengths.
+# --------------------------------------------------------------------------
+
+
+def test_the_schema_asks_for_the_configured_word_budget():
+    description = VideoScript.model_json_schema()["properties"]["spoken_script"][
+        "description"
+    ]
+    assert f"Under {get_settings().max_script_words} words" in description
+
+
+def test_the_prompt_asks_for_the_configured_word_budget():
+    cfg = get_settings()
+    prompt = _build_prompt(candidate("just-vugg/colibri"), cfg)
+    assert f"{cfg.max_script_words}-words-or-fewer" in prompt
+
+
+def test_the_word_budget_can_reach_the_stated_length_target():
+    """The budget is what decides the runtime, so it has to be able to get there.
+
+    At the measured 170 words per minute of the cloned voice, plus the seven
+    words of the appended ask, the ceiling has to clear 30 seconds or every
+    script lands under target however well it is written. That is exactly what
+    happened at 80 words, on six runs across three days.
+    """
+    words = get_settings().max_script_words + 7
+    assert 30.0 <= words / 170 * 60 <= 45.0
 
 
 # --------------------------------------------------------------------------

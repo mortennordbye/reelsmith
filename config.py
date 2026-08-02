@@ -80,7 +80,17 @@ class Settings(BaseSettings):
     claude_effort: str = "high"
     claude_research: bool = True
     claude_timeout_s: int = 420
-    max_script_words: int = 80
+    # Measured on six real runs on 2026-08-01: the cloned voice reads 165 to
+    # 190 words per minute, call it 170, and the appended ask adds about seven
+    # words of audio on top of this budget. So a script written to the ceiling
+    # lands at (words + 7) / 170 minutes.
+    #
+    # Raised from 80, which capped the video at about 31 seconds and made a
+    # 30-45 second target unreachable. All six runs came in at 25 to 30
+    # seconds, at the bottom of the target or under it, three days running.
+    # The model writes to the ceiling, so the ceiling is the setting that
+    # decides the length. 100 words lands around 38 seconds.
+    max_script_words: int = 100
     # One source for both the prompt and the VideoScript validator. Past ~60 the
     # hook wraps to a third line on a 1080-wide frame and stops reading as a
     # headline. Raise it only if you also loosen the type size in the renderer.
@@ -98,9 +108,10 @@ class Settings(BaseSettings):
 
     # edge backend
     tts_voice: str = "en-US-AndrewMultilingualNeural"
-    # Measured: this voice at +0% reads ~150 wpm, so an 80-word script lands at
-    # ~32s -- inside the 30-45s target. Raising the rate pushes you under 30s;
-    # if you want a longer video, raise max_script_words instead.
+    # Measured: this voice at +0% reads ~150 wpm, slower than the cloned voice
+    # that `max_script_words` is calibrated against, so the same script runs
+    # longer on this backend. Raising the rate shortens the video; if you want
+    # a longer one, raise max_script_words instead.
     tts_rate: str = "+0%"
 
     # kokoro backend

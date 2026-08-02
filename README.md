@@ -380,9 +380,11 @@ rather than failing the run.
 Everything lives in `.env` (see `.env.example`). The two you will actually
 reach for:
 
-- `MAX_SCRIPT_WORDS` — the real lever on video length. This voice reads about
-  150 wpm, so 80 words ≈ 32s. Raise it for longer videos rather than changing
-  `TTS_RATE`.
+- `MAX_SCRIPT_WORDS` — the real lever on video length. The cloned voice reads
+  165 to 190 wpm measured over six runs, and the appended ask adds about seven
+  words on top, so 100 words ≈ 38s. Raise it for longer videos rather than
+  changing `TTS_RATE`. The model writes to the ceiling, so this setting is what
+  decides the length rather than a suggestion about it.
 - `REPO_COOLDOWN_DAYS` — lower it if you run out of candidates.
 - `MAX_HOOK_CHARS` — the on-screen hook. Read by both the prompt handed to
   Claude and the validator that checks his answer, so the two cannot drift.

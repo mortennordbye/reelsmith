@@ -455,7 +455,11 @@ def _render_one(
 
     audio_src = renderer.stage_asset(audio_path, cfg.video_dir, repo.slug)
     video_spec: VideoSpec = spec_mod.build_spec(
-        repo, script, caps, duration, audio_src, cfg, screenshot_src=screenshot_src
+        repo, script, caps, duration, audio_src, cfg,
+        screenshot_src=screenshot_src,
+        # The ask is audio no visual cue was written for, so the spec needs to
+        # know its words to give it a scene of its own.
+        spoken_cta=cta_line,
     )
     # The end card. Same word the voice just read and the caption carries, so
     # the three cannot disagree about what to comment.

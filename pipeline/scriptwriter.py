@@ -203,7 +203,7 @@ spoken_script
     sentences have a similar shape, rewrite one.
 
 visual_cues
-    5 to 8 ordered beats describing what is on screen. Each cue's
+    7 to 10 ordered beats describing what is on screen. Each cue's
     spoken_excerpt must be the portion of spoken_script playing during that
     beat -- concatenated in order they should reconstruct the whole script,
     because the renderer uses them to allocate screen time. Available kinds:

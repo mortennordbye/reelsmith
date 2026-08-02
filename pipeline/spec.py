@@ -47,6 +47,54 @@ INTRO_SECONDS = 5.5
 MAX_SCENE_SECONDS = 5.5
 
 
+def _cta_start_frame(
+    captions: list[Caption], spoken_cta: str, fps: int
+) -> int | None:
+    """Where the appended ask starts being spoken, or None if unsure.
+
+    The voice reads "Comment KEYWORD if you want the link", and that sentence
+    is appended to the narration *after* the script is written, so no visual
+    cue covers it. Without this, those seconds land on whichever scene happens
+    to be last.
+
+    That is what the long hold warning has actually been reporting. On
+    `ayghri/i-have-adhd` the final scene held 8.5 seconds while the five before
+    it sat on the 1.8 second floor, and roughly four of those seconds were the
+    ask plus the tail. More cues would not have helped: no cue was ever going
+    to be assigned to audio the model did not write.
+
+    Returns None rather than guessing, because a boundary in the wrong place
+    cuts a content scene in half, which is worse than the hold it is fixing.
+    """
+    wanted = _norm_words(spoken_cta)
+    flat = [(w, c.startMs) for c in captions for w in _norm_words(c.text)]
+    if len(wanted) < 3 or len(flat) <= len(wanted):
+        return None
+
+    # An exact suffix match does not survive the round trip. Whisper hears the
+    # keyword as ordinary words -- IHAVEADHD comes back as "I have ADHD" -- so
+    # the ask is anchored on its first word instead, and confirmed by how much
+    # of the rest of it follows.
+    anchor = wanted[0]
+    idx = next((i for i in range(len(flat) - 1, -1, -1) if flat[i][0] == anchor), None)
+    if idx is None or idx == 0:
+        return None
+
+    following = {w for w, _ in flat[idx:]}
+    hits = sum(1 for w in wanted[1:] if w in following)
+    if hits < max(2, (len(wanted) - 1) // 2):
+        return None  # "comment" doing its ordinary job mid-sentence
+
+    # The ask is the last thing said, so it starts near the end of the
+    # transcript. Twice its own length is slack for the keyword arriving as
+    # several words, and it is scale free where a fraction of the runtime is
+    # not.
+    if len(flat) - idx > 2 * len(wanted):
+        return None
+
+    return int(round(flat[idx][1] / 1000 * fps))
+
+
 def _norm_words(text: str) -> list[str]:
     """Lowercase alphanumeric-only words, for matching script text against
     what Whisper actually heard. Punctuation and casing never survive the
@@ -179,6 +227,7 @@ def build_spec(
     cfg: Settings,
     on: date | None = None,
     screenshot_src: str | None = None,
+    spoken_cta: str | None = None,
 ) -> VideoSpec:
     fps = cfg.fps
     # A short tail so the last word isn't clipped and the outro can breathe.
@@ -220,9 +269,32 @@ def build_spec(
     else:
         log.info("Scenes aligned to spoken word timings.")
 
+    # Give the spoken ask a scene of its own rather than leaving it on the back
+    # of the last content beat. The README hero is what it cuts to when there
+    # is one: it is the best looking thing in the video, it is on screen while
+    # the CTA chip asks for the comment, and the video loops, so landing on the
+    # frame it opens with makes the seam invisible.
+    min_frames = int(MIN_SCENE_SECONDS * fps)
+    outro: tuple[int, int] | None = None
+    if spoken_cta and allocations:
+        cta_frame = _cta_start_frame(captions, spoken_cta, fps)
+        if cta_frame is not None:
+            start, duration = allocations[-1]
+            kept, tail = cta_frame - start, start + duration - cta_frame
+            if kept >= min_frames and tail >= min_frames:
+                allocations[-1] = (start, kept)
+                outro = (cta_frame, tail)
+            else:
+                log.info(
+                    "The ask starts %.1fs in, too close to a boundary to split.",
+                    cta_frame / fps,
+                )
+
     # A static hold is where a viewer scrolls, so say when one got through.
     overlong = [
-        round(d / fps, 1) for _, d in allocations if d > MAX_SCENE_SECONDS * fps
+        round(d / fps, 1)
+        for _, d in allocations + ([outro] if outro else [])
+        if d > MAX_SCENE_SECONDS * fps
     ]
     if overlong:
         log.warning(
@@ -244,6 +316,16 @@ def build_spec(
                 codeLanguage=cue.code_language,
                 statValue=cue.stat_value,
                 statLabel=cue.stat_label,
+            )
+        )
+
+    if outro:
+        scenes.append(
+            Scene(
+                kind=CueKind.SCREENSHOT if screenshot_src else CueKind.REPO_CARD,
+                fromFrame=outro[0],
+                durationInFrames=outro[1],
+                imageSrc=screenshot_src,
             )
         )
 

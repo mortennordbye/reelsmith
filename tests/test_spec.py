@@ -7,9 +7,17 @@ second late reads as "the edit feels slightly off", not as a bug.
 
 from __future__ import annotations
 
-from conftest import captions_from, script
+from conftest import candidate, captions_from, script
 
-from pipeline.spec import MIN_SCENE_SECONDS, _align_to_captions, _allocate_frames
+from config import Settings
+from pipeline.models import CueKind
+from pipeline.spec import (
+    MIN_SCENE_SECONDS,
+    _align_to_captions,
+    _allocate_frames,
+    _cta_start_frame,
+    build_spec,
+)
 
 FPS = 30
 MIN_FRAMES = int(MIN_SCENE_SECONDS * FPS)  # 54
@@ -147,3 +155,122 @@ def test_allocation_starts_where_the_intro_ends():
 
 def test_no_cues_allocates_nothing():
     assert _allocate_frames(script(), 300, FPS) == []
+
+
+# --------------------------------------------------------------------------
+# The spoken ask
+#
+# It is appended to the narration after the script is written, so no cue was
+# ever written for it. Every one of these is about it not being charged to a
+# scene that did not ask for it.
+# --------------------------------------------------------------------------
+
+CTA = "Comment COLIBRI if you want the link."
+
+
+def test_the_ask_is_found_where_it_starts_being_spoken():
+    caps = captions_from("one two three comment colibri if you want the link")
+
+    # "comment" is word 3, so 1500ms -> frame 45.
+    assert _cta_start_frame(caps, CTA, FPS) == 45
+
+
+def test_a_keyword_the_transcript_heard_as_words_still_matches():
+    """Whisper never returns IHAVEADHD. It returns "I have ADHD"."""
+    caps = captions_from("one two three comment i have adhd if you want the link")
+
+    assert _cta_start_frame(caps, "Comment IHAVEADHD if you want the link.", FPS) == 45
+
+
+def test_the_word_comment_doing_its_ordinary_job_is_not_the_ask():
+    caps = captions_from("comment on the issue and the maintainer usually replies within a day")
+
+    assert _cta_start_frame(caps, CTA, FPS) is None
+
+
+def test_the_last_comment_wins_when_the_script_used_the_word_too():
+    caps = captions_from("comment on the issue first comment colibri if you want the link")
+
+    assert _cta_start_frame(caps, CTA, FPS) == 75  # word 5, not word 0
+
+
+def test_an_ask_nowhere_near_the_end_is_not_believed():
+    caps = captions_from(
+        "comment colibri if you want the link " + " ".join(["filler"] * 30)
+    )
+
+    assert _cta_start_frame(caps, CTA, FPS) is None
+
+
+def test_no_ask_and_no_captions_are_both_none():
+    assert _cta_start_frame([], CTA, FPS) is None
+    assert _cta_start_frame(captions_from("one two three"), "", FPS) is None
+
+
+# Distinct words at 500ms each, so a frame number can be read straight off a
+# word index. The narration has to be long enough that the intro is not eating
+# a third of it, or the minimum-scene clamp decides the timings instead of the
+# transcript and the test stops being about the ask.
+NARRATION = " ".join(f"w{i}" for i in range(18))
+TRANSCRIPT = f"{NARRATION} comment colibri if you want the link"
+SECONDS = 12.5
+
+
+def _spec_with_cta(*, first_cue_words=14, transcript=TRANSCRIPT, seconds=SECONDS,
+                   cta=CTA, shot="hero.png"):
+    words = NARRATION.split()
+    cfg = Settings(github_token="x", _env_file=None)
+    return build_spec(
+        candidate("just-vugg/colibri"),
+        script(" ".join(words[:first_cue_words]), " ".join(words[first_cue_words:])),
+        captions_from(transcript),
+        seconds,
+        "voice.wav",
+        cfg,
+        screenshot_src=shot,
+        spoken_cta=cta,
+    )
+
+
+def test_the_ask_gets_a_scene_instead_of_the_last_cue_holding_through_it():
+    spec = _spec_with_cta()
+
+    # One scene per cue, plus the intro, plus the ask.
+    assert len(spec.scenes) == 4
+    ask = spec.scenes[-1]
+    assert ask.kind is CueKind.SCREENSHOT
+    assert ask.imageSrc == "hero.png"
+    # It starts on "comment", word 18 of the transcript, and runs to the end.
+    assert ask.fromFrame == 270
+    assert ask.fromFrame + ask.durationInFrames == spec.durationInFrames
+
+
+def test_the_last_cue_stops_when_it_stops_being_spoken():
+    """The whole point: those seconds used to be charged to this scene."""
+    spec = _spec_with_cta()
+
+    last_cue = spec.scenes[-2]
+    assert last_cue.fromFrame + last_cue.durationInFrames == 270
+
+
+def test_the_ask_falls_back_to_the_repo_card_with_no_screenshot():
+    spec = _spec_with_cta(shot=None)
+
+    assert spec.scenes[-1].kind is CueKind.REPO_CARD
+
+
+def test_nothing_is_split_when_no_ask_was_spoken():
+    spec = _spec_with_cta(transcript=NARRATION, seconds=9.0, cta=None)
+
+    assert len(spec.scenes) == 3
+    assert spec.scenes[-1].kind is not CueKind.SCREENSHOT
+
+
+def test_a_split_too_tight_to_be_readable_is_declined():
+    """Better one long-ish scene than two nobody can read."""
+    spec = _spec_with_cta(first_cue_words=16)
+
+    # The last cue is two words, so taking the ask out of it would leave well
+    # under the 1.8s floor on the content side.
+    assert len(spec.scenes) == 3
+    assert all(s.kind is not CueKind.SCREENSHOT for s in spec.scenes[1:])
