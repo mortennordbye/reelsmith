@@ -156,6 +156,74 @@ async def test_posts_older_than_the_window_are_left_alone(conn, cfg):
     assert await insights.refresh_once(conn, graph, cfg, metrics) == 0
 
 
+# --- Retention --------------------------------------------------------------
+#
+# Views cannot tell a viewer who left after half a second from one who watched
+# to the end, which is how seven posts averaging under six seconds of watch
+# time looked fine on the page for a week.
+
+
+REELS = {
+    "views": 1500, "reach": 1173, "likes": 23, "comments": 0, "saved": 20,
+    "shares": 9, "ig_reels_avg_watch_time": 8370,
+    "ig_reels_video_view_total_time": 10_622_235, "reels_skip_rate": 64.2,
+}
+
+
+async def test_the_retention_metrics_are_stored(conn, cfg):
+    await publish_one(conn, media_id="media-1")
+    graph, metrics = sweep(FakeMeta(insights={"media-1": REELS}), cfg)
+
+    await insights.refresh_once(conn, graph, cfg, metrics)
+
+    row = (await db.latest_insights(conn, ACCOUNT))["media-1"]
+    assert row["avg_watch_ms"] == 8370
+    assert row["total_watch_ms"] == 10_622_235
+    assert row["skip_rate"] == pytest.approx(64.2)
+
+
+async def test_the_skip_rate_keeps_its_decimal(conn, cfg):
+    """Rounding 64.2 to 64 loses the digit a hook change first shows up in."""
+    await publish_one(conn, media_id="media-1")
+    graph, metrics = sweep(FakeMeta(insights={"media-1": {**REELS, "reels_skip_rate": 71.4}}), cfg)
+
+    await insights.refresh_once(conn, graph, cfg, metrics)
+
+    assert (await db.latest_insights(conn, ACCOUNT))["media-1"]["skip_rate"] == pytest.approx(71.4)
+
+
+async def test_a_media_that_is_not_a_reel_still_gets_the_other_numbers(conn, cfg):
+    """Meta fails the whole request rather than dropping one metric from it.
+
+    So asking for the Reels-only metrics on an image post would lose views and
+    reach as well, on a post that was never going to have retention.
+    """
+    await publish_one(conn, media_id="photo-1")
+    meta = FakeMeta(
+        insights={"photo-1": {"views": 40, "reach": 38, "likes": 2, "comments": 0,
+                              "saved": 1, "shares": 0}},
+        not_a_reel={"photo-1"},
+    )
+    graph, metrics = sweep(meta, cfg)
+
+    assert await insights.refresh_once(conn, graph, cfg, metrics) == 1
+    row = (await db.latest_insights(conn, ACCOUNT))["photo-1"]
+    assert row["views"] == 40
+    assert row["skip_rate"] == 0
+
+
+async def test_a_reel_meta_has_no_retention_for_yet_reads_zero_not_missing(conn, cfg):
+    await publish_one(conn, media_id="media-1")
+    core = {k: v for k, v in REELS.items() if not k.startswith(("ig_reels", "reels_"))}
+    graph, metrics = sweep(FakeMeta(insights={"media-1": core}), cfg)
+
+    await insights.refresh_once(conn, graph, cfg, metrics)
+
+    row = (await db.latest_insights(conn, ACCOUNT))["media-1"]
+    assert row["views"] == 1500
+    assert row["avg_watch_ms"] == 0
+
+
 # --- Per-post attribution ---------------------------------------------------
 
 

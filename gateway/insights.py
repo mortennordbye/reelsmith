@@ -18,6 +18,12 @@ Two things worth knowing:
   for a Reel published minutes ago. `graph.media_insights` returns None for
   that case rather than raising, because a sweep that dies on the newest post
   never reaches the older ones behind it.
+- **Retention is the half worth reading.** A view counts a viewer who left
+  after half a second exactly like one who watched to the end, so the first
+  six columns can look healthy while nobody is watching. On the first seven
+  posts here the average viewer left before six seconds of a twenty six second
+  video, and `skip_rate` ran 64 to 80 percent against a 30 to 40 percent
+  benchmark for educational Reels. None of that was visible from views.
 """
 
 from __future__ import annotations

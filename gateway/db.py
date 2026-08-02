@@ -28,7 +28,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -218,6 +218,22 @@ _MIGRATIONS: tuple[str, ...] = (
         PRIMARY KEY (media_id, fetched_on)
     );
     CREATE INDEX insights_by_account ON insights (ig_user_id, fetched_on);
+    """,
+    # v7. Whether anyone watched, which none of v6's six columns can answer. A
+    # view counts a viewer who left after half a second exactly like one who
+    # watched to the end, so an account can read those numbers all week and
+    # never learn that the average viewer leaves at five seconds of a twenty
+    # six second video. Measured by hand across the first seven posts on
+    # 2026-08-02, that was the case on every one of them.
+    #
+    # `skip_rate` is the share who scrolled past inside the first three
+    # seconds, so it scores the hook on its own, separately from everything
+    # after it. It is REAL because Meta returns 64.2, and the tenth is the
+    # digit a change would first show up in.
+    """
+    ALTER TABLE insights ADD COLUMN avg_watch_ms   INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE insights ADD COLUMN total_watch_ms INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE insights ADD COLUMN skip_rate      REAL    NOT NULL DEFAULT 0;
     """,
 )
 
@@ -1071,7 +1087,7 @@ async def record_insights(
     *,
     media_id: str,
     ig_user_id: str,
-    metrics: Mapping[str, int],
+    metrics: Mapping[str, float],
     on: str | None = None,
     moment: datetime | None = None,
 ) -> None:
@@ -1086,12 +1102,16 @@ async def record_insights(
         """
         INSERT INTO insights
             (media_id, ig_user_id, fetched_on, views, reach, likes, comments,
-             saved, shares, fetched_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             saved, shares, avg_watch_ms, total_watch_ms, skip_rate,
+             fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (media_id, fetched_on) DO UPDATE SET
             views = excluded.views, reach = excluded.reach,
             likes = excluded.likes, comments = excluded.comments,
             saved = excluded.saved, shares = excluded.shares,
+            avg_watch_ms = excluded.avg_watch_ms,
+            total_watch_ms = excluded.total_watch_ms,
+            skip_rate = excluded.skip_rate,
             fetched_at = excluded.fetched_at
         """,
         (
@@ -1104,6 +1124,9 @@ async def record_insights(
             int(metrics.get("comments", 0)),
             int(metrics.get("saved", 0)),
             int(metrics.get("shares", 0)),
+            int(metrics.get("avg_watch_ms", 0)),
+            int(metrics.get("total_watch_ms", 0)),
+            float(metrics.get("skip_rate", 0.0)),
             moment.isoformat(),
         ),
     )

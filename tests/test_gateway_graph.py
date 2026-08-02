@@ -58,7 +58,9 @@ async def test_no_call_but_the_refresh_puts_the_token_in_a_url(graph, meta):
     await graph.subscribe_messages(token=TOKEN)
     await graph.me(token=TOKEN)
 
-    assert len(meta.requests) == 7
+    # Eight for seven calls: `media_insights` asks a second time without the
+    # Reels-only metrics when the first attempt is refused.
+    assert len(meta.requests) == 8
     for request in meta.requests:
         assert TOKEN not in str(request.url), request.url.path
         assert request.headers["Authorization"] == f"Bearer {TOKEN}"

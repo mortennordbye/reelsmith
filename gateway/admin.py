@@ -365,6 +365,13 @@ async def posts_page(request: Request) -> Any:
             for key in ("comments_seen", "links_sent"):
                 totals[key] += seen.get(key, 0)
 
+        # Retention is averaged rather than summed, and only over the posts
+        # that have a reading. A total watch time would be a number that only
+        # goes up, and dividing by every post would report a hook getting
+        # better every time an unmeasured one drops off the window.
+        scored = [
+            p["insights"] for p in posts if p["insights"] and p["insights"]["skip_rate"]
+        ]
         boards.append(
             {
                 "account": account,
@@ -374,6 +381,18 @@ async def posts_page(request: Request) -> Any:
                 # this morning with one from last week.
                 "avg_views": totals["views"] // len(posts) if posts else 0,
                 "measured": sum(1 for p in posts if p["insights"]),
+                # The one number that scores the hook on its own. Educational
+                # Reels benchmark at 30 to 40 percent; the first seven here ran
+                # 64 to 80, which is why it is on the board rather than buried
+                # in a per post row.
+                "avg_skip": (
+                    sum(r["skip_rate"] for r in scored) / len(scored) if scored else None
+                ),
+                "avg_watch_s": (
+                    sum(r["avg_watch_ms"] for r in scored) / len(scored) / 1000
+                    if scored
+                    else None
+                ),
             }
         )
 

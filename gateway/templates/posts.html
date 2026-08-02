@@ -30,7 +30,24 @@
           <span class="n">{{ board.totals.links_sent }}</span>
           <span class="l">links sent</span>
         </div>
+        {% if board.avg_skip is not none %}
+          <div>
+            <span class="n">{{ '%.0f' | format(board.avg_skip) }}%</span>
+            <span class="l">avg skip</span>
+          </div>
+          <div>
+            <span class="n">{{ '%.1f' | format(board.avg_watch_s) }}s</span>
+            <span class="l">avg watch</span>
+          </div>
+        {% endif %}
       </div>
+      {% if board.avg_skip is not none %}
+        <p class="small muted" style="margin:10px 0 0">
+          Skip is the share who scrolled past inside the first three seconds, so
+          it scores the hook and nothing after it. Educational Reels benchmark
+          at 30 to 40 percent.
+        </p>
+      {% endif %}
       {% if board.measured < board.posts | length %}
         <p class="small muted" style="margin:10px 0 0">
           {{ board.posts | length - board.measured }} of these have no reading yet.
@@ -70,6 +87,16 @@
                 <div><span class="n">{{ post.insights['comments'] }}</span><span class="l">comments</span></div>
                 <div><span class="n">{{ post.insights['saved'] }}</span><span class="l">saves</span></div>
                 <div><span class="n">{{ post.insights['shares'] }}</span><span class="l">shares</span></div>
+                {% if post.insights['skip_rate'] %}
+                  <div>
+                    <span class="n">{{ '%.1f' | format(post.insights['skip_rate']) }}%</span>
+                    <span class="l">skipped</span>
+                  </div>
+                  <div>
+                    <span class="n">{{ '%.1f' | format(post.insights['avg_watch_ms'] / 1000) }}s</span>
+                    <span class="l">avg watch</span>
+                  </div>
+                {% endif %}
               </div>
             {% else %}
               <p class="small muted" style="margin:8px 0 0">

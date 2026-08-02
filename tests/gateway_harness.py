@@ -46,8 +46,12 @@ class FakeMeta:
     recipient_id: str | None = IGSID
     # Per media id. A media absent from here answers the way Meta does for a
     # Reel too young to have numbers, which is an error rather than zeroes.
-    insights: dict[str, dict[str, int]] = field(default_factory=dict)
+    insights: dict[str, dict[str, float]] = field(default_factory=dict)
     insights_error: dict[str, Any] | None = None
+    # Media ids that answer the core metrics but reject the Reels-only
+    # retention ones, which is how Meta treats an image post. The client is
+    # expected to notice and ask again without them.
+    not_a_reel: set[str] = field(default_factory=set)
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self._handle)
@@ -87,6 +91,22 @@ class FakeMeta:
                     400,
                     json={"error": {"message": "Insights are not available", "code": 100}},
                 )
+            asked = (request.url.params.get("metric") or "").split(",")
+            if media_id in self.not_a_reel and any(m.startswith("ig_reels") for m in asked):
+                return httpx.Response(
+                    400,
+                    json={
+                        "error": {
+                            "message": (
+                                "The Media Insights API does not support the "
+                                "ig_reels_avg_watch_time metric for this media "
+                                "product type."
+                            ),
+                            "code": 100,
+                        }
+                    },
+                )
+            values = {k: v for k, v in values.items() if k in asked}
             return httpx.Response(
                 200,
                 json={

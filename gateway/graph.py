@@ -92,6 +92,38 @@ class Profile:
 # assembled per request.
 MEDIA_METRICS = ("views", "reach", "likes", "comments", "saved", "shares")
 
+# What the six above cannot tell you: whether anyone watched. Views count a
+# viewer who left after half a second the same as one who watched to the end,
+# so an account can read its own numbers for a week and never learn that the
+# average viewer leaves at five seconds of a twenty six second video. Measured
+# by hand on 2026-08-02 across seven posts, that was exactly the case, and skip
+# rate ran 64 to 80 percent against a 30 to 40 percent benchmark for
+# educational Reels. Nothing here was asking.
+#
+# `reels_skip_rate` is the share who scrolled past inside the first three
+# seconds, so it scores the hook alone. `ig_reels_avg_watch_time` is
+# milliseconds per initial view.
+#
+# **Reels only.** Meta fails the whole request when a metric does not apply to
+# the media product type, so these cannot simply join the tuple above: one
+# image post in the account would take the other six numbers down with it. The
+# request asks for everything and falls back to the core six, which also tells
+# the two cases apart. A media that fails both is too young to have numbers; a
+# media that fails only the first is not a Reel.
+REELS_METRICS = (
+    "ig_reels_avg_watch_time",
+    "ig_reels_video_view_total_time",
+    "reels_skip_rate",
+)
+
+# Meta's name -> ours. Theirs carry the product and the unit, which is useful
+# in a request and noise in a column heading.
+_RETENTION_FIELDS = {
+    "ig_reels_avg_watch_time": "avg_watch_ms",
+    "ig_reels_video_view_total_time": "total_watch_ms",
+    "reels_skip_rate": "skip_rate",
+}
+
 
 @dataclass(frozen=True)
 class MediaInsights:
@@ -102,22 +134,37 @@ class MediaInsights:
     comments: int
     saved: int
     shares: int
+    # Zero when the media is not a Reel, or when Meta had no retention numbers
+    # for it yet. Zero is also a legitimate reading, so treat a whole row of
+    # zeroes as "not measured" rather than "nobody watched".
+    avg_watch_ms: int = 0
+    total_watch_ms: int = 0
+    skip_rate: float = 0.0
 
     @property
     def interactions(self) -> int:
         """Everything a viewer had to choose to do."""
         return self.likes + self.comments + self.saved + self.shares
 
+    @property
+    def avg_watch_seconds(self) -> float:
+        return self.avg_watch_ms / 1000
 
-def _first_value(item: Any) -> int:
-    """Pull the number out of Meta's {values: [{value: n}]} wrapper."""
+
+def _first_value(item: Any) -> float:
+    """Pull the number out of Meta's {values: [{value: n}]} wrapper.
+
+    Float rather than int because `reels_skip_rate` comes back as 64.2, and
+    rounding the one metric that scores the hook to 64 loses the only digit
+    that would show a change working.
+    """
     values = item.get("values") or []
     if not values:
-        return 0
+        return 0.0
     try:
-        return int(values[0].get("value") or 0)
+        return float(values[0].get("value") or 0)
     except (AttributeError, TypeError, ValueError):
-        return 0
+        return 0.0
 
 
 class GraphClient:
@@ -258,12 +305,43 @@ class GraphClient:
         sweep reading nothing at all while reporting no errors, which is the
         worst of the available outcomes.
         """
+        values = await self._insight_values(
+            media_id=media_id, token=token, metrics=MEDIA_METRICS + REELS_METRICS
+        )
+        if values is None:
+            # Either the media is too young to have numbers or it is not a
+            # Reel, and the retention metrics are what a non Reel rejects.
+            # Asking again without them separates the two at the cost of one
+            # request on media that were never going to have retention.
+            values = await self._insight_values(
+                media_id=media_id, token=token, metrics=MEDIA_METRICS
+            )
+        if values is None:
+            return None
+
+        return MediaInsights(
+            media_id=media_id,
+            **{name: int(values.get(name, 0)) for name in MEDIA_METRICS},
+            **{
+                ours: (
+                    values.get(theirs, 0.0)
+                    if ours == "skip_rate"
+                    else int(values.get(theirs, 0))
+                )
+                for theirs, ours in _RETENTION_FIELDS.items()
+            },
+        )
+
+    async def _insight_values(
+        self, *, media_id: str, token: str, metrics: tuple[str, ...]
+    ) -> dict[str, float] | None:
+        """One insights read, or None if Meta would not answer for these metrics."""
         try:
             data = await self._request(
                 "GET",
                 f"{self._cfg.graph_base}/{media_id}/insights",
                 token=token,
-                params={"metric": ",".join(MEDIA_METRICS)},
+                params={"metric": ",".join(metrics)},
             )
         except GraphError as exc:
             if exc.is_auth:
@@ -273,14 +351,10 @@ class GraphClient:
 
         # Meta returns a list of {name, values: [{value}]}, and omits a metric
         # entirely rather than reporting zero when it has nothing.
-        values = {
+        return {
             str(item.get("name")): _first_value(item)
             for item in (data.get("data") or [])
         }
-        return MediaInsights(
-            media_id=media_id,
-            **{name: values.get(name, 0) for name in MEDIA_METRICS},
-        )
 
     async def get_profile(self, *, igsid: str, token: str) -> Profile:
         """Whether this person follows the account.

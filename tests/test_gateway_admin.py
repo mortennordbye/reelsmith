@@ -711,6 +711,28 @@ async def test_the_posts_page_shows_what_a_reel_did(client):
     assert "100%" in body, "one person asked and one got the link"
 
 
+async def test_the_posts_page_scores_the_hook(client):
+    """Views cannot say whether anyone watched, and skip rate scores the first
+    three seconds on their own. It is the number the page exists to show."""
+    http, app = client
+    queued = await queue(http, approved=True)
+    await db.mark_queue_published(
+        app.state.db, queued["id"], media_id="media-1", permalink="https://ig/p/1"
+    )
+    await db.record_insights(
+        app.state.db, media_id="media-1", ig_user_id=ACCOUNT,
+        metrics={"views": 1500, "reach": 1173, "likes": 23, "comments": 0,
+                 "saved": 20, "shares": 9, "avg_watch_ms": 8370,
+                 "total_watch_ms": 10_622_235, "skip_rate": 64.2},
+    )
+
+    body = (await http.get("/admin/posts")).text
+
+    assert "64.2%" in body, "the skip rate, to the tenth"
+    assert "8.4s" in body, "average watch time in seconds, not milliseconds"
+    assert "avg skip" in body, "and summarised across the account"
+
+
 async def test_a_reel_with_no_reading_yet_says_so_rather_than_showing_zero(client):
     """Zero views and "not measured yet" are different facts, and the second one
     is what is true for a post published this morning."""
