@@ -20,8 +20,11 @@ did. That is worth no log line above debug and certainly not a failure.
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import logging
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -46,14 +49,90 @@ class PastPost:
     skip_rate: float
     avg_watch_s: float
     views: int
+    recipe: str = ""
 
     @property
     def line(self) -> str:
         return f"{self.skip_rate:4.1f}%  {self.hook}"
 
 
-def _hooks_by_repo(build_dir: Path) -> dict[str, str]:
-    """The hook that shipped, per repo.
+def recipe(cfg: Settings) -> str:
+    """A short fingerprint of everything that decides how a script comes out.
+
+    Three posts a day go out while the prompt is being edited daily, so without
+    this "did the hook change work" is unanswerable after the fact: the numbers
+    are attached to a video and nothing records which version of the rules
+    wrote it. Two runs a week apart with the same fingerprint are comparable
+    and two with different ones are not, which is the whole claim.
+
+    The commit is most of it, because the prompt lives in git. The digest
+    covers what git cannot see: an uncommitted edit mid-session, and the `.env`
+    knobs that change the output without changing a tracked file.
+    """
+    knobs = "|".join(
+        str(x)
+        for x in (
+            cfg.max_script_words,
+            cfg.max_hook_chars,
+            cfg.claude_model,
+            cfg.claude_effort,
+            cfg.claude_research,
+            cfg.tts_backend,
+        )
+    )
+    from pipeline.scriptwriter import SYSTEM_PROMPT
+
+    digest = hashlib.sha256(f"{SYSTEM_PROMPT}\n{knobs}".encode()).hexdigest()[:8]
+    return f"{_git_commit()}.{digest}"
+
+
+def _git_commit() -> str:
+    """The checkout a run came from, or `nogit` outside one.
+
+    `dirty` on the end rather than a different hash, because an uncommitted
+    tree is not a version anyone can go back to and saying so is more useful
+    than pretending it is one.
+    """
+    try:
+        sha = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["git", "rev-parse", "--short", "HEAD"],  # noqa: S607
+            capture_output=True, text=True, timeout=5, cwd=Path(__file__).parent.parent,
+        )
+        if sha.returncode != 0:
+            return "nogit"
+        status = subprocess.run(  # noqa: S603 - argv list, no shell
+            ["git", "status", "--porcelain"],  # noqa: S607
+            capture_output=True, text=True, timeout=5, cwd=Path(__file__).parent.parent,
+        )
+        suffix = "-dirty" if status.stdout.strip() else ""
+        return f"{sha.stdout.strip()}{suffix}"
+    except (OSError, subprocess.SubprocessError):
+        return "nogit"
+
+
+def write_recipe(run_dir: Path, cfg: Settings) -> str:
+    """Record what produced this run, next to what it produced."""
+    value = recipe(cfg)
+    (run_dir / "recipe.json").write_text(
+        json.dumps(
+            {
+                "recipe": value,
+                "max_script_words": cfg.max_script_words,
+                "max_hook_chars": cfg.max_hook_chars,
+                "claude_model": cfg.claude_model,
+                "claude_effort": cfg.claude_effort,
+                "claude_research": cfg.claude_research,
+                "tts_backend": cfg.tts_backend,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    return value
+
+
+def _runs_by_repo(build_dir: Path) -> dict[str, tuple[str, str]]:
+    """The hook that shipped and the recipe that wrote it, per repo.
 
     A repo usually has more than one run folder, because the documented way to
     force a regeneration is to move the old one aside rather than delete it.
@@ -80,9 +159,9 @@ def _hooks_by_repo(build_dir: Path) -> dict[str, str]:
       deleted.
     - **The later date**, for an honest re-render on a later day.
     """
-    hooks: dict[str, tuple[tuple[bool, bool, str], str]] = {}
+    found: dict[str, tuple[tuple[bool, bool, str], str, str]] = {}
     if not build_dir.exists():
-        return hooks
+        return {}
 
     for day in sorted(p for p in build_dir.iterdir() if p.is_dir()):
         for run in sorted(p for p in day.iterdir() if p.is_dir()):
@@ -97,15 +176,23 @@ def _hooks_by_repo(build_dir: Path) -> dict[str, str]:
             if not (full_name and hook):
                 continue
 
+            # Absent on every run made before recipes existed, which is all of
+            # the first seven. Blank rather than a guess: an invented version
+            # string would make two incomparable runs look comparable, which is
+            # the one thing this is for.
+            made_with = ""
+            with contextlib.suppress(OSError, ValueError, KeyError):
+                made_with = json.loads((run / "recipe.json").read_text())["recipe"]
+
             rank = (
                 "." not in run.name,
                 (run / "published.json").exists() or (run / "queued.json").exists(),
                 day.name,
             )
-            if full_name not in hooks or rank > hooks[full_name][0]:
-                hooks[full_name] = (rank, hook)
+            if full_name not in found or rank > found[full_name][0]:
+                found[full_name] = (rank, hook, made_with)
 
-    return {repo: hook for repo, (_, hook) in hooks.items()}
+    return {repo: (hook, made_with) for repo, (_, hook, made_with) in found.items()}
 
 
 def past_posts(
@@ -125,13 +212,14 @@ def past_posts(
     if not readings:
         return []
 
-    hooks = _hooks_by_repo(build_dir or cfg.build_dir)
+    runs = _runs_by_repo(build_dir or cfg.build_dir)
     out = []
     for row in readings:
-        hook = hooks.get(row.get("repo_full_name") or "")
+        run = runs.get(row.get("repo_full_name") or "")
         skip = row.get("skip_rate")
-        if not hook or not skip:
+        if not run or not skip:
             continue
+        hook, made_with = run
         out.append(
             PastPost(
                 repo_full_name=row["repo_full_name"],
@@ -139,6 +227,7 @@ def past_posts(
                 skip_rate=float(skip),
                 avg_watch_s=float(row.get("avg_watch_ms") or 0) / 1000,
                 views=int(row.get("views") or 0),
+                recipe=made_with,
             )
         )
 

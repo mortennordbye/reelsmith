@@ -12,6 +12,7 @@
 
     python main.py --candidates         rank today's repos, generate nothing
     python main.py --covered            list every repo already made into a Reel
+    python main.py --results            how the published Reels did, worst hook last
     python main.py --snapshot           record star counts only (run daily)
     python main.py --refresh-token      renew the Instagram token by hand
                                         (--snapshot already does it when due)
@@ -45,6 +46,7 @@ from config import (
 )
 from pipeline import captions as captions_mod
 from pipeline import gateway, publisher, renderer, scraper, screenshot, tts
+from pipeline import results as results_mod
 from pipeline import spec as spec_mod
 from pipeline.models import Caption, RepoCandidate, VideoScript, VideoSpec
 from pipeline.scriptwriter import write_script
@@ -109,6 +111,10 @@ def run(
     covered: Annotated[
         bool,
         typer.Option("--covered", help="List every repo already made into a Reel"),
+    ] = False,
+    show_results: Annotated[
+        bool,
+        typer.Option("--results", help="How the published Reels did, worst hook last"),
     ] = False,
     batch: Annotated[
         int | None,
@@ -198,6 +204,10 @@ def run(
 
     if covered:
         _show_covered(cfg)
+        return
+
+    if show_results:
+        _show_results(cfg)
         return
 
     if snapshot:
@@ -376,6 +386,11 @@ def _render_one(
         # Keep the envelope: it carries the web-search count and cost, which is
         # how you audit whether research actually happened.
         (run_dir / "claude_envelope.json").write_text(json.dumps(envelope, indent=2))
+        # And what wrote it. Three posts a day go out while the prompt is being
+        # edited, so without this "did the hook change work" cannot be answered
+        # afterwards: the numbers attach to a video and nothing says which
+        # version of the rules produced it.
+        results_mod.write_recipe(run_dir, cfg)
 
     console.print(f'  [bold]"{script.hook}"[/]')
     console.print(f"  [dim]{script.word_count} words · {len(script.visual_cues)} cues[/]")
@@ -592,6 +607,52 @@ def _show_covered(cfg: Settings) -> None:
     console.print(
         f"[dim]Blocked repos are dropped during discovery, before any README is fetched. "
         f"Cooldown is {cfg.repo_cooldown_days} days (REPO_COOLDOWN_DAYS).[/]"
+    )
+
+
+def _show_results(cfg: Settings) -> None:
+    """What the published Reels did, worst opening last.
+
+    The same data the scriptwriter is now given, for the person deciding what
+    to change next. Sorted by skip rate rather than by date, because the
+    question is which opening worked rather than what happened when.
+    """
+    from rich.table import Table
+
+    posts = results_mod.past_posts(cfg, limit=50)
+    if not posts:
+        console.print(
+            "[dim]No results yet. Either the gateway is unreachable, or no post "
+            "has a retention reading, which takes a few hours after publishing.[/]"
+        )
+        return
+
+    table = Table(title=f"Published Reels ({len(posts)})", header_style="bold")
+    table.add_column("Skip", justify="right")
+    table.add_column("Watch", justify="right")
+    table.add_column("Views", justify="right")
+    table.add_column("Hook", style="cyan")
+    table.add_column("Recipe", style="dim")
+
+    for post in posts:
+        # 30 to 40 percent is the published average for this format. Colour is
+        # against that rather than against the account's own spread, which
+        # would make the least bad of a bad set look green.
+        colour = "green" if post.skip_rate < 50 else "yellow" if post.skip_rate < 70 else "red"
+        table.add_row(
+            f"[{colour}]{post.skip_rate:.1f}%[/]",
+            f"{post.avg_watch_s:.1f}s",
+            f"{post.views:,}",
+            post.hook,
+            post.recipe or "before recipes",
+        )
+
+    console.print(table)
+    console.print(
+        "[dim]Skip is the share who scrolled past inside the first three seconds, so it "
+        "scores the hook alone. Educational Reels average 30 to 40 percent.\n"
+        "Recipe is the checkout and settings that wrote the script. Two rows with "
+        "different recipes are not comparable.[/]"
     )
 
 

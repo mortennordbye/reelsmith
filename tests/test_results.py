@@ -178,6 +178,58 @@ def test_the_list_is_capped(cfg, build, monkeypatch):
     assert len(results.past_posts(cfg, build_dir=build)) == results.MAX_RESULTS
 
 
+# --- What produced a run ----------------------------------------------------
+#
+# Three posts a day go out while the prompt is being edited daily, so without a
+# recipe "did the hook change work" is unanswerable after the fact.
+
+
+def test_the_recipe_changes_when_a_setting_that_changes_the_output_changes(cfg):
+    louder = cfg.model_copy(update={"max_script_words": cfg.max_script_words + 10})
+
+    assert results.recipe(cfg) != results.recipe(louder)
+
+
+def test_the_recipe_is_stable_across_calls(cfg):
+    assert results.recipe(cfg) == results.recipe(cfg)
+
+
+def test_a_setting_that_cannot_change_the_script_does_not_change_the_recipe(cfg):
+    """Otherwise every unrelated edit invalidates the comparison."""
+    elsewhere = cfg.model_copy(update={"repo_cooldown_days": 99})
+
+    assert results.recipe(cfg) == results.recipe(elsewhere)
+
+
+def test_the_recipe_is_written_next_to_what_it_produced(cfg, tmp_path):
+    written = results.write_recipe(tmp_path, cfg)
+
+    stored = json.loads((tmp_path / "recipe.json").read_text())
+    assert stored["recipe"] == written
+    assert stored["max_script_words"] == cfg.max_script_words
+
+
+def test_a_post_carries_the_recipe_that_wrote_it(cfg, build, monkeypatch):
+    run_folder(build, "2026-08-01", "a-one", repo="a/one", hook="a hook")
+    (build / "2026-08-01" / "a-one" / "recipe.json").write_text(
+        json.dumps({"recipe": "abc1234.deadbeef"})
+    )
+    monkeypatch.setattr(results.gateway, "fetch_results", lambda _cfg: [result("a/one", 70.0)])
+
+    assert results.past_posts(cfg, build_dir=build)[0].recipe == "abc1234.deadbeef"
+
+
+def test_a_run_made_before_recipes_existed_says_nothing_rather_than_guessing(
+    cfg, build, monkeypatch
+):
+    """An invented version string would make two incomparable runs look
+    comparable, which is the one thing this exists to prevent."""
+    run_folder(build, "2026-08-01", "a-one", repo="a/one", hook="a hook")
+    monkeypatch.setattr(results.gateway, "fetch_results", lambda _cfg: [result("a/one", 70.0)])
+
+    assert results.past_posts(cfg, build_dir=build)[0].recipe == ""
+
+
 # --- Nothing here may break a run -------------------------------------------
 
 
