@@ -93,6 +93,28 @@ def comment_matches(text: str, keyword: str) -> bool:
 
     Substring matching would fire on "sending" and on "resend", and the private
     reply it wastes cannot be taken back.
+
+    **A whole word inside a sentence still counts, and that is deliberate.**
+    A keyword derived from the repo name matches prose about the repo, so
+    OPENCODE fires on "opencode is good" from someone who was only talking.
+    Considered and left alone, twice now, for three reasons:
+
+    - What it costs them is a private reply to a comment they chose to write,
+      which is the one reply Meta allows per comment and not an unsolicited
+      DM. Nothing reaches their inbox unprompted; the link only goes after
+      they message back and follow.
+    - Tightening this to "the keyword and nothing else" loses "opencode looks
+      great, send me the link", which is a real ask phrased as a sentence. The
+      comment mechanic is the growth engine and it is turning slowly enough
+      that a false negative costs more than a false positive.
+    - The ordinary-word case, where the keyword is a word people type without
+      meaning the repo, is the one that actually hurts, and it is handled
+      before it gets here by `_TOO_COMMON` in `pipeline/gateway.py`. OPEN
+      never becomes a keyword. OPENCODE is a project's name, and anyone typing
+      it under a video about that project means that project.
+
+    Revisit if a keyword ever collides with ordinary English despite the
+    blocklist. Do not revisit because a comment mentioned the repo in passing.
     """
     if not keyword:
         return False

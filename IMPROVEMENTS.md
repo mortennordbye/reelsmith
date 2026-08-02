@@ -80,6 +80,8 @@ Ranked by value. Check items off as they land.
 
 ## Left over
 
-- `video/public/astral-sh-uv.mp3` predates the current `<slug>-<name>` staging
-  convention, so the pruner does not recognise it and leaves it alone. Delete
-  it by hand if you want the directory clean.
+Nothing. `video/public/astral-sh-uv.mp3`, which predated the `<slug>-<name>`
+staging convention and so was invisible to the pruner, is gone.
+
+Everything on this list has landed. New work is tracked in `PLAN.md` under
+Phases, and whatever a session leaves open goes in `HANDOVER.md`.

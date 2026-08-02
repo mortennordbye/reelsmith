@@ -99,6 +99,25 @@ def test_keyword_matches_whole_words_only(text, expected):
     assert conversations.comment_matches(text, "send") is expected
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "OPENCODE",
+        "opencode please",
+        "opencode is good",
+        "opencode looks great, send me the link",
+    ],
+)
+def test_the_keyword_inside_a_sentence_still_counts(text):
+    """Pinned because it looks like a bug and keeps getting reported as one.
+
+    The reasoning is in `comment_matches`. The short version: the reply this
+    triggers is a reply to a comment, not an unsolicited DM, and refusing the
+    last two lines here would cost a real ask to save a harmless one.
+    """
+    assert conversations.comment_matches(text, "opencode") is True
+
+
 # --- The one private reply --------------------------------------------------
 
 
