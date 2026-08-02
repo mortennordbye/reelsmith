@@ -182,6 +182,29 @@ Two things about the queue are load bearing and easy to undo by accident:
   evening's slot fire twice. This is also why the config sync keeps the id of
   an unchanged slot rather than recreating the row.
 
+## The cooldown list, on both sides
+
+`data/used_repos.json` is what discovery reads, and it is one JSON file on one
+laptop, outside git and outside every backup here. `GET /api/covered` hands the
+same list back from the gateway, whose volume gets `VACUUM INTO` every six
+hours. `_sync_covered` in `pipeline/scraper.py` folds it in before the first
+Search call, so a repo recovered this way costs no query slot and no README
+fetch on its way to being dropped.
+
+- **It merges, it never replaces.** `main.py --posted` marks a repo the account
+  published by hand and the gateway is never told, which is how
+  `DietrichGebert/ponytail` got into the local store. Replacing would un-cover
+  exactly the posts that exist nowhere else. The earlier date wins on a
+  conflict, because taking the later one extends the cooldown by however long
+  the two records disagree.
+- **Committed, not published.** `db.covered_repos` cannot reuse
+  `published_media`, which filters to `state = published` and would omit every
+  post still in the line. The cooldown starts at enqueue, so a draft counts as
+  much as a Reel from three weeks ago. `cancelled` is the one state left out,
+  since cancelling is the moment `--unmark` is meant to run.
+- Failure is an empty dict, like the results loop. A gateway that is down, or
+  one older than this endpoint, leaves discovery behaving exactly as before.
+
 ## The feedback loop
 
 The scriptwriter is shown what this account's own hooks scored, so a script is

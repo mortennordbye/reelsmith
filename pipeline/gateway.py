@@ -368,6 +368,37 @@ def fetch_results(cfg: Settings, *, client: httpx.Client | None = None) -> list[
         return []
 
 
+def fetch_covered(cfg: Settings, *, client: httpx.Client | None = None) -> dict[str, str]:
+    """Repos the gateway has seen committed, as `owner/repo` to an ISO date.
+
+    The dates come back as timestamps and are cut to a date here, because the
+    cooldown is counted in days and `UsedRepos` stores `YYYY-MM-DD`.
+
+    An empty dict for every failure, matching `fetch_results`. A gateway that is
+    down costs discovery nothing: the local store is the one it already reads,
+    and this only ever adds to it.
+    """
+    if not _configured(cfg):
+        return {}
+    url = f"{cfg.gateway_url.rstrip('/')}/api/covered"
+    try:
+        with client or httpx.Client(timeout=_TIMEOUT) as http:
+            response = http.get(url, headers=_headers(cfg))
+            response.raise_for_status()
+            rows = response.json().get("covered") or []
+    except (httpx.HTTPError, ValueError) as exc:
+        log.debug("Could not read the gateway's covered repos: %s", exc)
+        return {}
+
+    out: dict[str, str] = {}
+    for row in rows:
+        name, covered_at = row.get("repo_full_name"), row.get("covered_at")
+        if not name or not covered_at:
+            continue
+        out[name] = str(covered_at)[:10]
+    return out
+
+
 def register_post(
     media_id: str,
     link: str,

@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from config import Settings, get_settings, require_github_token
+from pipeline import gateway
 from pipeline.models import RepoCandidate
 from sources.github import GitHubClient, StarHistory
 from sources.hackernews import HackerNewsClient
@@ -152,6 +153,32 @@ class UsedRepos:
 
     def used_on(self, full_name: str) -> str | None:
         return self._data.get(full_name)
+
+    def merge(self, remote: dict[str, str]) -> list[str]:
+        """Fold the gateway's record in. Returns the repos this added or moved.
+
+        **Merge, never replace.** `main.py --posted` marks a repo the account
+        published by hand, and the gateway is never told, so it holds a subset
+        rather than the truth. Replacing would un-cover exactly the posts that
+        exist nowhere else and hand them straight back to discovery.
+
+        The earlier date wins on a conflict, because the cooldown starts at the
+        first commitment and taking the later one would extend it by however
+        long the two records disagree.
+
+        Saves only when something changed, so a run against a gateway that
+        agrees does not rewrite the file.
+        """
+        changed = []
+        for full_name, covered_at in remote.items():
+            mine = self._data.get(full_name)
+            if mine is not None and mine <= covered_at:
+                continue
+            self._data[full_name] = covered_at
+            changed.append(full_name)
+        if changed:
+            self.save()
+        return changed
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -324,6 +351,25 @@ def _parse_dt(value: str | None) -> datetime | None:
         return None
 
 
+def _sync_covered(cfg: Settings, used: UsedRepos) -> None:
+    """Fold the gateway's record of committed repos into the local store.
+
+    Runs before the first Search call, so a repo recovered here costs no query
+    slot and no README fetch on its way to being dropped.
+
+    Silent when there is nothing to add, which is the normal case on the machine
+    that did the enqueueing. It only says anything when the two records
+    disagreed, since that is the case worth seeing: this laptop had forgotten a
+    repo it has already posted about.
+    """
+    added = used.merge(gateway.fetch_covered(cfg))
+    if added:
+        log.info(
+            "Recovered %d covered repo(s) from the gateway: %s",
+            len(added), ", ".join(sorted(added)),
+        )
+
+
 def collect_candidates(
     cfg: Settings, *, enrich_top: int = 12, on: date | None = None
 ) -> list[RepoCandidate]:
@@ -333,6 +379,7 @@ def collect_candidates(
 
     history = StarHistory(cfg.star_history_path)
     used = UsedRepos(cfg.used_repos_path, cfg.repo_cooldown_days)
+    _sync_covered(cfg, used)
 
     seen: dict[str, RepoCandidate] = {}
     covered = 0

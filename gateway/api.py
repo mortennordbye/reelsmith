@@ -305,6 +305,20 @@ async def list_queue(request: Request, ig_user_id: str | None = None) -> dict:
     }
 
 
+@router.get("/api/covered", dependencies=[Depends(require_token)])
+async def list_covered(request: Request, ig_user_id: str | None = None) -> dict:
+    """Every repo already committed to, so the Mac can skip it before scraping.
+
+    Discovery drops a covered repo before enrichment, so this arriving first
+    costs nothing and saves a README fetch on every repo it excludes. The Mac
+    merges it into `data/used_repos.json` rather than trusting it outright:
+    `--posted` marks repos this service never hears about, and a merge that
+    replaced would quietly un-cover them.
+    """
+    rows = await db.covered_repos(request.app.state.db, ig_user_id)
+    return {"covered": rows}
+
+
 @router.get("/api/results", dependencies=[Depends(require_token)])
 async def list_results(request: Request, ig_user_id: str | None = None) -> dict:
     """How the published Reels did, for the machine that writes the next one.

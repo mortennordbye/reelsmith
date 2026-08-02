@@ -1268,6 +1268,75 @@ def _repo_from_link(link: str | None) -> str | None:
     return "/".join(parts[-2:]) if len(parts) >= 2 else None
 
 
+async def covered_repos(
+    conn: aiosqlite.Connection, ig_user_id: str | None = None, limit: int = 500
+) -> list[Any]:
+    """Every repo this account has committed to, earliest commitment first.
+
+    The Mac's `data/used_repos.json` is the same list and is the one discovery
+    actually reads, but it is a single JSON file on one laptop, outside git and
+    outside every backup this project has. This table is on the volume that gets
+    `VACUUM INTO` every six hours. Losing the laptop copy means re-covering a
+    repo, which is the one mistake the cooldown exists to prevent, so the
+    durable side should be able to hand it back.
+
+    **Committed, not published.** The cooldown starts at enqueue, so a draft
+    counts exactly as much as a Reel that went out three weeks ago. That is why
+    this cannot reuse `published_media`, which filters to `published` and would
+    silently omit everything still in the line.
+
+    `cancelled` is the one state left out, because cancelling a post is the
+    moment `--unmark` is meant to run and reporting it as covered would fight
+    that by hand every time discovery runs.
+
+    Incomplete by design: `main.py --posted` marks a repo the account posted by
+    hand and never tells this service, so the Mac merges rather than replaces.
+    """
+    queue_where = ["state != ?", "repo_full_name IS NOT NULL"]
+    queue_args: list[Any] = [QUEUE_CANCELLED]
+    direct_where, direct_args = [], []
+    if ig_user_id:
+        queue_where.append("ig_user_id = ?")
+        queue_args.append(ig_user_id)
+        direct_where.append("ig_user_id = ?")
+        direct_args.append(ig_user_id)
+
+    direct_clause = f"WHERE {' AND '.join(direct_where)}" if direct_where else ""
+    rows = await _all(
+        conn,
+        f"""
+        SELECT repo_full_name, link, created_at AS covered_at, 'queue' AS source
+        FROM queued_posts
+        WHERE {' AND '.join(queue_where)}
+
+        UNION ALL
+
+        SELECT NULL, link, COALESCE(published_at, registered_at), 'direct'
+        FROM posts
+        {direct_clause}
+
+        ORDER BY covered_at LIMIT ?
+        """,
+        [*queue_args, *direct_args, limit],
+    )
+
+    # Earliest wins: a repo queued once and published later is one commitment,
+    # and the cooldown turned on at the first of the two.
+    earliest: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        name = row["repo_full_name"] or _repo_from_link(row["link"])
+        if not name or not row["covered_at"]:
+            continue
+        seen = earliest.get(name)
+        if seen is None or row["covered_at"] < seen["covered_at"]:
+            earliest[name] = {
+                "repo_full_name": name,
+                "covered_at": row["covered_at"],
+                "source": row["source"],
+            }
+    return sorted(earliest.values(), key=lambda r: r["covered_at"])
+
+
 async def published_media(
     conn: aiosqlite.Connection, ig_user_id: str | None = None, limit: int = 100
 ) -> list[Any]:
