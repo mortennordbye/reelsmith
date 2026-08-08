@@ -8,6 +8,7 @@ cached, so the `.env` file is read exactly once per process.
 from __future__ import annotations
 
 import shutil
+import sys
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
@@ -16,6 +17,16 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT = Path(__file__).parent.resolve()
+
+
+def _default_torch_device() -> str:
+    """The torch backend this machine actually has.
+
+    Only Apple silicon has Metal. Deciding here rather than defaulting to one
+    and overriding in `.env` on every other host keeps the failure off a
+    machine that has no way to know it was meant to set the variable.
+    """
+    return "mps" if sys.platform == "darwin" else "cpu"
 
 
 class Settings(BaseSettings):
@@ -140,10 +151,13 @@ class Settings(BaseSettings):
     #     than the 0.5 default, which suits a reference read at Reels pace.
     chatterbox_exaggeration: float = 0.5
     chatterbox_cfg_weight: float = 0.3
-    # "mps" on Apple silicon, "cpu" everywhere else. Roughly 35s of compute for
-    # 25s of audio once warm; the first call of a process pays a much larger
-    # one-off for MPS kernel compilation.
-    chatterbox_device: str = "mps"
+    # "mps" on Apple silicon, "cpu" everywhere else, and chosen by the platform
+    # rather than pinned, because the wrong one does not degrade, it fails:
+    # asking for mps on Linux raises `Storage device not recognized: mps` at
+    # model load, after the run has already paid for a script. Measured at
+    # roughly 35s of compute for 25s of audio on mps once warm, and about 10
+    # minutes for the same clip on six CPU cores.
+    chatterbox_device: str = Field(default_factory=lambda: _default_torch_device())
     # Generous because the first call in a cold process pays for MPS kernel
     # compilation, which took ~200s more than a warm one when measured. A run
     # that hangs past this is broken, not slow.

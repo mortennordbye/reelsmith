@@ -430,6 +430,29 @@ def fetch_covered(cfg: Settings, *, client: httpx.Client | None = None) -> dict[
     return out
 
 
+def fetch_pending_count(cfg: Settings, *, client: httpx.Client | None = None) -> int | None:
+    """How many posts are waiting to go out, drafts and armed together.
+
+    Both count. A draft is a post somebody still has to watch, and the reason
+    to stop rendering is that the line is long, not that it is armed.
+
+    None rather than 0 when the gateway cannot be reached, because the two mean
+    opposite things to the caller: 0 invites a batch, and unknown must not.
+    """
+    if not _configured(cfg):
+        return None
+    url = f"{cfg.gateway_url.rstrip('/')}/api/queue"
+    try:
+        with client or httpx.Client(timeout=_TIMEOUT) as http:
+            response = http.get(url, headers=_headers(cfg))
+            response.raise_for_status()
+            rows = response.json().get("queue") or []
+    except (httpx.HTTPError, ValueError) as exc:
+        log.debug("Could not read the gateway queue: %s", exc)
+        return None
+    return sum(1 for row in rows if row.get("state") in {"draft", "approved"})
+
+
 def fetch_rendered(cfg: Settings, *, client: httpx.Client | None = None) -> dict[str, str]:
     """Repos a Reel has already been built for, as `owner/repo` to an ISO date.
 

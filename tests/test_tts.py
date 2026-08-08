@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+import config as config_mod
 from config import Settings
 from pipeline import tts
 
@@ -52,6 +53,23 @@ class TestBackendSelection:
         # Better to fail constructing Settings than three stages into a run.
         with pytest.raises(ValidationError):
             _cfg(tts_backend="chaterbox")
+
+
+class TestTorchDevice:
+    """Only Apple silicon has Metal, and asking for it elsewhere does not
+    degrade to CPU, it raises `Storage device not recognized: mps` at model
+    load, three stages into a run that has already paid for a script."""
+
+    def test_apple_silicon_gets_metal(self, monkeypatch):
+        monkeypatch.setattr(config_mod.sys, "platform", "darwin")
+        assert config_mod._default_torch_device() == "mps"
+
+    def test_every_other_platform_gets_cpu(self, monkeypatch):
+        monkeypatch.setattr(config_mod.sys, "platform", "linux")
+        assert config_mod._default_torch_device() == "cpu"
+
+    def test_an_explicit_setting_still_wins(self):
+        assert _cfg(chatterbox_device="cuda").chatterbox_device == "cuda"
 
 
 class TestAudioSuffix:

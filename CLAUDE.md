@@ -68,6 +68,14 @@ Three things about it are load bearing:
 
 Kokoro (`am_michael`) remains the fallback and is what shipped before this.
 
+**The torch device is chosen by platform, not pinned.** `mps` on Darwin and
+`cpu` everywhere else, in `config.py`. The wrong one does not degrade, it
+fails: asking for `mps` on Linux raises `Storage device not recognized: mps` at
+model load, three stages into a run that has already paid for a script.
+Measured at about 35 seconds of compute per 25 seconds of audio on `mps`, and
+about ten minutes for the same clip on six CPU cores, which is the single
+slowest thing about rendering off a Mac.
+
 ## Visuals
 
 No grid background. No particle fields. No circuit lines. The faint tech-grid
@@ -321,6 +329,19 @@ does not apply to the media type.
   still the top candidate and every run in the batch would pick it again.
   `--covered` prints the store; covered repos are dropped during discovery,
   before enrichment, so they cost no README fetch on their way to losing.
+- **It runs on a Linux host too, not only the Mac.** `scripts/pod-setup.sh`
+  builds both venvs and the node deps and is idempotent, so it is the answer to
+  "how do I get this running somewhere else" rather than a list of commands in
+  someone's terminal history. The private half arrives on a mount rather than
+  in git, and the script links it into place. `data` has to be a *directory*
+  symlink: `StarHistory.save()` renames a temp file over the target, and that
+  rename replaces a file symlink with a real file, so per-file links silently
+  send writes to local disk instead of the share.
+- **A scheduled render needs a ceiling.** `--max-queue N` asks the gateway how
+  many posts are already waiting and skips the batch when the line is at least
+  that long, because three slots a day drain slower than a nightly job fills.
+  An unreachable gateway is refusal, not zero: the two are opposite answers and
+  guessing wrong costs a batch.
 - **This repo is public.** `PROFILE.md`, `PLAN.md`, `.env`, `data/` and the
   voice recording are gitignored and hold the private half. Before adding a
   file, decide which half it belongs to. `scripts/backup-secrets.sh` backs up
