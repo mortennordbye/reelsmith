@@ -28,7 +28,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -255,6 +255,35 @@ _MIGRATIONS: tuple[str, ...] = (
     """
     ALTER TABLE posts ADD COLUMN published_at  TEXT;
     ALTER TABLE posts ADD COLUMN poll_comments INTEGER NOT NULL DEFAULT 1;
+    """,
+    # v9. A Reel that exists on the Mac but was never queued is invisible here,
+    # so discovery ranks its repo again the next morning and the batch spends a
+    # script, a voiceover and a render rebuilding a video already sitting on
+    # disk. `firecrawl/anydoc` was built twice on consecutive days that way, and
+    # the second time was a batch that had just been told to avoid duplicates.
+    #
+    # A table of its own rather than another `queued_posts` state. A render has
+    # no uploaded media, no slot, no keyword and no link, so it would be a queue
+    # row with all of those null, and the scheduler, `_prune_media` and
+    # `live_media_names` would each need to learn to skip it. The queue's
+    # invariant is that every row in it is publishable; this is the cheaper
+    # half of the promise.
+    #
+    # Deliberately weaker than a commitment. `covered_repos` reports it so
+    # discovery stops rebuilding, but rendering still starts no cooldown, and
+    # `--unmark` deletes the row so a rejected video costs nothing, which is the
+    # rule the whole build step is designed around.
+    #
+    # `ig_user_id` is blank when the Mac has no account configured, so the
+    # primary key gives one row per repo per account and a re-render upserts.
+    """
+    CREATE TABLE rendered_repos (
+        repo_full_name TEXT NOT NULL,
+        ig_user_id     TEXT NOT NULL DEFAULT '',
+        run_folder     TEXT NOT NULL DEFAULT '',
+        rendered_at    TEXT NOT NULL,
+        PRIMARY KEY (repo_full_name, ig_user_id)
+    );
     """,
 )
 
@@ -1281,6 +1310,87 @@ def _repo_from_link(link: str | None) -> str | None:
     return "/".join(parts[-2:]) if len(parts) >= 2 else None
 
 
+async def record_rendered(
+    conn: aiosqlite.Connection,
+    *,
+    repo_full_name: str,
+    ig_user_id: str = "",
+    run_folder: str = "",
+    rendered_at: str | None = None,
+) -> None:
+    """Remember that a Reel for this repo has been built.
+
+    Upserts, and keeps the first `rendered_at`. A second render of the same
+    repo is the case this exists to stop, so when it happens anyway the honest
+    date is the one that already made the repo redundant, not the repeat.
+    """
+    await conn.execute(
+        """
+        INSERT INTO rendered_repos (repo_full_name, ig_user_id, run_folder, rendered_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT (repo_full_name, ig_user_id) DO UPDATE SET
+            run_folder = excluded.run_folder
+        """,
+        (
+            repo_full_name,
+            ig_user_id or "",
+            run_folder,
+            rendered_at or datetime.now(UTC).isoformat(timespec="seconds"),
+        ),
+    )
+    await conn.commit()
+
+
+async def rendered_repos_list(
+    conn: aiosqlite.Connection, ig_user_id: str | None = None, limit: int = 500
+) -> list[Any]:
+    """Every repo with a Reel built for it, oldest first.
+
+    Kept apart from `covered_repos` because the two mean different things and
+    the Mac stores them differently. A commitment goes into `used_repos.json`
+    and starts a cooldown; a render is a reversible "this already exists on
+    disk" that discovery drops without writing anything down.
+
+    A blank `ig_user_id` matches every account, since a render can predate the
+    account being configured and filtering it out would hide exactly the early
+    records this table exists to keep.
+    """
+    where, args = [], []
+    if ig_user_id:
+        where.append("ig_user_id IN (?, '')")
+        args.append(ig_user_id)
+    clause = f"WHERE {' AND '.join(where)}" if where else ""
+    return await _all(
+        conn,
+        f"""
+        SELECT repo_full_name, run_folder, rendered_at
+        FROM rendered_repos
+        {clause}
+        ORDER BY rendered_at LIMIT ?
+        """,
+        [*args, limit],
+    )
+
+
+async def forget_rendered(
+    conn: aiosqlite.Connection, repo_full_name: str, ig_user_id: str | None = None
+) -> int:
+    """Drop the render record, so a rejected video stops blocking its repo.
+
+    This is what `--unmark` reaches for. Rendering is the one step in the whole
+    pipeline that is meant to be free to throw away, so the record of it has to
+    be as easy to delete as the folder it describes.
+    """
+    sql = "DELETE FROM rendered_repos WHERE repo_full_name = ?"
+    args: list[Any] = [repo_full_name]
+    if ig_user_id:
+        sql += " AND ig_user_id IN (?, '')"
+        args.append(ig_user_id)
+    cur = await conn.execute(sql, args)
+    await conn.commit()
+    return cur.rowcount or 0
+
+
 async def covered_repos(
     conn: aiosqlite.Connection, ig_user_id: str | None = None, limit: int = 500
 ) -> list[Any]:
@@ -1301,6 +1411,14 @@ async def covered_repos(
     `cancelled` is the one state left out, because cancelling a post is the
     moment `--unmark` is meant to run and reporting it as covered would fight
     that by hand every time discovery runs.
+
+    **Rendered repos are deliberately not in here.** They are a reversible
+    exclusion, not a commitment, and this list is merged into the Mac's
+    `data/used_repos.json`, which is the record of commitments and the thing
+    the 30 day cooldown is counted from. Folding renders in would turn "I built
+    a video and have not watched it yet" into a month long block on the repo,
+    which is the opposite of rendering being free to throw away. They have
+    their own list in `rendered_repos_list`.
 
     Incomplete by design: `main.py --posted` marks a repo the account posted by
     hand and never tells this service, so the Mac merges rather than replaces.

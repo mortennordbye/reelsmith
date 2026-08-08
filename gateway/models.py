@@ -129,3 +129,19 @@ class CoverUploaded(BaseModel):
 class Registered(BaseModel):
     ok: bool = True
     detail: str = ""
+
+
+class RenderedRepo(BaseModel):
+    """A repo whose Reel has been built but not committed to a slot.
+
+    Weaker than `QueueSubmission` on purpose, and it carries no media, because
+    nothing is uploaded at render time. It exists so the next discovery pass
+    does not rebuild a video that is already on disk.
+    """
+
+    repo_full_name: str = Field(min_length=1)
+    # Blank when the Mac has no account configured. See the v9 migration.
+    ig_user_id: str = ""
+    # `2026-08-08/firecrawl-anydoc`, so a person reading the row can find the
+    # video it is talking about.
+    run_folder: str = ""

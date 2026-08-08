@@ -201,8 +201,15 @@ def run(
 
     if unmark:
         was = scraper.unmark_featured(cfg, unmark)
+        # The gateway holds two separate reasons to skip a repo, a commitment
+        # and a render, and a rejected video usually has both. Clearing one and
+        # leaving the other is how a repo stays invisible to discovery with
+        # nothing local left to explain it.
+        forgotten = gateway.forget_rendered(unmark, cfg)
         if was:
             console.print(f"[bold green]Cooldown cleared:[/] {unmark} [dim](was set {was})[/]")
+        elif forgotten:
+            console.print(f"[bold green]Render record cleared:[/] {unmark}")
         else:
             console.print(f"[yellow]{unmark} was not on cooldown.[/]")
         return
@@ -426,6 +433,12 @@ def _render_one(
     # Strip any ask the model wrote itself before appending ours, or the voice
     # reads two of them back to back asking for two different words.
     spoken = gateway.strip_written_cta(script.spoken_script)
+    # The cues quote that same ask, and an excerpt describing speech we just
+    # stripped can never be found in the transcript, which costs the whole
+    # video its word level scene timing rather than just that one cue.
+    script = script.model_copy(
+        update={"visual_cues": gateway.strip_cta_cues(script.visual_cues)}
+    )
     cta_line = gateway.spoken_cta(cta_keyword, cfg)
     if cta_line:
         spoken = f"{spoken.rstrip()} {cta_line}"
@@ -499,6 +512,13 @@ def _render_one(
     out_path = run_dir / "out.mp4"
     with console.status("Remotion is rendering..."):
         renderer.render(video_spec, out_path, cfg)
+
+    # An MP4 now exists, which is the fact worth recording. Rendering still
+    # starts no cooldown; this only stops tomorrow's discovery spending a
+    # script, a voiceover and a render rebuilding it. `--unmark` takes it back.
+    gateway.register_rendered(
+        repo.full_name, cfg, run_folder=f"{run_dir.parent.name}/{run_dir.name}"
+    )
 
     with console.status("Rendering cover stills..."):
         covers = renderer.render_covers(video_spec, run_dir, cfg)

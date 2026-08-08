@@ -385,9 +385,14 @@ def collect_candidates(
     history = StarHistory(cfg.star_history_path)
     used = UsedRepos(cfg.used_repos_path, cfg.repo_cooldown_days)
     _sync_covered(cfg, used)
+    # Repos whose video already exists but was never queued. Held apart from
+    # `used` rather than merged into it: a commitment is a 30 day cooldown and
+    # this is only "do not build that twice", which `--unmark` undoes.
+    rendered = gateway.fetch_rendered(cfg)
 
     seen: dict[str, RepoCandidate] = {}
     covered = 0
+    already_built = 0
 
     with GitHubClient(token) as gh:
         for query in _build_queries(cfg, today):
@@ -408,12 +413,18 @@ def collect_candidates(
                 if used.is_covered(item["full_name"], today):
                     covered += 1
                     continue
+                # Same reasoning one step weaker: the video exists, so building
+                # it again spends a script, a voiceover and a render to land
+                # back where we already are.
+                if item["full_name"] in rendered:
+                    already_built += 1
+                    continue
                 seen[item["full_name"]] = _to_candidate(item)
 
         log.info(
-            "Found %d candidates after filtering, %d skipped as already covered "
-            "(GitHub quota left: %s)",
-            len(seen), covered, gh.rate_limit_remaining,
+            "Found %d candidates after filtering, %d skipped as already covered, "
+            "%d already rendered (GitHub quota left: %s)",
+            len(seen), covered, already_built, gh.rate_limit_remaining,
         )
 
         # Velocity for everything -- it's free, it's already in memory.

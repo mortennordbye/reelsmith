@@ -28,6 +28,7 @@ from pathlib import Path
 import httpx
 
 from config import Settings
+from pipeline.models import VisualCue
 
 log = logging.getLogger(__name__)
 
@@ -122,6 +123,36 @@ def strip_written_cta(text: str) -> str:
         if not _CTA_LINE_RE.match(line)
     )
     return cleaned.strip()
+
+
+def strip_cta_cues(cues: list[VisualCue]) -> list[VisualCue]:
+    """Take the model's own ask out of the visual cues, the third channel.
+
+    `strip_written_cta` defends the voiceover and the caption. A cue excerpt is
+    neither, so it kept the sentence after the other two dropped it, and the
+    cost is not cosmetic. An excerpt is matched against the transcript to place
+    the scene cut, a stripped sentence is never spoken, and `_align_to_captions`
+    abandons the whole video when one cue cannot be found. So a single stray ask
+    costs every scene its word level timing and falls back to a proportional
+    guess, silently, on a video that looks fine until the cuts drift.
+
+    Seen on `alibaba/open-code-review`, the same run named above, which is why
+    this reuses those regexes rather than matching the ask its own way. Fixing
+    two channels of three is how that shipped the first time.
+
+    A cue that is nothing but the ask is dropped rather than blanked, because
+    the spoken ask already gets a scene of its own in `build_spec`. A cue that
+    never had an excerpt keeps its place; `_allocate_frames` gives it a floor
+    weight on purpose.
+    """
+    kept: list[VisualCue] = []
+    for cue in cues:
+        excerpt = strip_written_cta(cue.spoken_excerpt)
+        if excerpt or not cue.spoken_excerpt.strip():
+            kept.append(cue.model_copy(update={"spoken_excerpt": excerpt}))
+    # Every cue being an ask means the match is wrong rather than the script;
+    # a video with no beats at all is worse than one that is timed by guess.
+    return kept or cues
 
 
 def spoken_cta(keyword: str, cfg: Settings) -> str | None:
@@ -397,6 +428,110 @@ def fetch_covered(cfg: Settings, *, client: httpx.Client | None = None) -> dict[
             continue
         out[name] = str(covered_at)[:10]
     return out
+
+
+def fetch_rendered(cfg: Settings, *, client: httpx.Client | None = None) -> dict[str, str]:
+    """Repos a Reel has already been built for, as `owner/repo` to an ISO date.
+
+    Read before discovery alongside `fetch_covered`, and kept apart from it on
+    purpose. A covered repo is a commitment and gets merged into
+    `data/used_repos.json`, which is what the 30 day cooldown is counted from.
+    A rendered repo is only "this video already exists", so it is dropped for
+    today and never written down; `--unmark` or deleting the row is enough to
+    bring it back.
+
+    An empty dict for every failure, matching `fetch_covered`. A gateway that
+    is down means a repo might get rendered twice, which is the behaviour this
+    project had before the endpoint existed.
+    """
+    if not _configured(cfg):
+        return {}
+    url = f"{cfg.gateway_url.rstrip('/')}/api/rendered"
+    try:
+        with client or httpx.Client(timeout=_TIMEOUT) as http:
+            response = http.get(url, headers=_headers(cfg))
+            response.raise_for_status()
+            rows = response.json().get("rendered") or []
+    except (httpx.HTTPError, ValueError) as exc:
+        log.debug("Could not read the gateway's rendered repos: %s", exc)
+        return {}
+
+    out: dict[str, str] = {}
+    for row in rows:
+        name, rendered_at = row.get("repo_full_name"), row.get("rendered_at")
+        if not name or not rendered_at:
+            continue
+        out[name] = str(rendered_at)[:10]
+    return out
+
+
+def register_rendered(
+    repo_full_name: str,
+    cfg: Settings,
+    *,
+    run_folder: str = "",
+    client: httpx.Client | None = None,
+) -> bool:
+    """Tell the gateway a Reel for this repo now exists. True if it took.
+
+    Sent when a render finishes, which is the earliest and weakest thing this
+    module reports. It starts no cooldown and takes no slot; it only stops the
+    next discovery pass ranking a repo whose video is already on disk.
+
+    Best effort, like everything else here. A gateway that is down means the
+    duplicate guard falls back to the local store, which is exactly how
+    discovery behaved before this existed.
+    """
+    if not _configured(cfg):
+        return False
+
+    url = f"{cfg.gateway_url.rstrip('/')}/api/rendered"
+    payload = {
+        "repo_full_name": repo_full_name,
+        "ig_user_id": cfg.ig_user_id or "",
+        "run_folder": run_folder,
+    }
+    try:
+        with _borrow(client) as http:
+            response = http.post(url, headers=_headers(cfg), json=payload)
+            response.raise_for_status()
+    except (httpx.HTTPError, ValueError) as exc:
+        # Debug, not warning. The consequence is one repeated render on a later
+        # day, and the run that just succeeded is not the place to shout about
+        # it. `--covered` is where a missing record actually shows up.
+        log.debug("Could not record the render of %s with the gateway: %s", repo_full_name, exc)
+        return False
+
+    log.info("Gateway knows %s is rendered, so discovery will not rebuild it", repo_full_name)
+    return True
+
+
+def forget_rendered(
+    repo_full_name: str, cfg: Settings, *, client: httpx.Client | None = None
+) -> bool:
+    """Take back the render record, so a rejected video stops blocking its repo.
+
+    The other half of `--unmark`. Rendering is the one step meant to be free to
+    throw away, so undoing the record of it has to be as cheap as deleting the
+    folder.
+    """
+    if not _configured(cfg):
+        return False
+
+    url = f"{cfg.gateway_url.rstrip('/')}/api/rendered/{repo_full_name.strip('/')}"
+    try:
+        with _borrow(client) as http:
+            response = http.delete(url, headers=_headers(cfg))
+            response.raise_for_status()
+    except (httpx.HTTPError, ValueError) as exc:
+        log.warning(
+            "Could not clear the gateway's render record for %s: %s. "
+            "Discovery may keep skipping it; clear it by hand.",
+            repo_full_name,
+            exc,
+        )
+        return False
+    return True
 
 
 def register_post(
