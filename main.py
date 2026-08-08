@@ -130,6 +130,10 @@ def run(
         int | None,
         typer.Option("--batch", help="Render this many distinct repos in one sitting"),
     ] = None,
+    max_queue: Annotated[
+        int | None,
+        typer.Option("--max-queue", help="Skip the batch when this many posts are already waiting"),
+    ] = None,
     posted: Annotated[
         str | None,
         typer.Option("--posted", help="Mark a repo as posted, starting its cooldown"),
@@ -282,7 +286,10 @@ def run(
             console.print("[bold red]--batch needs a positive number.[/]")
             raise typer.Exit(1)
         _preflight(need_github=True, need_claude=True, need_instagram=post)
-        _run_batch(cfg, batch, stop_after=stop_after, post=post, cover_url=cover_url)
+        _run_batch(
+            cfg, batch, stop_after=stop_after, post=post, cover_url=cover_url,
+            max_queue=max_queue,
+        )
         return
 
     _preflight(
@@ -550,6 +557,7 @@ def _run_batch(
     stop_after: Stage | None,
     post: bool,
     cover_url: str | None,
+    max_queue: int | None = None,
 ) -> None:
     """Render `count` distinct repos back to back.
 
@@ -562,6 +570,27 @@ def _run_batch(
     posting, and losing all of it because the third script tripped the dash
     validator is worse than losing one.
     """
+    # Asked before discovery, because the cheapest batch is the one that never
+    # starts. A scheduled render with no ceiling fills the queue faster than
+    # three slots a day drain it, and the back of a long line goes out stale.
+    if max_queue is not None:
+        pending = gateway.fetch_pending_count(cfg)
+        if pending is None:
+            console.print(
+                "[yellow]Cannot read the gateway queue, so --max-queue cannot be honoured.[/] "
+                "[dim]Refusing rather than guessing; a batch is expensive to undo.[/]"
+            )
+            return
+        if pending >= max_queue:
+            console.print(
+                f"[bold]Nothing to do.[/] {pending} posts already waiting "
+                f"[dim](--max-queue {max_queue}). Approve or cancel some first.[/]"
+            )
+            return
+        # Never queue past the ceiling, however big a batch was asked for.
+        count = min(count, max_queue - pending)
+        console.print(f"[dim]{pending} waiting, room for {count}.[/]")
+
     console.rule(f"[bold]Finding the top {count} repositories")
     repos = scraper.find_trending_repos(cfg, count=count)
     if len(repos) < count:

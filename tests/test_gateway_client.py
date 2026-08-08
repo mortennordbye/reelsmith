@@ -152,6 +152,36 @@ def test_no_gateway_configured_reads_no_covered_repos(off):
 # --- Rendered repos ---------------------------------------------------------
 
 
+def test_pending_counts_drafts_and_armed_together(cfg):
+    """A draft is a post somebody still has to watch, so it fills the line
+    exactly as much as an armed one."""
+    handler = lambda request: httpx.Response(200, json={"queue": [  # noqa: E731
+        {"state": "draft"}, {"state": "approved"}, {"state": "draft"},
+    ]})
+    assert gateway.fetch_pending_count(cfg, client=_client(handler)) == 3
+
+
+def test_pending_ignores_posts_that_have_left_the_queue(cfg):
+    handler = lambda request: httpx.Response(200, json={"queue": [  # noqa: E731
+        {"state": "published"}, {"state": "cancelled"},
+        {"state": "failed"}, {"state": "draft"},
+    ]})
+    assert gateway.fetch_pending_count(cfg, client=_client(handler)) == 1
+
+
+def test_an_unreachable_gateway_is_unknown_not_empty(cfg):
+    """None and 0 mean opposite things to the caller: 0 invites a batch, and
+    "I could not ask" must not."""
+    def handler(request):
+        raise httpx.ConnectError("cluster is down")
+
+    assert gateway.fetch_pending_count(cfg, client=_client(handler)) is None
+
+
+def test_no_gateway_configured_reports_unknown_depth(off):
+    assert gateway.fetch_pending_count(off) is None
+
+
 def test_rendered_repos_come_back_keyed_by_name(cfg):
     def handler(request):
         assert request.url.path == "/api/rendered"
