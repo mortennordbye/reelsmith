@@ -12,7 +12,7 @@ import pytest
 
 from config import Settings
 from pipeline import gateway
-from pipeline.models import _BANNED_PUNCTUATION
+from pipeline.models import _BANNED_PUNCTUATION, CueKind, VisualCue
 
 CAPTION = (
     "Colibri keeps ten gigabytes of a huge model on disk and streams it.\n"
@@ -147,6 +147,81 @@ def test_a_500_reading_covered_repos_is_not_fatal(cfg):
 
 def test_no_gateway_configured_reads_no_covered_repos(off):
     assert gateway.fetch_covered(off) == {}
+
+
+# --- Rendered repos ---------------------------------------------------------
+
+
+def test_rendered_repos_come_back_keyed_by_name(cfg):
+    def handler(request):
+        assert request.url.path == "/api/rendered"
+        assert request.headers["authorization"] == "Bearer test-token"
+        return httpx.Response(200, json={"rendered": [
+            {"repo_full_name": "firecrawl/anydoc", "rendered_at": "2026-08-07T20:11:00+00:00"},
+        ]})
+
+    assert gateway.fetch_rendered(cfg, client=_client(handler)) == {
+        "firecrawl/anydoc": "2026-08-07",
+    }
+
+
+def test_a_gateway_that_is_down_may_cost_a_repeated_render(cfg):
+    """Empty means "drop nothing", which is how discovery behaved before this
+    endpoint existed. A duplicate render is the worst case, not a broken run."""
+    def handler(request):
+        raise httpx.ConnectError("cluster is down")
+
+    assert gateway.fetch_rendered(cfg, client=_client(handler)) == {}
+
+
+def test_an_old_gateway_without_the_endpoint_is_not_fatal(cfg):
+    handler = lambda request: httpx.Response(404, text="Not Found")  # noqa: E731
+    assert gateway.fetch_rendered(cfg, client=_client(handler)) == {}
+
+
+def test_recording_a_render_sends_the_repo_and_the_folder(cfg):
+    seen = {}
+
+    def handler(request):
+        import json
+
+        assert request.url.path == "/api/rendered"
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, json={"ok": True, "detail": "recorded"})
+
+    assert gateway.register_rendered(
+        "firecrawl/anydoc", cfg, run_folder="2026-08-08/firecrawl-anydoc",
+        client=_client(handler),
+    )
+    assert seen["repo_full_name"] == "firecrawl/anydoc"
+    assert seen["run_folder"] == "2026-08-08/firecrawl-anydoc"
+
+
+def test_a_failed_render_record_never_fails_the_run(cfg):
+    """The video is already on disk. Losing the record costs one repeated
+    render on a later day, which is not worth failing a finished run over."""
+    def handler(request):
+        raise httpx.ConnectError("cluster is down")
+
+    assert gateway.register_rendered("a/b", cfg, client=_client(handler)) is False
+
+
+def test_forgetting_a_render_targets_the_repo_path(cfg):
+    seen = {}
+
+    def handler(request):
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        return httpx.Response(200, json={"ok": True, "detail": "no longer recorded"})
+
+    assert gateway.forget_rendered("firecrawl/anydoc", cfg, client=_client(handler))
+    assert seen == {"method": "DELETE", "path": "/api/rendered/firecrawl/anydoc"}
+
+
+def test_no_gateway_configured_records_no_renders(off):
+    assert gateway.register_rendered("a/b", off) is False
+    assert gateway.fetch_rendered(off) == {}
+    assert gateway.forget_rendered("a/b", off) is False
 
 
 # --- Post registration ------------------------------------------------------
@@ -311,6 +386,55 @@ def test_the_voice_never_reads_two_asks_back_to_back():
 def test_stripping_leaves_a_script_that_never_asked_untouched():
     spoken = "Use it when you are skimming for the command, not reading an essay."
     assert gateway.strip_written_cta(spoken) == spoken
+
+
+def test_a_cue_that_is_only_the_models_ask_is_dropped():
+    """The third channel. Stripping the voiceover and leaving the cue behind
+    leaves an excerpt quoting speech that is never spoken, and one unmatchable
+    cue costs the whole video its word level scene timing."""
+    cues = [
+        VisualCue(kind=CueKind.STAT, spoken_excerpt="No machine learning, so it is fast."),
+        VisualCue(kind=CueKind.REPO_CARD, spoken_excerpt="Comment ANYDOC for the repo."),
+    ]
+    kept = gateway.strip_cta_cues(cues)
+
+    assert len(kept) == 1
+    assert kept[0].spoken_excerpt == "No machine learning, so it is fast."
+
+
+def test_an_ask_riding_on_a_real_cue_loses_only_the_ask():
+    cues = [
+        VisualCue(
+            kind=CueKind.BULLETS,
+            spoken_excerpt="Scanned pages need text recognition. Comment ANYDOC for the link.",
+        )
+    ]
+    kept = gateway.strip_cta_cues(cues)
+
+    assert len(kept) == 1, "the beat it rode on must survive"
+    assert kept[0].spoken_excerpt == "Scanned pages need text recognition."
+
+
+def test_cues_that_never_asked_come_back_unchanged():
+    cues = [
+        VisualCue(kind=CueKind.CODE, spoken_excerpt="Merged cells and footnotes survive."),
+        VisualCue(kind=CueKind.SCREENSHOT, spoken_excerpt=""),
+    ]
+    assert gateway.strip_cta_cues(cues) == cues
+
+
+def test_an_excerptless_cue_keeps_its_place():
+    """`_allocate_frames` gives it a floor weight, so dropping it would silently
+    delete a beat the script asked for."""
+    cues = [VisualCue(kind=CueKind.SCREENSHOT, spoken_excerpt="")]
+    assert len(gateway.strip_cta_cues(cues)) == 1
+
+
+def test_every_cue_reading_as_an_ask_keeps_the_script_intact():
+    """A match that greedy is the matcher being wrong, not the script. A video
+    with no beats at all is worse than one timed by proportional guess."""
+    cues = [VisualCue(kind=CueKind.REPO_CARD, spoken_excerpt="Comment ANYDOC for the repo.")]
+    assert gateway.strip_cta_cues(cues) == cues
 
 
 def test_prose_that_merely_mentions_commenting_is_left_alone(cfg):

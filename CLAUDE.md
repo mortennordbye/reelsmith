@@ -231,6 +231,34 @@ fetch on its way to being dropped.
 - Failure is an empty dict, like the results loop. A gateway that is down, or
   one older than this endpoint, leaves discovery behaving exactly as before.
 
+### Rendered is a second, weaker list
+
+`GET /api/rendered` is the repos a video already exists for, and it is
+deliberately not part of `/api/covered`. A commitment is irreversible and starts
+a 30 day cooldown; a render is neither, and folding the two together would merge
+"I built this and have not watched it yet" into `data/used_repos.json` and block
+the repo for a month. So `fetch_rendered` is read next to `fetch_covered` before
+the first Search call and its repos are dropped for that run only, never written
+down.
+
+- **It exists because rendering is invisible everywhere else.** Nothing marks a
+  repo until publish or enqueue, so a video sitting unqueued on the laptop does
+  not stop discovery ranking its repo again the next morning.
+  `firecrawl/anydoc` was built twice on consecutive days that way, the second
+  time by a batch that had just been told to avoid duplicates.
+- **A table of its own, not another `queued_posts` state.** A render has no
+  uploaded media, no slot, no keyword and no link, so it would be a queue row
+  with all of those null, and the scheduler, `_prune_media` and
+  `live_media_names` would each need to learn to skip it. Every row in the
+  queue is publishable, and that invariant is worth more than the shared table.
+- **`--unmark` deletes it**, in the same breath as clearing the cooldown, since
+  a rejected video usually has both and clearing one leaves the repo invisible
+  with nothing local left to explain why. Rendering staying free to throw away
+  is the rule the whole build step is designed around.
+- The first `rendered_at` survives a re-render, because a repeat is the thing
+  the table exists to prevent and the honest date is the one that already made
+  the repo redundant.
+
 ## The feedback loop
 
 The scriptwriter is shown what this account's own hooks scored, so a script is
@@ -284,7 +312,9 @@ does not apply to the media type.
   folder aside rather than deleting it.
 - `pytest` and `ruff check` before considering a change done.
 - Rendering does not start the repo cooldown. `main.py --posted <owner/repo>`
-  does, and it is deliberately manual so a rejected video costs nothing.
+  does, and it is deliberately manual so a rejected video costs nothing. A
+  finished render does tell the gateway it happened, which is a weaker thing
+  and is undone by `--unmark`; see "Rendered is a second, weaker list".
 - **A batch ranks once, not once per video.** `--batch N` fills the gateway's
   three daily slots from one sitting. It cannot rank per video, because the
   cooldown only starts at publish or enqueue, so a freshly rendered repo is

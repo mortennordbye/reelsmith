@@ -205,6 +205,87 @@ async def test_nothing_committed_is_an_empty_list(client):
     assert await covered(http) == {}
 
 
+# --- Rendered repos, the weaker "do not build that twice" list ------------
+
+
+async def rendered(http) -> dict[str, str]:
+    response = await http.get("/api/rendered", headers=AUTH)
+    assert response.status_code == 200, response.text
+    return {row["repo_full_name"]: row["rendered_at"] for row in response.json()["rendered"]}
+
+
+async def test_rendered_needs_the_bearer_token(client):
+    http, _ = client
+    assert (await http.get("/api/rendered")).status_code == 401
+    assert (await http.post("/api/rendered", json={"repo_full_name": "a/b"})).status_code == 401
+
+
+async def test_a_recorded_render_comes_back(client):
+    http, _ = client
+    body = {"repo_full_name": "firecrawl/anydoc", "run_folder": "2026-08-08/firecrawl-anydoc"}
+    assert (await http.post("/api/rendered", json=body, headers=AUTH)).status_code == 200
+    assert "firecrawl/anydoc" in await rendered(http)
+
+
+async def test_a_render_is_not_a_commitment(client):
+    """The whole reason these are two lists. `/api/covered` is merged into the
+    Mac's cooldown store, and a video nobody has watched yet must not start a
+    30 day block on its repo."""
+    http, _ = client
+    await http.post("/api/rendered", json={"repo_full_name": "firecrawl/anydoc"}, headers=AUTH)
+    assert await covered(http) == {}
+
+
+async def test_rendering_the_same_repo_twice_keeps_the_first_date(client):
+    """A repeat render is the thing this table exists to prevent, so when it
+    happens the honest date is the one that already made the repo redundant."""
+    http, _ = client
+    first = {"repo_full_name": "firecrawl/anydoc", "run_folder": "2026-08-07/firecrawl-anydoc"}
+    await http.post("/api/rendered", json=first, headers=AUTH)
+    was = (await rendered(http))["firecrawl/anydoc"]
+
+    second = {"repo_full_name": "firecrawl/anydoc", "run_folder": "2026-08-08/firecrawl-anydoc"}
+    await http.post("/api/rendered", json=second, headers=AUTH)
+
+    listed = await http.get("/api/rendered", headers=AUTH)
+    rows = listed.json()["rendered"]
+    assert len(rows) == 1, "an upsert, not a second row"
+    assert rows[0]["rendered_at"] == was
+    assert rows[0]["run_folder"] == "2026-08-08/firecrawl-anydoc", "but the folder is the latest"
+
+
+async def test_forgetting_a_render_unblocks_the_repo(client):
+    """--unmark is the undo. Rendering is the one step meant to be free to
+    throw away, so the record of it has to be as cheap to delete."""
+    http, _ = client
+    await http.post("/api/rendered", json={"repo_full_name": "firecrawl/anydoc"}, headers=AUTH)
+    response = await http.delete("/api/rendered/firecrawl/anydoc", headers=AUTH)
+
+    assert response.status_code == 200, response.text
+    assert "no longer recorded" in response.json()["detail"]
+    assert await rendered(http) == {}
+
+
+async def test_forgetting_a_render_that_never_happened_is_not_an_error(client):
+    """--unmark clears the cooldown and calls this in one breath, and most
+    repos it is run on were marked by hand and never rendered here."""
+    http, _ = client
+    response = await http.delete("/api/rendered/some/repo", headers=AUTH)
+
+    assert response.status_code == 200, response.text
+    assert "was not recorded" in response.json()["detail"]
+
+
+async def test_a_render_from_before_the_account_existed_still_lists(client):
+    """A blank owner matches every account. Filtering it out would hide exactly
+    the early records the table was added to keep."""
+    http, app = client
+    await db.record_rendered(app.state.db, repo_full_name="astral-sh/uv", ig_user_id="")
+
+    rows = await db.rendered_repos_list(app.state.db, ACCOUNT)
+    assert [row["repo_full_name"] for row in rows] == ["astral-sh/uv"]
+
+
 # --- Media retention ------------------------------------------------------
 
 

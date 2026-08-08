@@ -33,6 +33,7 @@ from gateway.models import (
     Queued,
     QueueSubmission,
     Registered,
+    RenderedRepo,
 )
 
 log = logging.getLogger(__name__)
@@ -338,6 +339,72 @@ async def list_covered(request: Request, ig_user_id: str | None = None) -> dict:
     """
     rows = await db.covered_repos(request.app.state.db, ig_user_id)
     return {"covered": rows}
+
+
+@router.get("/api/rendered", dependencies=[Depends(require_token)])
+async def list_rendered(request: Request, ig_user_id: str | None = None) -> dict:
+    """Every repo a Reel has already been built for, so the Mac skips rebuilding.
+
+    Separate from `/api/covered` because the two are not the same promise. That
+    one is a commitment and the Mac merges it into the store the cooldown is
+    counted from. This is reversible, costs no cooldown, and exists only to
+    stop a batch spending a script and a render on a video already on disk.
+    """
+    rows = await db.rendered_repos_list(request.app.state.db, ig_user_id)
+    return {
+        "rendered": [
+            {
+                "repo_full_name": row["repo_full_name"],
+                "run_folder": row["run_folder"],
+                "rendered_at": row["rendered_at"],
+            }
+            for row in rows
+        ]
+    }
+
+
+@router.post("/api/rendered", response_model=Registered, dependencies=[Depends(require_token)])
+async def record_rendered(request: Request, body: RenderedRepo) -> Registered:
+    """Note that a Reel for this repo exists, so discovery stops rebuilding it.
+
+    Called when a render finishes, which is earlier and weaker than everything
+    else that writes to this service. Nothing is uploaded, no slot is taken and
+    no cooldown starts. `DELETE` takes it back out when the video is rejected.
+    """
+    await db.record_rendered(
+        request.app.state.db,
+        repo_full_name=body.repo_full_name,
+        ig_user_id=body.ig_user_id,
+        run_folder=body.run_folder,
+    )
+    log.info("Recorded a render of %s (%s)", body.repo_full_name, body.run_folder or "no folder")
+    return Registered(detail=f"{body.repo_full_name} recorded as rendered")
+
+
+@router.delete(
+    "/api/rendered/{owner}/{repo}",
+    response_model=Registered,
+    dependencies=[Depends(require_token)],
+)
+async def forget_rendered(
+    request: Request, owner: str, repo: str, ig_user_id: str | None = None
+) -> Registered:
+    """Forget a render, so a rejected video stops blocking its repo.
+
+    Idempotent, and says which it was. `--unmark` clears the local cooldown and
+    calls this in the same breath, and it must not fail on the common case of a
+    repo that was marked by hand and never rendered here.
+    """
+    full_name = f"{owner}/{repo}"
+    removed = await db.forget_rendered(request.app.state.db, full_name, ig_user_id)
+    log.info("Forgot %d render record(s) for %s", removed, full_name)
+    return Registered(
+        detail=(
+            f"{full_name} is no longer recorded as rendered"
+            if removed
+            else f"{full_name} was not recorded as rendered"
+        )
+    )
 
 
 @router.get("/api/results", dependencies=[Depends(require_token)])
