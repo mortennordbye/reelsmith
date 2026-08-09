@@ -320,6 +320,21 @@ and the base image. Patch and minor updates are grouped into one PR per
 ecosystem per week; `dependabot-auto-merge.yml` turns on auto-merge for those
 and for every security update, and holds routine majors back for a human.
 
+- **Dependabot does not do routine Python updates, and must not be given
+  them back.** Both `requirements.txt` files are `uv pip compile` output, where
+  a pin can exist only because another package demands exactly it. Dependabot
+  edits one line and never re-solves, so it offered pydantic-core 2.47.0
+  against a pydantic pinning `==2.46.4`, and rfc3986 2.0.0 against a csvw
+  pinning `<2`. Both were unsatisfiable and neither was an upgrade that
+  existed. `open-pull-requests-limit: 0` on the two pip entries turns off
+  routine PRs while keeping security ones, and
+  `recompile-python-deps.yml` re-solves the whole set weekly instead.
+- **That workflow dispatches `ci.yml` at its own PR on purpose.** A PR opened
+  with `GITHUB_TOKEN` does not trigger workflows, so the required checks would
+  never appear and the PR would sit blocked forever. `workflow_dispatch` is the
+  documented exception the token may still trigger, and its check runs attach
+  to the head commit, which is what the ruleset reads. Setting a
+  `DEPS_PR_TOKEN` secret makes the dispatch redundant rather than wrong.
 - **The ruleset is the safety, not the workflow.** Auto-merge only asks GitHub
   to merge *when the required checks pass*. `main` requires the CI check, and
   removing that requirement would turn every one of these into an instant
