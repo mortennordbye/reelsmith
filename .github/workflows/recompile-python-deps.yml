@@ -1,0 +1,126 @@
+# Weekly Python dependency upgrade, done by the resolver rather than by hand.
+#
+# This exists because Dependabot cannot safely update either of this repo's
+# requirements.txt files. Both are `uv pip compile` output: a lockfile in all
+# but name, where a pin can be there only because some other package demands
+# exactly it. Dependabot edits one line at a time and never re-solves, so it
+# proposed pydantic-core 2.47.0 against a pydantic that pins ==2.46.4, and
+# rfc3986 2.0.0 against a csvw that pins <2. Both were unsatisfiable and
+# neither was a real upgrade. That is not a bug in Dependabot, it is the wrong
+# tool for a compiled file, and it would have recurred most weeks.
+#
+# So Dependabot's routine pip PRs are turned off (open-pull-requests-limit: 0
+# in dependabot.yml, which leaves its security PRs coming) and this recompiles
+# the whole set instead. uv does the solving, so the result is consistent by
+# construction or it fails here rather than in a PR.
+name: Recompile Python deps
+
+on:
+  schedule:
+    # Mondays 04:00 UTC, ahead of Dependabot's 06:00 Europe/Oslo run for the
+    # other ecosystems, so a green Monday morning means everything at once.
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: recompile-python-deps
+  cancel-in-progress: false
+
+jobs:
+  recompile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      # --python-version rather than the runner's interpreter, so the pins are
+      # resolved for what pyproject requires even if the runner image moves.
+      - name: Recompile
+        run: |
+          uv pip compile pyproject.toml -o requirements.txt \
+            --python-version 3.14 --upgrade
+          uv pip compile gateway/requirements.in -o gateway/requirements.txt \
+            --python-version 3.14 --upgrade
+
+      - name: Anything to do
+        id: diff
+        run: |
+          if git diff --quiet -- requirements.txt gateway/requirements.txt; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Already current."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff --stat -- requirements.txt gateway/requirements.txt
+          fi
+
+      # Prove the resolved set installs and passes before asking anyone to look
+      # at it. A recompile that cannot even install should not become a PR.
+      - name: Verify
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          uv venv --python 3.14
+          uv pip install -r requirements.txt
+          uv pip install -e ".[dev,gateway]"
+          uv run ruff check
+          uv run pytest
+
+      - name: Open PR
+        if: steps.diff.outputs.changed == 'true'
+        id: cpr
+        uses: peter-evans/create-pull-request@v8
+        with:
+          # DEPS_PR_TOKEN is optional. See the dispatch step below for what
+          # changes when it is absent.
+          token: ${{ secrets.DEPS_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: deps/python-recompile
+          delete-branch: true
+          commit-message: "deps(python): recompile requirements against latest"
+          title: "deps(python): recompile requirements against latest"
+          labels: dependencies,python
+          body: |
+            Weekly `uv pip compile --upgrade` of both requirement sets.
+
+            The whole set is re-solved rather than bumped line by line, which
+            is what Dependabot cannot do for a compiled file. Ruff and the full
+            suite already ran against these pins in the job that opened this.
+
+            Auto-merges once the required checks pass.
+
+      # A PR opened with GITHUB_TOKEN does not trigger workflows, by design, so
+      # ci.yml would never run and the required checks would never appear:
+      # the PR would sit blocked forever. workflow_dispatch is the documented
+      # exception that GITHUB_TOKEN may still trigger, and the check runs it
+      # produces attach to the head commit, which is what the ruleset reads.
+      #
+      # With DEPS_PR_TOKEN set this is unnecessary but harmless. Without it,
+      # this is the thing making the PR mergeable at all.
+      - name: Kick CI on the PR branch
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # The branch has to exist on the remote before it can be dispatched.
+          for _ in 1 2 3 4 5; do
+            if gh workflow run ci.yml --ref deps/python-recompile; then
+              echo "Dispatched ci.yml against deps/python-recompile"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::Could not dispatch ci.yml; run it by hand against deps/python-recompile"
+
+      - name: Enable auto-merge
+        if: steps.diff.outputs.changed == 'true' && steps.cpr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.DEPS_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          PR: ${{ steps.cpr.outputs.pull-request-number }}
+        run: gh pr merge --auto --squash "$PR" || echo "::warning::Could not enable auto-merge on #$PR"

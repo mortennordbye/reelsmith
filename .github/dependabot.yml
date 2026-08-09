@@ -13,8 +13,19 @@ version: 2
 
 updates:
   # --- The pipeline -----------------------------------------------------------
-  # requirements.txt is compiled from pyproject.toml and pins every transitive
-  # dependency, so this is where almost every Python advisory will surface.
+  # Security updates only. `open-pull-requests-limit: 0` disables routine
+  # version PRs for an ecosystem while leaving security ones untouched.
+  #
+  # Both requirements.txt files are `uv pip compile` output, and Dependabot
+  # edits a compiled file one pin at a time without re-solving. On this repo
+  # that produced pydantic-core 2.47.0 against a pydantic pinning ==2.46.4, and
+  # rfc3986 2.0.0 against a csvw pinning <2: unsatisfiable, and neither a real
+  # upgrade. recompile-python-deps.yml does the routine work instead, by
+  # re-solving the whole set weekly.
+  #
+  # Security PRs are still worth having despite the same risk, because an
+  # advisory is worth knowing about immediately and CI catches the rare one
+  # that cannot resolve.
   - package-ecosystem: pip
     directory: "/"
     schedule:
@@ -24,19 +35,16 @@ updates:
       timezone: Europe/Oslo
     commit-message:
       prefix: "deps(pipeline)"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     groups:
-      pipeline-routine:
-        applies-to: version-updates
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
       pipeline-security:
         applies-to: security-updates
         patterns: ["*"]
 
   # --- The gateway image's own dependency set ---------------------------------
   # Deliberately separate from the pipeline's. This is the list that ships to a
-  # public registry, so it is the one whose advisories matter most.
+  # public registry, so it is the one whose advisories matter most. Same
+  # security-only arrangement, for the same reason.
   - package-ecosystem: pip
     directory: "/gateway"
     schedule:
@@ -46,12 +54,8 @@ updates:
       timezone: Europe/Oslo
     commit-message:
       prefix: "deps(gateway)"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     groups:
-      gateway-routine:
-        applies-to: version-updates
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
       gateway-security:
         applies-to: security-updates
         patterns: ["*"]

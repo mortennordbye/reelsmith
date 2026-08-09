@@ -94,7 +94,7 @@ multidict==6.7.1
     # via
     #   aiohttp
     #   yarl
-numpy==2.5.1
+numpy==2.5.2
     # via
     #   ctranslate2
     #   kokoro-onnx
