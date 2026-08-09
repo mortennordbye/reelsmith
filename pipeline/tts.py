@@ -137,7 +137,7 @@ class ChatterboxBackend:
     """My own voice, cloned. Runs in a subprocess, deliberately.
 
     Chatterbox needs torch, transformers and `setuptools<81`, while this venv is
-    Python 3.13 on numpy 2.5 with a setuptools that dropped `pkg_resources`.
+    Python 3.14 on numpy 2.5 with a setuptools that dropped `pkg_resources`.
     Merging the two means downgrading a working pipeline to suit a voice, so
     they stay apart and talk over JSON. Same trade as shelling out to the Claude
     CLI rather than taking an SDK dependency.

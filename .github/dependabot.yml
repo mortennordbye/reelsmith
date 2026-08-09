@@ -1,0 +1,135 @@
+# Dependency automation for all five ecosystems in this repo.
+#
+# The goal is that routine upkeep costs no attention: patch and minor updates
+# are grouped into one PR per ecosystem per week and auto-merge themselves once
+# CI is green (see dependabot-auto-merge.yml). Majors always arrive as their
+# own PR and always wait for a human, because a Remotion or FastAPI major is a
+# read-the-changelog event rather than a rubber stamp.
+#
+# Security updates ignore the weekly schedule and open as soon as an advisory
+# lands. They are grouped separately so a security PR is never held up behind a
+# routine bump that happens to be red.
+version: 2
+
+updates:
+  # --- The pipeline -----------------------------------------------------------
+  # requirements.txt is compiled from pyproject.toml and pins every transitive
+  # dependency, so this is where almost every Python advisory will surface.
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Oslo
+    commit-message:
+      prefix: "deps(pipeline)"
+    open-pull-requests-limit: 5
+    groups:
+      pipeline-routine:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      pipeline-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  # --- The gateway image's own dependency set ---------------------------------
+  # Deliberately separate from the pipeline's. This is the list that ships to a
+  # public registry, so it is the one whose advisories matter most.
+  - package-ecosystem: pip
+    directory: "/gateway"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Oslo
+    commit-message:
+      prefix: "deps(gateway)"
+    open-pull-requests-limit: 5
+    groups:
+      gateway-routine:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      gateway-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  # --- Remotion and the render stack ------------------------------------------
+  - package-ecosystem: npm
+    directory: "/video"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Oslo
+    commit-message:
+      prefix: "deps(video)"
+    open-pull-requests-limit: 5
+    groups:
+      # Every @remotion/* package and remotion itself are released as one
+      # version and must move together; split across PRs they would each fail
+      # the bundle step against the others.
+      remotion:
+        applies-to: version-updates
+        patterns: ["remotion", "@remotion/*"]
+      video-routine:
+        applies-to: version-updates
+        patterns: ["*"]
+        exclude-patterns: ["remotion", "@remotion/*"]
+        update-types: ["minor", "patch"]
+      video-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    ignore:
+      # TypeScript 7 is the native port and it does not expose `typescript.sys`,
+      # which is what @remotion/bundler's esbuild loader reads. The project
+      # typechecks clean on 7 and then fails to bundle at all, so 6.0.x is the
+      # ceiling until Remotion ships support. Drop this entry and let CI's
+      # bundle step decide once it does.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+
+  # --- The workflows themselves -----------------------------------------------
+  # A stale action is the quietest supply-chain exposure in the repo, because
+  # nothing about the pipeline or the image reveals it.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Oslo
+    commit-message:
+      prefix: "deps(actions)"
+    groups:
+      actions-routine:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  # --- The base image ---------------------------------------------------------
+  # Both FROM lines are pinned by tag and digest. This is what keeps the digest
+  # from freezing the image on a base that has since been patched, which is the
+  # failure mode digest pinning otherwise introduces.
+  - package-ecosystem: docker
+    directory: "/gateway"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Oslo
+    commit-message:
+      prefix: "deps(image)"
+    groups:
+      image-routine:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      image-security:
+        applies-to: security-updates
+        patterns: ["*"]

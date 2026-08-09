@@ -35,13 +35,38 @@ PRIVATE_DIR="${PRIVATE_DIR:-/mnt/reelsmith}"
 CHECK_ONLY=0
 [[ "${1:-}" == "--check" ]] && CHECK_ONLY=1
 
+# The interpreter pyproject pins. One place, because it appears in the check,
+# the build and the mismatch test below.
+PY_VERSION="3.14"
+
 say()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 have() { [[ -e "$1" ]] && printf '  ok    %s\n' "$2" || printf '  MISS  %s\n' "$2"; }
 
+# Existence is not enough for the venv. An upgrade changes the pinned version
+# while the old venv stays perfectly present, so a check that only asks whether
+# the file is there reports "ok (python 3.14)" at a 3.13 interpreter and the
+# host quietly runs the wrong one against requirements compiled for the new
+# one. Print what is actually installed and say so when it disagrees.
+venv_python_version() {
+  [[ -x "$1" ]] || return 1
+  "$1" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null
+}
+
+have_venv() {
+  local py="$1" want="$2" label="$3" got
+  if ! got="$(venv_python_version "$py")"; then
+    printf '  MISS  %s (python %s)\n' "$label" "$want"
+  elif [[ "$got" == "$want" ]]; then
+    printf '  ok    %s (python %s)\n' "$label" "$got"
+  else
+    printf '  DRIFT %s (python %s, wants %s -- delete it and re-run)\n' "$label" "$got" "$want"
+  fi
+}
+
 if [[ "$CHECK_ONLY" == 1 ]]; then
   say "reelsmith pod setup, current state"
-  have .venv/bin/python                    "pipeline venv (python 3.13)"
-  have tools/chatterbox/.venv/bin/python   "chatterbox venv (python 3.12)"
+  have_venv .venv/bin/python                  "$PY_VERSION" "pipeline venv"
+  have_venv tools/chatterbox/.venv/bin/python "3.12"        "chatterbox venv"
   have video/node_modules/.bin/remotion    "remotion + node deps"
   have .env                                ".env (write by hand, holds secrets)"
   have "$PRIVATE_DIR/PROFILE.md"           "PROFILE.md on $PRIVATE_DIR"
@@ -59,19 +84,30 @@ command -v uv >/dev/null || {
 }
 
 # --- 1. The pipeline itself -------------------------------------------------
-# 3.13 is pinned in pyproject and the base image will not have it; uv fetches a
+# 3.14 is pinned in pyproject and the base image will not have it; uv fetches a
 # standalone build into its cache under $HOME.
-if [[ ! -x .venv/bin/python ]]; then
+#
+# Rebuilt on a version mismatch, not just when missing. Idempotent has to mean
+# "converges on what pyproject pins", otherwise the first Python upgrade leaves
+# every existing host on the old interpreter running requirements compiled for
+# the new one, and nothing here ever says so.
+_have_py="$(venv_python_version .venv/bin/python || true)"
+if [[ -z "$_have_py" ]]; then
   say "1/4  pipeline venv"
-  uv venv --python 3.13 .venv
+  uv venv --python "$PY_VERSION" .venv
+  uv pip install --python .venv/bin/python -r requirements.txt
+elif [[ "$_have_py" != "$PY_VERSION" ]]; then
+  say "1/4  pipeline venv is python $_have_py, rebuilding on $PY_VERSION"
+  rm -rf .venv
+  uv venv --python "$PY_VERSION" .venv
   uv pip install --python .venv/bin/python -r requirements.txt
 else
-  say "1/4  pipeline venv already built"
+  say "1/4  pipeline venv already built (python $_have_py)"
 fi
 
 # --- 2. The voice -----------------------------------------------------------
 # A second interpreter by design: chatterbox wants torch, transformers and
-# setuptools<81, and the pipeline venv is 3.13 on a setuptools that dropped
+# setuptools<81, and the pipeline venv is 3.14 on a setuptools that dropped
 # pkg_resources. See tools/chatterbox/README.md for why they cannot be merged.
 if [[ ! -x tools/chatterbox/.venv/bin/python ]]; then
   say "2/4  chatterbox venv"

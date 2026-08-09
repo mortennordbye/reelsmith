@@ -9,7 +9,7 @@ and the bench used to tune it.
 ## Why it is isolated
 
 Chatterbox needs torch, transformers and `setuptools<81`. The pipeline venv is
-Python 3.13 on numpy 2.5, with a setuptools that no longer ships
+Python 3.14 on numpy 2.5, with a setuptools that no longer ships
 `pkg_resources`. Putting both in one environment means downgrading a working
 pipeline to suit a voice, so the two never meet and talk over JSON instead.
 Same trade as shelling out to the Claude CLI rather than taking an SDK

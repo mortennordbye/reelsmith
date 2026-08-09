@@ -68,6 +68,11 @@ venv/
 .ruff_cache/
 .pytest_cache/
 .mypy_cache/
+# Not the dependency source of truth here: requirements.txt is, compiled from
+# pyproject.toml. A stray uv.lock left behind by `uv run` puts uv into project
+# mode and it re-syncs the venv to the default group, which silently uninstalls
+# the dev extras that ruff and pytest live in.
+uv.lock
 .coverage
 htmlcov/
 

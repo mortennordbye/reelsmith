@@ -2,7 +2,7 @@
 name = "reelsmith"
 version = "0.1.0"
 description = "Automated Instagram Reels pipeline for trending AI/dev tooling"
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.14,<3.15"
 dependencies = [
     "httpx>=0.28",            # GitHub + Hacker News APIs
     "pydantic>=2.9",          # data contracts between every pipeline stage
@@ -27,7 +27,11 @@ dev = [
 # and none of the pipeline's 350 MB of models and browsers belong in it.
 gateway = [
     "fastapi>=0.115",
-    "uvicorn[standard]>=0.32",
+    # Not `[standard]`; see gateway/requirements.in for why the two extras that
+    # matter are named instead.
+    "uvicorn>=0.32",
+    "uvloop>=0.21",
+    "httptools>=0.6",
     "aiosqlite>=0.20",        # one file of state, no ORM
     "prometheus-client>=0.21",
     "python-multipart>=0.0.9", # the cover upload is multipart
@@ -59,7 +63,7 @@ asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 100
-target-version = "py313"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
