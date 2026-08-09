@@ -1,0 +1,32 @@
+# What the gateway image installs, and nothing else. This is the intent file;
+# `requirements.txt` next to it is the compiled, fully pinned result and is what
+# the Dockerfile actually installs. Regenerate after editing this file:
+#
+#     uv pip compile gateway/requirements.in -o gateway/requirements.txt \
+#         --python-version 3.14
+#
+# Deliberately not the project's requirements.txt. That one carries playwright,
+# faster-whisper and the Kokoro runtime, which is several hundred megabytes of
+# things a webhook receiver will never call. The gateway imports nothing from
+# `pipeline/` or `config.py` precisely so this list can stay short.
+httpx>=0.28
+pydantic>=2.9
+pydantic-settings>=2.6
+fastapi>=0.115
+# Not `uvicorn[standard]`. That extra also pulls websockets, watchfiles and
+# pyyaml: the gateway declares no WebSocket route, never runs with --reload,
+# and passes no YAML log config, so all three are about 9 MB of code the image
+# ships and never imports. The two that do earn their place are named
+# explicitly, and uvicorn picks them up exactly as it would via the extra.
+uvicorn>=0.32
+uvloop>=0.21    # the event loop speedup, and the single largest win here
+httptools>=0.6  # the C HTTP parser uvicorn prefers when it is present
+aiosqlite>=0.20
+prometheus-client>=0.21
+python-multipart>=0.0.9
+# The admin UI. Server-rendered, so this is the whole frontend stack.
+jinja2>=3.1
+# zoneinfo reads the system tz database, and python:3.14-slim does not ship
+# one. Without this every named zone falls back to UTC and every slot fires an
+# hour or two from where it was set, which looks like a scheduler bug.
+tzdata>=2024.1

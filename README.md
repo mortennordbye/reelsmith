@@ -23,7 +23,7 @@ is a GitHub token.
 
 ```bash
 # Python side
-uv venv --python 3.13
+uv venv --python 3.14
 uv pip install -r requirements.txt
 .venv/bin/playwright install chromium   # ~95 MB, for the opening screenshot
 
@@ -291,7 +291,7 @@ about 35 seconds of compute per video.
 
 It runs in its own venv under `tools/chatterbox/`, invoked as a subprocess.
 That is deliberate: Chatterbox needs torch, transformers and `setuptools<81`,
-while this project runs Python 3.13 on numpy 2.5, and merging them would mean
+while this project runs Python 3.14 on numpy 2.5, and merging them would mean
 downgrading a working pipeline to suit a voice.
 
 Kokoro (`TTS_BACKEND=kokoro`) remains the fallback and needs no reference

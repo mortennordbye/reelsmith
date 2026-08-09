@@ -51,7 +51,7 @@ recording.
 Three things about it are load bearing:
 
 - **It runs in a subprocess, not this interpreter.** Chatterbox wants torch,
-  transformers and `setuptools<81`; the pipeline venv is Python 3.13 on numpy
+  transformers and `setuptools<81`; the pipeline venv is Python 3.14 on numpy
   2.5 with a setuptools that dropped `pkg_resources`. Merging them means
   downgrading a working pipeline to suit a voice. `pipeline/tts.py` shells out
   to `tools/chatterbox/.venv` and they talk over JSON, the same trade as
@@ -311,6 +311,36 @@ the first three seconds, so it scores the opening alone. It arrives from
 `REELS_METRICS` in `gateway/graph.py`, which are Reels-only and therefore
 requested separately, because Meta fails a whole insights call when one metric
 does not apply to the media type.
+
+## Dependencies
+
+Upkeep is meant to cost no attention. `.github/dependabot.yml` watches all five
+ecosystems: the pipeline's pins, the gateway's pins, `video/`, the workflows,
+and the base image. Patch and minor updates are grouped into one PR per
+ecosystem per week; `dependabot-auto-merge.yml` turns on auto-merge for those
+and for every security update, and holds routine majors back for a human.
+
+- **The ruleset is the safety, not the workflow.** Auto-merge only asks GitHub
+  to merge *when the required checks pass*. `main` requires the CI check, and
+  removing that requirement would turn every one of these into an instant
+  unverified merge. The two are a pair, so do not simplify one without the
+  other.
+- **Both `FROM` lines are pinned by tag and digest**, and the docker ecosystem
+  is what keeps the digest current. A digest pin with nothing updating it
+  freezes the image on a base that has since been patched, which is worse than
+  not pinning at all.
+- **`gateway/requirements.in` is the intent, `gateway/requirements.txt` is the
+  compiled pin set** and the only thing the Dockerfile installs. Edit the `.in`
+  and recompile; editing the `.txt` by hand is undone by the next run.
+- **TypeScript is capped below 7 on purpose.** The native port does not expose
+  `typescript.sys`, which `@remotion/bundler`'s esbuild loader reads, so the
+  project typechecks clean on 7 and then fails to bundle at all. The Dependabot
+  `ignore` entry is what holds it at 6.0.x. This is also why CI bundles as well
+  as typechecks: `tsc` alone is green on the broken combination.
+- **`uvicorn[standard]` is deliberately not used.** It pulls websockets,
+  watchfiles and pyyaml, none of which the gateway imports, and `uvloop` plus
+  `httptools` are named directly instead. That is ~9 MB off an image that goes
+  to a public registry.
 
 ## Working on this repo
 

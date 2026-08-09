@@ -2,7 +2,7 @@
 
 `pipeline/tts.py` invokes this as a subprocess rather than importing it. The
 reason is dependency isolation, not taste: Chatterbox wants torch, transformers
-and `setuptools<81`, while the pipeline venv is Python 3.13 on numpy 2.5 with a
+and `setuptools<81`, while the pipeline venv is Python 3.14 on numpy 2.5 with a
 setuptools that no longer ships `pkg_resources`. Putting both in one
 environment means downgrading a working pipeline to suit a voice, so the two
 never meet. Same reasoning as shelling out to the Claude CLI instead of taking

@@ -40,7 +40,7 @@ have() { [[ -e "$1" ]] && printf '  ok    %s\n' "$2" || printf '  MISS  %s\n' "$
 
 if [[ "$CHECK_ONLY" == 1 ]]; then
   say "reelsmith pod setup, current state"
-  have .venv/bin/python                    "pipeline venv (python 3.13)"
+  have .venv/bin/python                    "pipeline venv (python 3.14)"
   have tools/chatterbox/.venv/bin/python   "chatterbox venv (python 3.12)"
   have video/node_modules/.bin/remotion    "remotion + node deps"
   have .env                                ".env (write by hand, holds secrets)"
@@ -59,11 +59,11 @@ command -v uv >/dev/null || {
 }
 
 # --- 1. The pipeline itself -------------------------------------------------
-# 3.13 is pinned in pyproject and the base image will not have it; uv fetches a
+# 3.14 is pinned in pyproject and the base image will not have it; uv fetches a
 # standalone build into its cache under $HOME.
 if [[ ! -x .venv/bin/python ]]; then
   say "1/4  pipeline venv"
-  uv venv --python 3.13 .venv
+  uv venv --python 3.14 .venv
   uv pip install --python .venv/bin/python -r requirements.txt
 else
   say "1/4  pipeline venv already built"
@@ -71,7 +71,7 @@ fi
 
 # --- 2. The voice -----------------------------------------------------------
 # A second interpreter by design: chatterbox wants torch, transformers and
-# setuptools<81, and the pipeline venv is 3.13 on a setuptools that dropped
+# setuptools<81, and the pipeline venv is 3.14 on a setuptools that dropped
 # pkg_resources. See tools/chatterbox/README.md for why they cannot be merged.
 if [[ ! -x tools/chatterbox/.venv/bin/python ]]; then
   say "2/4  chatterbox venv"
