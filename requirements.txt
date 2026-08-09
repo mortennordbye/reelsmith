@@ -150,7 +150,7 @@ referencing==0.37.0
     #   jsonschema-specifications
 regex==2026.7.19
     # via segments
-rfc3986==1.5.0
+rfc3986==2.0.0
     # via csvw
 rich==15.0.0
     # via
