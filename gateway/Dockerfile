@@ -58,11 +58,20 @@ ENV GATEWAY_DB_PATH=/state/gateway.sqlite3 \
     GATEWAY_COVERS_DIR=/state/covers
 
 # Nothing in here needs root, and the SQLite file lives on a mount that the
-# cluster will own. One layer, because each RUN is a layer and these three
-# facts are one decision.
+# cluster will own. One layer, because each RUN is a layer and these facts are
+# one decision.
+#
+# pip goes too. The venv was built by uv in the builder stage and nothing at
+# runtime installs anything, but the base image's pip vendors its own copies of
+# setuptools and msgpack, and a scanner reads those as two HIGH findings
+# against a public image. Deleting it removes the findings and the ~7 MB rather
+# than explaining every quarter why they do not apply. The glob rather than a
+# literal python3.14 path, because Dependabot moves this base and a hardcoded
+# version would silently stop matching.
 RUN useradd --create-home --uid 10001 gateway \
  && mkdir -p /state/covers \
- && chown -R gateway:gateway /state
+ && chown -R gateway:gateway /state \
+ && rm -rf /usr/local/lib/python3.*/site-packages/pip* /usr/local/bin/pip*
 USER 10001
 
 EXPOSE 8000
