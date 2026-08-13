@@ -169,6 +169,42 @@ be a local path. Without it the thumbnail comes from `thumb_offset` at
 `COVER_FRAME`, which is the same moment `cover.png` renders, so the fallback
 loses the hook band and nothing else.
 
+### The nightly run is not in this repo
+
+`launchd/` is the Mac story and drives nothing on the Linux host. There the
+02:00 run is a scheduled agent session whose whole behaviour is one prompt,
+held outside git, so looking for the schedule in this checkout finds nothing
+and editing this checkout cannot change what fires tonight. Anything about it
+that is worth knowing has to be written down here instead, which is what this
+section is.
+
+- **It arms what it renders.** The nightly enqueues with `--approve`, so a
+  finished Reel goes straight into the gateway's schedule and the next free
+  slot publishes it. The alternative was a draft, which waits for somebody to
+  watch it, and a draft queued at 02:00 waits until somebody remembers it
+  exists. Three slots a day drain a queue faster than anyone reliably reviews
+  one.
+- **It renders four a night against three slots, up to a queue of ten.**
+  `--batch 4 --max-queue 10`, and the surplus is the point: the queue is meant
+  to sit about three days deep so a night that produces nothing is absorbed
+  rather than showing up as a gap on the feed. A power cut, a wedged pod, or
+  four scripts that all trip the dash validator then costs the account nothing.
+  Because `--max-queue` clamps the batch to the room left, most nights render
+  one or two and stop on their own. A ten-post queue is the case
+  `db.live_media_names` already exists to protect, so nothing on the gateway
+  side has to change to hold one.
+- **Cancelling is the only review left.** Nothing reads the script before it
+  goes live. The validators still catch dashes and hype vocabulary; they cannot
+  catch a claim that is wrong about the project. Cancelling in the admin UI
+  before the slot fires is the veto, and `--unmark <owner/repo>` afterwards, so
+  a bad video does not also burn its repo for 30 days.
+- **`--snapshot` runs first and unconditionally**, ahead of any render, because
+  velocity is 55 percent of the ranking score and a missing day cannot be
+  backfilled. The `--max-queue` ceiling stops the batch before discovery would
+  have recorded anything, so a quiet night still has to take the snapshot.
+- **The ceiling stopping the batch is the normal outcome**, not a failure to
+  investigate and not something to compensate for by rendering by hand.
+
 ## The gateway
 
 `gateway/` is a separate FastAPI service, not a pipeline stage. It turns
