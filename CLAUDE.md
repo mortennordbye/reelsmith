@@ -184,6 +184,15 @@ section is.
   watch it, and a draft queued at 02:00 waits until somebody remembers it
   exists. Three slots a day drain a queue faster than anyone reliably reviews
   one.
+- **It renders four a night against three slots, up to a queue of ten.**
+  `--batch 4 --max-queue 10`, and the surplus is the point: the queue is meant
+  to sit about three days deep so a night that produces nothing is absorbed
+  rather than showing up as a gap on the feed. A power cut, a wedged pod, or
+  four scripts that all trip the dash validator then costs the account nothing.
+  Because `--max-queue` clamps the batch to the room left, most nights render
+  one or two and stop on their own. A ten-post queue is the case
+  `db.live_media_names` already exists to protect, so nothing on the gateway
+  side has to change to hold one.
 - **Cancelling is the only review left.** Nothing reads the script before it
   goes live. The validators still catch dashes and hype vocabulary; they cannot
   catch a claim that is wrong about the project. Cancelling in the admin UI
