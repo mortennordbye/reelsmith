@@ -439,15 +439,21 @@ and for every security update, and holds routine majors back for a human.
   symlink: `StarHistory.save()` renames a temp file over the target, and that
   rename replaces a file symlink with a real file, so per-file links silently
   send writes to local disk instead of the share.
-- **The cover screenshot needs playwright's own chromium, and only its own.**
-  Playwright resolves a build number pinned to its version, so a host can carry
-  a perfectly good chromium from some other tool and still have none this will
-  launch. `capture_repo` treats a failure as optional and logs it, `renderer`
+- **A drifted venv shows up as a missing browser, not as a version error.**
+  Playwright resolves a chromium build number pinned to its own version, so a
+  venv one release behind `requirements.txt` asks for build 1228 while the host
+  holds the 1234 the pinned version wants, and refuses to launch a chromium it
+  did not pin. `capture_repo` treats that as optional and logs it, `renderer`
   falls back to the repo card, and the run finishes green having dropped the
-  README hero, which is the whole reason the cover exists. That ran unnoticed
-  on the Linux host until a cover was looked at, so `pod-setup.sh` installs the
-  browser as a step of its own and `--check` asks playwright which path it
-  wants rather than whether some chromium exists.
+  README hero, which is the whole reason the cover exists. Every Linux render
+  did that unnoticed until a cover was looked at. Two guards, because the
+  symptom pointed nowhere near the cause: `pod-setup.sh` installs the browser
+  as a step of its own, and `--check` asks playwright which path it wants
+  rather than whether some chromium exists.
+- **`--check` reporting DRIFT is not cosmetic.** The venv it names is the one
+  that renders tonight, and the failure above is what drift actually looked
+  like from the outside: a warning in a log nobody reads, on a run that exits
+  zero. Re-run `pod-setup.sh` when it says so; it rebuilds on mismatch.
 - **A scheduled render needs a ceiling.** `--max-queue N` asks the gateway how
   many posts are already waiting and skips the batch when the line is at least
   that long, because three slots a day drain slower than a nightly job fills.
