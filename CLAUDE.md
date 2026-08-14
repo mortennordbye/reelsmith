@@ -420,7 +420,14 @@ and for every security update, and holds routine majors back for a human.
   there and mirror it in `video/src/schema.ts`.
 - Stages re-use artifacts already on disk. To force a regeneration, move the run
   folder aside rather than deleting it.
-- `pytest` and `ruff check` before considering a change done.
+- `pytest` and `ruff check` before considering a change done. Neither is in the
+  venv on a render host: `pod-setup.sh` installs `requirements.txt`, which is
+  the runtime set, and adding unpinned test tooling to a compiled pin set is
+  how the CUDA torch got in. Run them alongside it instead, with
+  `uvx ruff check .` and `uv run --with pytest pytest`. The gateway suite needs
+  `fastapi` and `aiosqlite`, which the pipeline venv deliberately lacks, so on
+  a render host it is `pytest --ignore-glob="tests/test_gateway_*"`; CI runs
+  the whole thing.
 - Rendering does not start the repo cooldown. `main.py --posted <owner/repo>`
   does, and it is deliberately manual so a rejected video costs nothing. A
   finished render does tell the gateway it happened, which is a weaker thing
