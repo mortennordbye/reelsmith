@@ -66,6 +66,7 @@ python main.py --repo astral-sh/uv    # skip discovery, use a specific repo
 python main.py --stop-after script    # stop early to inspect an artifact
 python main.py --no-research          # skip Claude's web search (faster)
 python main.py --resume 2026-07-30/astral-sh-uv   # re-render from artifacts
+python main.py --recover --approve    # finish and queue what a killed batch left
 
 python main.py --post                     # render, then publish it unattended
 python main.py --publish 2026-07-30/astral-sh-uv   # publish a run you approved
@@ -369,6 +370,14 @@ rather than failing the run.
   same winner every time, because nothing marks a repo as taken until it is
   published or queued, and a batch is neither. One repo failing drops one
   video rather than the whole day.
+- **`--recover` finishes a batch that never reached its end.** A scheduled
+  render can lose its process to something outside it, and the work already on
+  disk is then worth more than the run that produced it. The sweep takes the
+  last two days of `build/`, gives each unfinished folder the stages it still
+  owes, and queues anything with a video and no receipt. It writes no script
+  and asks GitHub for nothing, so recovering is always cheaper than rendering
+  again, and a run already carrying a receipt is skipped, so running it twice
+  is free.
 - **`video/public/` is a staging area, not a store.** Remotion can only load
   assets from there, so each render copies its audio and screenshot in and
   prunes the previous run's. Everything in it is regenerated from `build/`.
