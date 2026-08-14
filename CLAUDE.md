@@ -204,6 +204,27 @@ section is.
   have recorded anything, so a quiet night still has to take the snapshot.
 - **The ceiling stopping the batch is the normal outcome**, not a failure to
   investigate and not something to compensate for by rendering by hand.
+- **The batch is not guaranteed to reach its own last step.** It runs inside
+  the verksted session container, which is capped at 8 GiB, and chatterbox
+  holds about 4 GiB while it speaks against a baseline that climbs through a
+  batch. On 2026-08-14 the third video's TTS crossed the limit at 02:33, the
+  OOM killer took the container, and with it the batch, the session, and
+  `/tmp/nightly.log`. One finished video survived because it was already on
+  disk; a script that had been researched and paid for did not get used.
+- **So queueing is `--recover`, not a list of `--enqueue` lines.** The nightly
+  ends with `--recover --approve --max-queue 10`, which sweeps the last two
+  days of build folders and finishes whatever each one still owes. It is what
+  makes the run idempotent: interrupted anywhere, the next pass picks the work
+  up rather than abandoning it. `queued.json`/`published.json` make it safe to
+  run twice, a dot in a folder name keeps it away from a render a human moved
+  aside, and it never writes a script, so a folder holding only `repo.json` is
+  reported and left for discovery to decide about.
+- **A second session runs the same sweep at 05:00**, because the failure being
+  covered is the one that kills the session that would otherwise recover from
+  it. A morning with nothing to recover is silent; one that recovers something
+  reports "attention", since the video is safe but the night was not.
+- **The batch log lives in `build/`, not `/tmp`.** The container restart that
+  makes the log worth reading is the same event that deletes it.
 
 ## The gateway
 
@@ -418,11 +439,21 @@ and for every security update, and holds routine majors back for a human.
   symlink: `StarHistory.save()` renames a temp file over the target, and that
   rename replaces a file symlink with a real file, so per-file links silently
   send writes to local disk instead of the share.
+- **The cover screenshot needs playwright's own chromium, and only its own.**
+  Playwright resolves a build number pinned to its version, so a host can carry
+  a perfectly good chromium from some other tool and still have none this will
+  launch. `capture_repo` treats a failure as optional and logs it, `renderer`
+  falls back to the repo card, and the run finishes green having dropped the
+  README hero, which is the whole reason the cover exists. That ran unnoticed
+  on the Linux host until a cover was looked at, so `pod-setup.sh` installs the
+  browser as a step of its own and `--check` asks playwright which path it
+  wants rather than whether some chromium exists.
 - **A scheduled render needs a ceiling.** `--max-queue N` asks the gateway how
   many posts are already waiting and skips the batch when the line is at least
   that long, because three slots a day drain slower than a nightly job fills.
   An unreachable gateway is refusal, not zero: the two are opposite answers and
-  guessing wrong costs a batch.
+  guessing wrong costs a batch. `--recover` honours the same ceiling and makes
+  the same refusal, because it runs after something has already gone wrong.
 - **This repo is public.** `PROFILE.md`, `PLAN.md`, `.env`, `data/` and the
   voice recording are gitignored and hold the private half. Before adding a
   file, decide which half it belongs to. `scripts/backup-secrets.sh` backs up

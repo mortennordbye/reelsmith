@@ -9,6 +9,7 @@
     python main.py --publish 2026-07-30/astral-sh-uv  publish a run you approved
 
     python main.py --batch 3            render the top 3 repos in one sitting
+    python main.py --recover            finish and queue what a killed batch left behind
 
     python main.py --candidates         rank today's repos, generate nothing
     python main.py --covered            list every repo already made into a Reel
@@ -28,7 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
@@ -134,6 +135,10 @@ def run(
         int | None,
         typer.Option("--max-queue", help="Skip the batch when this many posts are already waiting"),
     ] = None,
+    recover: Annotated[
+        bool,
+        typer.Option("--recover", help="Finish and queue any run a killed batch left half-built"),
+    ] = False,
     posted: Annotated[
         str | None,
         typer.Option("--posted", help="Mark a repo as posted, starting its cooldown"),
@@ -279,6 +284,13 @@ def run(
         out = cfg.build_dir / f"voice-preview-{tts.voice_name(cfg)}{tts.audio_suffix(cfg)}"
         tts.synthesize(sample, out, cfg)
         console.print(f"[bold green]Preview:[/] {out}")
+        return
+
+    if recover:
+        # No GitHub and no Claude: recovery re-runs stages, it never decides to
+        # spend. A run with no script is reported and left for discovery.
+        _preflight(need_github=False, need_claude=False, need_instagram=post)
+        _recover(cfg, approve=approve, max_queue=max_queue)
         return
 
     if batch is not None:
@@ -639,6 +651,130 @@ def _run_batch(
             "[dim]Watch each one first. --enqueue starts the cooldown, because a queued "
             "post goes out days later with nobody here to catch it.[/]"
         )
+
+
+# Today and yesterday. An unfinished render older than that is stale news, and
+# posting a two week old "trending" repo is worse than dropping it.
+_RECOVER_DAYS = 2
+
+
+def _recover(cfg: Settings, *, approve: bool, max_queue: int | None) -> None:
+    """Finish what a killed run left behind.
+
+    The nightly renders inside a container that can go away mid-batch. On
+    2026-08-14 the voice model took it past its 8 GiB limit and the OOM killer
+    took the session with it, three stages into the third video; the script was
+    on disk and paid for, the batch process was not. Nothing picks that up,
+    because the thing that would have is what died.
+
+    So this is a separate pass over what is already on disk. No discovery, no
+    ranking, no Claude: it only runs the stages a half-finished folder still
+    owes, and hands the result to the gateway. Run it after the batch, and
+    again from somewhere that was not inside the batch.
+
+    Narrow on purpose, because the build tree is full of videos that were never
+    meant to ship:
+
+    - `queued.json` or `published.json` means the run is committed already, and
+      those are the same two guards `--enqueue` and `--publish` read.
+    - A dot in the folder name (`.prev`, `.v2`) means a person moved it aside,
+      which is the documented way to reject a render. `RepoCandidate.slug`
+      turns every dot into a hyphen, so a dot can only have come from a human.
+    - A repo already on the cooldown list shipped from some other folder. The
+      receipt is per folder and cannot see a sibling, and the cooldown can.
+    - No `script.json` means the run died before Claude answered. Writing one
+      now is discovery's decision to spend, not recovery's, so it is reported
+      and left.
+    """
+    if not cfg.build_dir.is_dir():
+        console.print("[dim]Nothing built yet.[/]")
+        return
+
+    # The ceiling matters more here than in a batch: recovery is the path that
+    # runs when something already went wrong, and a pass that queues four days
+    # of salvage into three slots a day is its own outage.
+    room: int | None = None
+    if max_queue is not None:
+        pending = gateway.fetch_pending_count(cfg)
+        if pending is None:
+            console.print(
+                "[yellow]Cannot read the gateway queue, so --max-queue cannot be honoured.[/] "
+                "[dim]Refusing rather than guessing.[/]"
+            )
+            return
+        room = max_queue - pending
+        if room <= 0:
+            console.print(
+                f"[bold]Nothing to do.[/] {pending} posts already waiting "
+                f"[dim](--max-queue {max_queue}).[/]"
+            )
+            return
+
+    stamps = {
+        (date.today() - timedelta(days=n)).isoformat() for n in range(_RECOVER_DAYS)
+    }
+    covered = {name for name, _ in scraper.covered_repos(cfg)}
+
+    pending_runs: list[Path] = []
+    for day_dir in sorted(p for p in cfg.build_dir.iterdir() if p.name in stamps):
+        for run_dir in sorted(p for p in day_dir.iterdir() if p.is_dir()):
+            if "." in run_dir.name:
+                continue
+            if (run_dir / "queued.json").exists() or (run_dir / "published.json").exists():
+                continue
+            if not (run_dir / "repo.json").exists():
+                continue
+            pending_runs.append(run_dir)
+
+    if not pending_runs:
+        console.print("[bold green]Nothing to recover.[/] [dim]Every recent run is committed.[/]")
+        return
+
+    console.rule(f"[bold]Recovering {len(pending_runs)} unfinished run(s)")
+    recovered: list[Path] = []
+    skipped: list[tuple[Path, str]] = []
+
+    for run_dir in pending_runs:
+        rel = f"{run_dir.parent.name}/{run_dir.name}"
+        repo = RepoCandidate.model_validate_json((run_dir / "repo.json").read_text())
+
+        if repo.full_name in covered:
+            skipped.append((run_dir, "repo already on cooldown from another run"))
+            continue
+        if room is not None and len(recovered) >= room:
+            skipped.append((run_dir, "queue ceiling reached"))
+            continue
+
+        if not (run_dir / "out.mp4").exists():
+            if not (run_dir / "script.json").exists():
+                skipped.append((run_dir, "no script; would need a fresh Claude run"))
+                continue
+            console.rule(f"[dim]finishing {repo.full_name}")
+            try:
+                if _render_one(cfg, repo, run_dir) is None:
+                    skipped.append((run_dir, "render produced nothing"))
+                    continue
+            except Exception as exc:  # noqa: BLE001 -- one bad run must not end the sweep
+                log.exception("Recovering %s failed", rel)
+                skipped.append((run_dir, f"{type(exc).__name__}: {exc}"))
+                continue
+
+        try:
+            _enqueue_run(cfg, run_dir, approved=approve)
+        except typer.Exit:
+            # _enqueue_run already said why. A failure to hand it over leaves
+            # the video on disk with no receipt, which is exactly the state
+            # this pass exists to find, so the next one tries again.
+            skipped.append((run_dir, "gateway would not take it"))
+            continue
+        recovered.append(run_dir)
+        covered.add(repo.full_name)
+
+    console.rule("[bold green]Recovery done" if not skipped else "[bold yellow]Recovery done")
+    for run_dir in recovered:
+        console.print(f"  [green]✓[/] {run_dir.parent.name}/{run_dir.name}  [dim]queued[/]")
+    for run_dir, why in skipped:
+        console.print(f"  [dim]·[/] {run_dir.parent.name}/{run_dir.name}  [dim]{why}[/]")
 
 
 def _show_covered(cfg: Settings) -> None:

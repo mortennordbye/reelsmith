@@ -63,11 +63,30 @@ have_venv() {
   fi
 }
 
+# Same lesson as the venv: the browser being on the host is not the question.
+# Playwright resolves a build number pinned to its own version, so a host can
+# hold a perfectly good chromium from some other tool and still have none that
+# this one will launch. Ask playwright which path it wants and test that.
+have_browser() {
+  local path
+  path="$(.venv/bin/python -c 'from playwright.sync_api import sync_playwright
+with sync_playwright() as p: print(p.chromium.executable_path)' 2>/dev/null)" || {
+    printf '  MISS  chromium for the README screenshot (playwright not installed)\n'
+    return
+  }
+  if [[ -x "$path" ]]; then
+    printf '  ok    chromium for the README screenshot\n'
+  else
+    printf '  MISS  chromium for the README screenshot (wants %s)\n' "$path"
+  fi
+}
+
 if [[ "$CHECK_ONLY" == 1 ]]; then
   say "reelsmith pod setup, current state"
   have_venv .venv/bin/python                  "$PY_VERSION" "pipeline venv"
   have_venv tools/chatterbox/.venv/bin/python "3.12"        "chatterbox venv"
   have video/node_modules/.bin/remotion    "remotion + node deps"
+  have_browser
   have .env                                ".env (write by hand, holds secrets)"
   have "$PRIVATE_DIR/PROFILE.md"           "PROFILE.md on $PRIVATE_DIR"
   have "$PRIVATE_DIR/ref/morten.wav"       "voice recording on $PRIVATE_DIR"
@@ -93,16 +112,16 @@ command -v uv >/dev/null || {
 # the new one, and nothing here ever says so.
 _have_py="$(venv_python_version .venv/bin/python || true)"
 if [[ -z "$_have_py" ]]; then
-  say "1/4  pipeline venv"
+  say "1/5  pipeline venv"
   uv venv --python "$PY_VERSION" .venv
   uv pip install --python .venv/bin/python -r requirements.txt
 elif [[ "$_have_py" != "$PY_VERSION" ]]; then
-  say "1/4  pipeline venv is python $_have_py, rebuilding on $PY_VERSION"
+  say "1/5  pipeline venv is python $_have_py, rebuilding on $PY_VERSION"
   rm -rf .venv
   uv venv --python "$PY_VERSION" .venv
   uv pip install --python .venv/bin/python -r requirements.txt
 else
-  say "1/4  pipeline venv already built (python $_have_py)"
+  say "1/5  pipeline venv already built (python $_have_py)"
 fi
 
 # --- 2. The voice -----------------------------------------------------------
@@ -110,12 +129,12 @@ fi
 # setuptools<81, and the pipeline venv is 3.14 on a setuptools that dropped
 # pkg_resources. See tools/chatterbox/README.md for why they cannot be merged.
 if [[ ! -x tools/chatterbox/.venv/bin/python ]]; then
-  say "2/4  chatterbox venv"
+  say "2/5  chatterbox venv"
   uv venv --python 3.12 tools/chatterbox/.venv
   VIRTUAL_ENV=tools/chatterbox/.venv uv pip install \
     chatterbox-tts soundfile "setuptools<81"
 else
-  say "2/4  chatterbox venv already built"
+  say "2/5  chatterbox venv already built"
 fi
 
 # Checked every run rather than only on a fresh venv, because chatterbox-tts
@@ -139,13 +158,28 @@ fi
 
 # --- 3. The renderer --------------------------------------------------------
 if [[ ! -e video/node_modules/.bin/remotion ]]; then
-  say "3/4  remotion and node deps"
+  say "3/5  remotion and node deps"
   (cd video && npm ci)
 else
-  say "3/4  remotion already installed"
+  say "3/5  remotion already installed"
 fi
 
-# --- 4. The private half ----------------------------------------------------
+# --- 4. The browser that takes the README screenshot ------------------------
+# The cover is the README hero, so this is not an optional extra: without it
+# `screenshot.capture_repo` logs a warning, `renderer` falls back to the repo
+# card, and the run finishes green having shipped the one thing the cover
+# exists to show. That is exactly what happened on this host, unnoticed, until
+# a cover was looked at.
+#
+# Run unconditionally: playwright prints "is already installed" and exits, and
+# it re-resolves the build its own version pins, so a dependency bump that
+# moves chromium from 1228 to 1234 is repaired by re-running rather than by
+# somebody reading a log. Do not substitute another chromium already on the
+# host; playwright will not launch a build it did not pin.
+say "4/5  chromium for the README screenshot"
+.venv/bin/python -m playwright install chromium
+
+# --- 5. The private half ----------------------------------------------------
 # config.py resolves data/ and PROFILE.md relative to the repo root and offers
 # no override, so the mount is linked into place rather than pointed at.
 #
@@ -153,7 +187,7 @@ fi
 # temp file and renames it over the target, and that rename would replace a
 # file symlink with a real file, silently writing to local disk instead of the
 # share. morten.wav is read-only input, so a file symlink is safe there.
-say "4/4  linking the private half from $PRIVATE_DIR"
+say "5/5  linking the private half from $PRIVATE_DIR"
 if [[ -d "$PRIVATE_DIR" ]]; then
   [[ -e "$PRIVATE_DIR/PROFILE.md" ]] && ln -sfn "$PRIVATE_DIR/PROFILE.md" PROFILE.md
   [[ -e "$PRIVATE_DIR/ref/morten.wav" ]] &&
