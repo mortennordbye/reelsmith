@@ -107,6 +107,21 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # No provenance attestation, and this is what makes the prune below
+          # safe. With it on, buildx pushes an index manifest whose children
+          # are the image and an untagged attestation. The prune deletes
+          # untagged versions, takes the attestation with it, and leaves the
+          # tag pointing at a manifest that no longer resolves.
+          #
+          # Kargo's Warehouse then fails discovery on that one tag and stops
+          # promoting anything at all. That is how 0.0.1 through 0.0.12 were
+          # broken, and why nothing this repo built between 0.0.22 and 0.0.29
+          # ever reached the cluster while every build reported success.
+          #
+          # Off rather than teaching the prune to spare attestations, because
+          # nothing here consumes provenance and one manifest per tag has no
+          # children to lose in the first place.
+          provenance: false
 
   prune:
     name: Prune old images
