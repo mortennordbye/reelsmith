@@ -109,6 +109,11 @@ class QueueSubmission(BaseModel):
     video_name: str = Field(min_length=1)
     cover_name: str | None = None
     caption: str = ""
+    # Required by YouTube, meaningless on Instagram, and built on the Mac where
+    # the hook and the wording rules live. Capped at what YouTube accepts so a
+    # too-long title is a validation error naming the field rather than a
+    # rejected upload days later.
+    title: str = Field(default="", max_length=100)
     keyword: str = "send"
     link: str = Field(min_length=1)
     repo_full_name: str | None = None

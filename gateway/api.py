@@ -330,6 +330,7 @@ async def enqueue(request: Request, body: QueueSubmission) -> Queued:
         repo_full_name=body.repo_full_name,
         approved=body.approved,
         slot_override=body.slot_override,
+        title=body.title,
     )
     state = db.QUEUE_APPROVED if body.approved else db.QUEUE_DRAFT
     detail = (

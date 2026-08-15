@@ -963,11 +963,22 @@ def _enqueue_run(cfg: Settings, run_dir: Path, *, approved: bool) -> None:
         )
         raise typer.Exit(1)
 
+    youtube_result = _enqueue_youtube(
+        cfg,
+        run_dir,
+        video_name=video_url.rsplit("/", 1)[-1],
+        link=repo.url if repo else "",
+        caption=caption,
+        repo_full_name=repo.full_name if repo else None,
+        approved=approved,
+    )
+
     queue_receipt.write_text(
         json.dumps(
             {
                 "id": result.get("id"),
                 "state": result.get("state"),
+                "youtube_id": youtube_result.get("id") if youtube_result else None,
                 "queued_at": datetime.now(UTC).isoformat(),
                 "repo": repo.full_name if repo else None,
             },
@@ -991,6 +1002,66 @@ def _enqueue_run(cfg: Settings, run_dir: Path, *, approved: bool) -> None:
             "[yellow]No repo.json in this run, so no cooldown was started.[/] "
             "[dim]Run --posted <owner/repo> by hand.[/]"
         )
+
+
+def _enqueue_youtube(
+    cfg: Settings,
+    run_dir: Path,
+    *,
+    video_name: str,
+    link: str,
+    caption: str,
+    repo_full_name: str | None,
+    approved: bool,
+) -> dict | None:
+    """Queue the same render on the YouTube channel, if one is configured.
+
+    The MP4 is already uploaded and `/api/media` names files by their own
+    digest, so both rows point at one file and nothing is sent twice.
+
+    **Best effort, and loudly so.** The Reel is the primary surface and its row
+    is already committed by the time this runs, so a YouTube failure must not
+    fail the command or strand the Instagram post. But a channel that quietly
+    stops receiving videos looks exactly like a channel nobody is posting to,
+    which is why this says what went wrong rather than returning None in
+    silence.
+    """
+    if not cfg.youtube_channel_id:
+        return None
+
+    script_path = run_dir / "script.json"
+    if not script_path.exists():
+        console.print(
+            "[yellow]No script.json, so no YouTube title.[/] "
+            "[dim]The Reel is queued; the Short is not.[/]"
+        )
+        return None
+    title = VideoScript.model_validate_json(script_path.read_text()).hook
+
+    result = gateway.enqueue(
+        video_name,
+        link,
+        cfg,
+        caption=gateway.youtube_description(caption, link),
+        cover_name=None,
+        repo_full_name=repo_full_name,
+        approved=approved,
+        account=cfg.youtube_channel_id,
+        title=title,
+    )
+    if result is None:
+        console.print(
+            "[yellow]The gateway would not take the YouTube row.[/] "
+            "[dim]The Reel is queued and the cooldown has started, so re-running "
+            "--enqueue will not retry it. Queue it by hand in the admin UI.[/]"
+        )
+        return None
+
+    console.print(
+        f"[bold green]Queued on YouTube[/] as #{result.get('id')} "
+        f"[dim]({result.get('detail')})[/]"
+    )
+    return result
 
 
 def _finish(run_dir: Path | None) -> None:

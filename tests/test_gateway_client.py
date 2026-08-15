@@ -7,6 +7,8 @@ keyword, never a video that already rendered.
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -589,3 +591,69 @@ def test_a_polled_post_still_says_watching(cfg, caplog):
         )
 
     assert "watching m1 for" in caplog.text
+
+
+# --- The YouTube description ------------------------------------------------
+
+
+def test_the_youtube_description_replaces_the_ask_with_the_link():
+    """The keyword mechanic has no equivalent there. A description telling
+    people to comment for a link is a promise nothing can keep."""
+    caption = (
+        "tf.lite is being removed from future TensorFlow packages.\n"
+        "\n"
+        "Comment TENSORFLOW if you want the link.\n"
+        "\n"
+        "#tensorflow #mlops"
+    )
+
+    out = gateway.youtube_description(caption, "https://github.com/tensorflow/tensorflow")
+
+    assert "Comment" not in out
+    assert "Repo: https://github.com/tensorflow/tensorflow" in out
+    # Hashtags stay last: YouTube shows the first three above the title.
+    assert out.endswith("#tensorflow #mlops")
+
+
+def test_the_youtube_description_survives_a_caption_with_no_hashtags():
+    out = gateway.youtube_description("One line and nothing else.", "https://example.test/x")
+
+    assert out == "One line and nothing else.\n\nRepo: https://example.test/x"
+
+
+# --- Choosing a destination -------------------------------------------------
+
+
+def test_enqueue_defaults_to_the_instagram_account(cfg):
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, json={"id": 1, "state": "draft"})
+
+    gateway.enqueue("v.mp4", "https://github.com/a/b", cfg, client=_client(handler))
+
+    assert seen["ig_user_id"] == cfg.ig_user_id
+    assert seen["title"] == ""
+
+
+def test_enqueue_can_target_a_channel_instead(cfg):
+    """The same video going to both is two calls, because the two rows are
+    approved, held and cancelled independently."""
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, json={"id": 2, "state": "approved"})
+
+    gateway.enqueue(
+        "v.mp4",
+        "https://github.com/a/b",
+        cfg,
+        client=_client(handler),
+        account="UCq0Ff3lJ7dK2sWnEv8mXtLp",
+        title="A hook that fits a title",
+    )
+
+    assert seen["ig_user_id"] == "UCq0Ff3lJ7dK2sWnEv8mXtLp"
+    assert seen["title"] == "A hook that fits a title"

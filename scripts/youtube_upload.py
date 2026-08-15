@@ -34,32 +34,7 @@ sys.path.insert(0, str(ROOT))
 
 from config import Settings  # noqa: E402
 from gateway import youtube  # noqa: E402
-from pipeline.gateway import strip_written_cta  # noqa: E402
-
-
-def description_for(folder: Path, link: str) -> str:
-    """The Instagram caption, rewritten for a surface with no DMs.
-
-    The keyword mechanic has no equivalent here: no private replies, no way to
-    answer a comment with a link. A description saying "comment TENSORFLOW if
-    you want the link" is a promise nothing can keep, so the written ask comes
-    out and the link goes in directly.
-
-    `strip_written_cta` is the same function that defends the voiceover and the
-    Instagram caption, reused rather than reimplemented, because a third
-    almost-identical stripper is how the wording drifts apart.
-    """
-    caption = (folder / "caption.txt").read_text()
-    body = strip_written_cta(caption)
-
-    lines = [line for line in body.splitlines() if line.strip()]
-    tags = lines.pop() if lines and lines[-1].lstrip().startswith("#") else ""
-    prose = "\n".join(lines).strip()
-
-    parts = [prose, f"Repo: {link}"]
-    if tags:
-        parts.append(tags)
-    return "\n\n".join(p for p in parts if p)
+from pipeline.gateway import youtube_description  # noqa: E402
 
 
 def link_for(folder: Path) -> str:
@@ -93,7 +68,7 @@ async def run(args: argparse.Namespace) -> int:
 
     title = json.loads((folder / "script.json").read_text())["hook"]
     link = link_for(folder)
-    description = description_for(folder, link)
+    description = youtube_description((folder / "caption.txt").read_text(), link)
 
     print(f"Channel:     {cfg.youtube_channel_id}")
     print(f"Video:       {video} ({video.stat().st_size / 1_048_576:.1f} MB)")
