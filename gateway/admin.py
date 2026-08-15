@@ -202,7 +202,10 @@ def _display_tz(cfg: Any, slots: list[Any]) -> str:
 
 
 async def _accounts(request: Request) -> list[Any]:
-    return await db.all_accounts(request.app.state.db)
+    # Every platform. The panel is where a person goes to see what is queued
+    # and what failed, and a destination it cannot show is a destination
+    # nobody is watching.
+    return await db.all_accounts(request.app.state.db, platform=None)
 
 
 async def _scope(request: Request) -> dict[str, Any]:
@@ -216,7 +219,7 @@ async def _scope(request: Request) -> dict[str, Any]:
     An unknown or removed id falls back to showing everything rather than
     404ing. A bookmark that outlived its account should still show the panel.
     """
-    accounts = await db.all_accounts(request.app.state.db)
+    accounts = await db.all_accounts(request.app.state.db, platform=None)
     wanted = request.query_params.get("account") or ""
     selected = next((a for a in accounts if a["ig_user_id"] == wanted), None)
     return {

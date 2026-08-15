@@ -162,6 +162,25 @@ class GatewaySettings(BaseSettings):
     # everything worth reading.
     log_level: str = "INFO"
 
+    # --- YouTube -----------------------------------------------------------
+    # No enable flag, deliberately. A channel that is not registered publishes
+    # nothing, `scheduler_enabled` already gates all publishing, and
+    # `accounts.active` is the per-destination kill switch. A fourth switch
+    # would be a fourth thing to check when nothing goes out.
+    #
+    # Private until the API project clears its audit, which is not a
+    # preference. Every video uploaded from an unaudited project is locked
+    # private whatever this says, so asking for public before then produces a
+    # private video and a confusing log line. Flip it when the audit clears.
+    youtube_privacy_status: str = "private"
+    # A declaration, not a default. This account's voice is a clone of a real
+    # person reading a script that person commissioned, which is a judgment
+    # call rather than an obvious yes or no. See PROFILE.md.
+    youtube_synthetic_media: bool = False
+    # Shorts are 10 to 20 MB and go up in seconds on any real connection. The
+    # ceiling is for a stalled transfer, not a slow one.
+    youtube_upload_timeout_s: int = 600
+
     # --- Storage -----------------------------------------------------------
     db_path: Path = Path("gateway/dev.sqlite3")
     covers_dir: Path = Path("gateway/covers")

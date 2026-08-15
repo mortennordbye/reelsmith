@@ -67,6 +67,24 @@ class Settings(BaseSettings):
     # margin costs nothing and a narrow one risks a missed cron.
     ig_refresh_margin_days: int = 15
 
+    # --- YouTube (optional) -------------------------------------------------
+    # Setup is docs/youtube-api-setup.md. Written by
+    # scripts/youtube_authorise.py and read by scripts/youtube_upload.py.
+    #
+    # All four live here, refresh token included, and that is the difference
+    # from the Instagram block above. `ig_access_token` is only a seed because
+    # a Meta token is refreshed every 60 days and the live one has to be
+    # written back somewhere, which is what data/ig_token.json is for. Google
+    # refresh tokens do not rotate and do not expire on a clock, so nothing
+    # ever writes back and there is nothing for a second file to hold.
+    youtube_client_id: str = ""
+    youtube_client_secret: str = ""
+    youtube_refresh_token: str = ""
+    # The UC... channel id, not the @handle. Read back at authorisation time
+    # rather than pasted, because the two are easy to confuse and the mistake
+    # does not surface until the first upload.
+    youtube_channel_id: str = ""
+
     # --- DM gateway (optional) ---------------------------------------------
     # The self-hosted service that answers comments and DMs, and hosts the
     # cover image Meta fetches. Leaving gateway_url empty disables both calls,

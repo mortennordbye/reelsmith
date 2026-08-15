@@ -28,7 +28,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 11
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -285,7 +285,56 @@ _MIGRATIONS: tuple[str, ...] = (
         PRIMARY KEY (repo_full_name, ig_user_id)
     );
     """,
+    # v10. A second destination. Publishing a Short reuses the queue, the
+    # slots, the two claims and the admin UI unchanged, because none of that is
+    # Meta-specific: only the publish call itself is. What it needs is for an
+    # account row to be able to say which destination it is.
+    #
+    # `ig_user_id` becomes an opaque account key rather than a Meta id, and on
+    # a YouTube row it holds the channel id. The name now lies on some rows,
+    # which is worth less than renaming a column across every query, index,
+    # template and test in the same change that adds the feature. A rename to
+    # `account_id` is a clean and purely mechanical follow-up.
+    #
+    # `access_token` stays NOT NULL and is empty on a YouTube row. Dropping the
+    # constraint means rebuilding the table in order to express an absence that
+    # `platform` already expresses.
+    #
+    # The credentials get a table of their own rather than more nullable
+    # columns on `accounts`. Meta's shape is one token plus an expiry; Google's
+    # is a client pair plus a refresh token that does not expire on a clock,
+    # and one table holding both would be half null on every row.
+    """
+    ALTER TABLE accounts ADD COLUMN platform TEXT NOT NULL DEFAULT 'instagram';
+
+    CREATE TABLE youtube_credentials (
+        channel_id    TEXT PRIMARY KEY,
+        client_id     TEXT NOT NULL,
+        client_secret TEXT NOT NULL,
+        -- Google refresh tokens do not expire on a clock the way Meta's 60 day
+        -- ones do, so there is no refresher loop for these and no expiry to
+        -- store. Access tokens last an hour and are minted per publish.
+        refresh_token TEXT NOT NULL,
+        created_at    TEXT NOT NULL
+    );
+    """,
+    # v11. A title, which Instagram has no concept of and YouTube requires.
+    #
+    # Built on the Mac and stored, rather than derived here. `strip_written_cta`,
+    # the wording rules in PROFILE.md and the hook the scriptwriter already caps
+    # at 60 characters all live over there, and a gateway that reconstructed a
+    # title would be a second place for the same copy to drift. Empty on an
+    # Instagram row, where nothing reads it.
+    """
+    ALTER TABLE queued_posts ADD COLUMN title TEXT NOT NULL DEFAULT '';
+    """,
 )
+
+# Which service an account row publishes to. `ig_user_id` holds a Meta user id
+# on an instagram row and a channel id on a youtube one.
+PLATFORM_INSTAGRAM = "instagram"
+PLATFORM_YOUTUBE = "youtube"
+PLATFORMS = (PLATFORM_INSTAGRAM, PLATFORM_YOUTUBE)
 
 # Conversation states. `replied` means the private reply went out and we are
 # waiting for the commenter to open the messaging window by saying anything at
@@ -411,25 +460,28 @@ async def upsert_account(
     access_token: str,
     username: str = "",
     expires_at: datetime | None = None,
+    platform: str = PLATFORM_INSTAGRAM,
 ) -> None:
     """Add or re-authorise an account, preserving its switches.
 
     Re-running OAuth must not silently re-enable an account someone paused, so
-    `active` and `dm_enabled` are left alone on conflict.
+    `active` and `dm_enabled` are left alone on conflict. `platform` is left
+    alone too: an existing row changing destination is a mistake rather than a
+    re-authorisation, and it would point a queue full of posts somewhere new.
     """
     stamp = iso(now())
     await conn.execute(
         """
         INSERT INTO accounts (ig_user_id, username, access_token, token_expires_at,
-                              token_refreshed_at, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+                              token_refreshed_at, created_at, platform)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(ig_user_id) DO UPDATE SET
             username = excluded.username,
             access_token = excluded.access_token,
             token_expires_at = excluded.token_expires_at,
             token_refreshed_at = excluded.token_refreshed_at
         """,
-        (ig_user_id, username, access_token, iso(expires_at), stamp, stamp),
+        (ig_user_id, username, access_token, iso(expires_at), stamp, stamp, platform),
     )
     await conn.commit()
 
@@ -438,12 +490,36 @@ async def get_account(conn: aiosqlite.Connection, ig_user_id: str) -> Mapping[st
     return await _one(conn, "SELECT * FROM accounts WHERE ig_user_id = ?", (ig_user_id,))
 
 
-async def active_accounts(conn: aiosqlite.Connection) -> list[Any]:
-    return await _all(conn, "SELECT * FROM accounts WHERE active = 1")
+# Both readers below take `platform` and both default it to Instagram, which is
+# the safe direction rather than the tidy one. Every Meta-specific loop in this
+# service reads accounts and then calls the Graph API with what it finds, so a
+# call site that is not updated when a third destination appears should end up
+# ignoring it, not sending a channel id to graph.instagram.com. Forgetting the
+# argument costs a no-op; a default of "everything" would cost a live error
+# against a real account. The three callers that genuinely want every row say
+# `platform=None` and say it in the open.
 
 
-async def all_accounts(conn: aiosqlite.Connection) -> list[Any]:
-    return await _all(conn, "SELECT * FROM accounts ORDER BY created_at")
+async def active_accounts(
+    conn: aiosqlite.Connection, *, platform: str | None = PLATFORM_INSTAGRAM
+) -> list[Any]:
+    if platform is None:
+        return await _all(conn, "SELECT * FROM accounts WHERE active = 1")
+    return await _all(
+        conn, "SELECT * FROM accounts WHERE active = 1 AND platform = ?", (platform,)
+    )
+
+
+async def all_accounts(
+    conn: aiosqlite.Connection, *, platform: str | None = PLATFORM_INSTAGRAM
+) -> list[Any]:
+    if platform is None:
+        return await _all(conn, "SELECT * FROM accounts ORDER BY created_at")
+    return await _all(
+        conn,
+        "SELECT * FROM accounts WHERE platform = ? ORDER BY created_at",
+        (platform,),
+    )
 
 
 async def set_account_flags(
@@ -483,6 +559,44 @@ async def save_account_token(
         (token, iso(expires), iso(moment), ig_user_id),
     )
     await conn.commit()
+
+
+async def upsert_youtube_credentials(
+    conn: aiosqlite.Connection,
+    *,
+    channel_id: str,
+    client_id: str,
+    client_secret: str,
+    refresh_token: str,
+) -> None:
+    """Store what is needed to mint an access token for one channel.
+
+    Re-authorising replaces all three. Google issues a refresh token only on the
+    first authorisation for a client unless `prompt=consent` is asked for, so a
+    second registration arriving without one is the caller's mistake to catch
+    rather than something to paper over by keeping the old value.
+    """
+    await conn.execute(
+        """
+        INSERT INTO youtube_credentials (channel_id, client_id, client_secret,
+                                         refresh_token, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(channel_id) DO UPDATE SET
+            client_id = excluded.client_id,
+            client_secret = excluded.client_secret,
+            refresh_token = excluded.refresh_token
+        """,
+        (channel_id, client_id, client_secret, refresh_token, iso(now())),
+    )
+    await conn.commit()
+
+
+async def youtube_credentials(
+    conn: aiosqlite.Connection, channel_id: str
+) -> Mapping[str, Any] | None:
+    return await _one(
+        conn, "SELECT * FROM youtube_credentials WHERE channel_id = ?", (channel_id,)
+    )
 
 
 # --------------------------------------------------------------------------
@@ -803,8 +917,13 @@ async def enqueue_post(
     repo_full_name: str | None = None,
     approved: bool = False,
     slot_override: datetime | None = None,
+    title: str = "",
 ) -> int:
-    """Put a rendered Reel in the line. Returns its queue id."""
+    """Put a rendered video in the line. Returns its queue id.
+
+    `title` is required by YouTube and meaningless on Instagram, so it defaults
+    to empty and only the YouTube publish path reads it.
+    """
     row = await _one(
         conn, "SELECT COALESCE(MAX(position), 0) + 1 FROM queued_posts WHERE ig_user_id = ?",
         (ig_user_id,),
@@ -814,8 +933,8 @@ async def enqueue_post(
         """
         INSERT INTO queued_posts
             (ig_user_id, state, video_name, cover_name, caption, repo_full_name,
-             keyword, link, slot_override, position, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             keyword, link, slot_override, position, created_at, title)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             ig_user_id,
@@ -829,6 +948,7 @@ async def enqueue_post(
             iso(slot_override),
             position,
             iso(now()),
+            title,
         ),
     ) as cur:
         queued_id = int(cur.lastrowid or 0)
@@ -1110,6 +1230,23 @@ async def sync_config_slots(
         )
     await conn.commit()
     return len(specs)
+
+
+async def config_slot_accounts(conn: aiosqlite.Connection) -> list[str]:
+    """Every account that currently holds config-declared slots.
+
+    So that removing an account's lines from `GATEWAY_SLOTS` actually stops it
+    posting. Without this, `_apply_config_slots` would only ever visit accounts
+    still named in the config, and a channel deleted from it would keep its
+    slots and keep publishing, which is the opposite of what deleting the lines
+    was meant to do.
+    """
+    rows = await _all(
+        conn,
+        "SELECT DISTINCT ig_user_id FROM schedule_slots WHERE source = ?",
+        (SLOT_SOURCE_CONFIG,),
+    )
+    return [str(row["ig_user_id"]) for row in rows]
 
 
 async def active_slots(conn: aiosqlite.Connection, ig_user_id: str | None = None) -> list[Any]:

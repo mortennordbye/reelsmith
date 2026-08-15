@@ -34,6 +34,7 @@ from gateway.models import (
     QueueSubmission,
     Registered,
     RenderedRepo,
+    YouTubeAccountRegistration,
 )
 
 log = logging.getLogger(__name__)
@@ -157,6 +158,42 @@ async def register_account(request: Request, body: AccountRegistration) -> Regis
             log.warning("subscribed_apps failed for %s: %s", body.ig_user_id, exc)
             detail = f"stored, but the messages subscription failed ({exc})"
     return Registered(detail=detail)
+
+
+@router.post(
+    "/api/accounts/youtube", response_model=Registered, dependencies=[Depends(require_token)]
+)
+async def register_youtube_account(
+    request: Request, body: YouTubeAccountRegistration
+) -> Registered:
+    """Register a channel to publish to, and store what mints its tokens.
+
+    Two writes rather than one, because the account row is the scheduling
+    identity and the credentials are the secret. The credentials go first: an
+    account row whose credentials never arrived is an account the scheduler
+    would pick up and fail on, while credentials with no account row are inert.
+    """
+    conn = request.app.state.db
+    await db.upsert_youtube_credentials(
+        conn,
+        channel_id=body.channel_id,
+        client_id=body.client_id,
+        client_secret=body.client_secret,
+        refresh_token=body.refresh_token,
+    )
+    await db.upsert_account(
+        conn,
+        ig_user_id=body.channel_id,
+        # No Meta token exists for a channel. See the v10 migration for why the
+        # column stays NOT NULL rather than being rebuilt to allow a null.
+        access_token="",
+        username=body.username,
+        platform=db.PLATFORM_YOUTUBE,
+    )
+    # The channel id only. Nothing about the secret or the refresh token
+    # reaches a log line, here or anywhere.
+    log.info("Registered the YouTube channel %s", body.channel_id)
+    return Registered(detail=f"stored {body.channel_id}")
 
 
 @router.post("/api/covers", response_model=CoverUploaded, dependencies=[Depends(require_token)])
@@ -293,6 +330,7 @@ async def enqueue(request: Request, body: QueueSubmission) -> Queued:
         repo_full_name=body.repo_full_name,
         approved=body.approved,
         slot_override=body.slot_override,
+        title=body.title,
     )
     state = db.QUEUE_APPROVED if body.approved else db.QUEUE_DRAFT
     detail = (

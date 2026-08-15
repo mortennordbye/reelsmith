@@ -59,22 +59,44 @@ async def _apply_config_slots(conn: aiosqlite.Connection, cfg: GatewaySettings) 
         default_tz=cfg.default_timezone,
         default_jitter=cfg.default_jitter_minutes,
     )
-    account = cfg.slots_account.strip()
-    if not account:
-        # One account is the normal case, so the id does not have to be
-        # repeated in config. More than one is ambiguous and says so.
-        accounts = await db.all_accounts(conn)
-        if len(accounts) != 1:
-            log.warning(
-                "GATEWAY_SLOTS is set but %d accounts are registered. "
-                "Set GATEWAY_SLOTS_ACCOUNT, or declare the slots in the admin UI.",
-                len(accounts),
-            )
-            return
-        account = str(accounts[0]["ig_user_id"])
+    # A line may name its own destination, which is how one config holds
+    # several channels. Lines that do not belong to GATEWAY_SLOTS_ACCOUNT, or
+    # to the single registered Instagram account when that is unambiguous.
+    by_account: dict[str, list[schedule.SlotSpec]] = {}
+    for spec in (s for s in specs if s.account):
+        by_account.setdefault(spec.account, []).append(spec)
 
-    count = await db.sync_config_slots(conn, account, specs)
-    log.info("Applied %d slot(s) from config for %s", count, account)
+    unnamed = [s for s in specs if not s.account]
+    if unnamed:
+        account = cfg.slots_account.strip()
+        if not account:
+            # Instagram rows only. Registering a channel would otherwise take
+            # the count past one and stop applying a schedule that had worked
+            # for months, which is the failure this function exists to prevent.
+            accounts = await db.all_accounts(conn, platform=db.PLATFORM_INSTAGRAM)
+            if len(accounts) == 1:
+                account = str(accounts[0]["ig_user_id"])
+        if account:
+            by_account.setdefault(account, []).extend(unnamed)
+        else:
+            # Only the ambiguous lines are dropped. The ones naming an account
+            # are not ambiguous and applying them is strictly better than
+            # applying nothing.
+            log.warning(
+                "%d slot line(s) name no account and it could not be resolved. "
+                "Set GATEWAY_SLOTS_ACCOUNT, or add account=<id> to those lines.",
+                len(unnamed),
+            )
+
+    # An account whose lines were all removed from config keeps its rows unless
+    # it is visited with an empty list, and would go on publishing on a
+    # schedule nobody can see any more.
+    for account in await db.config_slot_accounts(conn):
+        by_account.setdefault(account, [])
+
+    for account, group in by_account.items():
+        count = await db.sync_config_slots(conn, account, group)
+        log.info("Applied %d slot(s) from config for %s", count, account)
 
 
 def _configure_logging(cfg: GatewaySettings) -> None:

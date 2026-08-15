@@ -22,6 +22,10 @@ dev = [
     "pytest>=8.3",  # the pure-logic suite in tests/
     "pytest-asyncio>=0.24",  # the gateway is async end to end
     "ruff>=0.8",
+    # scripts/youtube_authorise.py only, which runs once per channel on the
+    # Mac. Deliberately not in the gateway group: the service mints its own
+    # access tokens with one httpx POST and has no room for a sync client.
+    "google-auth-oauthlib>=1.2",
 ]
 # The DM gateway. A separate group because the container installs only this,
 # and none of the pipeline's 350 MB of models and browsers belong in it.

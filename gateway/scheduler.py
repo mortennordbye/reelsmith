@@ -24,12 +24,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 import aiosqlite
 
-from gateway import db, publisher, schedule
+from gateway import db, publisher, schedule, youtube
 from gateway.config import GatewaySettings
 from gateway.graph import GraphClient
 from gateway.metrics import Metrics
@@ -59,11 +60,148 @@ async def publish_queued(
     account: Any,
     queued: Any,
 ) -> tuple[bool, bool]:
-    """Publish one already-claimed row.
+    """Publish one already-claimed row, wherever it is going.
 
     Returns `(published, safe_to_retry)`. The caller uses the second value to
     decide whether the slot gets its turn back; see the module docstring.
     """
+    if account["platform"] == db.PLATFORM_YOUTUBE:
+        return await publish_queued_youtube(
+            conn, graph, cfg, metrics, account=account, queued=queued
+        )
+    return await publish_queued_instagram(
+        conn, graph, cfg, metrics, account=account, queued=queued
+    )
+
+
+async def publish_queued_youtube(
+    conn: aiosqlite.Connection,
+    graph: GraphClient,
+    cfg: GatewaySettings,
+    metrics: Metrics,
+    *,
+    account: Any,
+    queued: Any,
+) -> tuple[bool, bool]:
+    """Upload one claimed row to YouTube.
+
+    The same two-step shape as the Instagram path and for the same reason.
+    `youtube.upload` would do the whole sequence in one call, but then a
+    process that died mid-transfer would leave a row in `claimed` with nothing
+    recorded, and the only question worth answering afterwards is whether
+    anything was created. So the session URI is opened and **committed** first,
+    into the same `container_id` column and meaning the same thing, and only
+    then do the bytes go up.
+    """
+    queued_id = int(queued["id"])
+    channel_id = account["ig_user_id"]
+
+    credentials = await db.youtube_credentials(conn, channel_id)
+    if credentials is None:
+        # An account row with no credentials cannot be fixed by trying again.
+        await db.set_queue_state(
+            conn, queued_id, db.QUEUE_FAILED, failure="no YouTube credentials stored"
+        )
+        metrics.publish_failures.inc()
+        log.error("Queue %d: channel %s has no stored credentials", queued_id, channel_id)
+        return False, False
+
+    video_path = Path(cfg.covers_dir) / str(queued["video_name"] or "")
+    if not queued["video_name"] or not video_path.is_file():
+        await db.set_queue_state(conn, queued_id, db.QUEUE_FAILED, failure="no video file")
+        metrics.publish_failures.inc()
+        log.error("Queue %d: no video at %s", queued_id, video_path)
+        return False, False
+
+    title = str(queued["title"] or "").strip()
+    if not title:
+        # YouTube rejects an empty title, and a video called after its filename
+        # is worse than one that waits for a person.
+        await db.set_queue_state(conn, queued_id, db.QUEUE_FAILED, failure="no title")
+        metrics.publish_failures.inc()
+        log.error("Queue %d: a YouTube row needs a title", queued_id)
+        return False, False
+
+    size_bytes = video_path.stat().st_size
+    try:
+        token = await youtube.access_token(
+            graph.http,
+            client_id=credentials["client_id"],
+            client_secret=credentials["client_secret"],
+            refresh_token=credentials["refresh_token"],
+        )
+        session_uri = await youtube.start_session(
+            graph.http,
+            token=token,
+            title=title,
+            description=str(queued["caption"] or ""),
+            size_bytes=size_bytes,
+            privacy_status=cfg.youtube_privacy_status,
+            contains_synthetic_media=cfg.youtube_synthetic_media,
+        )
+    except youtube.UploadError as exc:
+        # No session exists, so Google was never asked to make anything and
+        # this is the one failure worth retrying.
+        attempts = int(queued["attempts"] or 0)
+        exhausted = attempts >= cfg.max_publish_attempts
+        state = db.QUEUE_FAILED if exhausted else db.QUEUE_APPROVED
+        await db.set_queue_state(conn, queued_id, state, failure=str(exc))
+        metrics.publish_failures.inc()
+        log.warning(
+            "Queue %d: no upload session (attempt %d/%d): %s",
+            queued_id, attempts, cfg.max_publish_attempts, exc,
+        )
+        return False, not exhausted
+
+    await db.set_container(conn, queued_id, session_uri)
+
+    try:
+        result = await youtube.push_bytes(
+            graph.http,
+            session_uri=session_uri,
+            video_path=video_path,
+            size_bytes=size_bytes,
+            timeout_s=cfg.youtube_upload_timeout_s,
+        )
+    except youtube.UploadError as exc:
+        await db.set_queue_state(conn, queued_id, db.QUEUE_FAILED, failure=str(exc))
+        metrics.publish_failures.inc()
+        log.error("Queue %d: upload failed after the session existed: %s", queued_id, exc)
+        return False, False
+
+    await db.mark_queue_published(
+        conn, queued_id, media_id=result.video_id, permalink=result.url
+    )
+    metrics.posts_published.inc()
+
+    # No `register_post` here, unlike the Instagram path. That call arms the
+    # comment poller and the insights sweep, both of which are Meta-only, and a
+    # YouTube video id sitting in `posts` is exactly the row those loops must
+    # never pick up.
+    log.info(
+        "Uploaded queue %d to %s as %s (%s)",
+        queued_id, channel_id, result.video_id, result.privacy_status,
+    )
+    if result.privacy_status == "private" and cfg.youtube_privacy_status != "private":
+        log.warning(
+            "Queue %d asked for %s and got private. That is the unaudited "
+            "project lock, which lives on the API project rather than the "
+            "video, so nothing here or in Studio can change it.",
+            queued_id, cfg.youtube_privacy_status,
+        )
+    return True, False
+
+
+async def publish_queued_instagram(
+    conn: aiosqlite.Connection,
+    graph: GraphClient,
+    cfg: GatewaySettings,
+    metrics: Metrics,
+    *,
+    account: Any,
+    queued: Any,
+) -> tuple[bool, bool]:
+    """Publish one already-claimed row to Instagram."""
     queued_id = int(queued["id"])
     token = account["access_token"]
     ig_user_id = account["ig_user_id"]
@@ -186,7 +324,10 @@ async def tick_once(
     """One pass over every account's slots. Returns how many posts went out."""
     moment = db.now()
     published = 0
-    for account in await db.active_accounts(conn):
+    # Every platform, not just Instagram. This is the one loop that is about
+    # the queue rather than about Meta, and a destination missing from here is
+    # a destination that silently stops posting.
+    for account in await db.active_accounts(conn, platform=None):
         for row in await db.active_slots(conn, account["ig_user_id"]):
             slot = schedule.Slot.from_row(row)
             local_day = schedule.due(

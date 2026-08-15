@@ -125,6 +125,29 @@ def strip_written_cta(text: str) -> str:
     return cleaned.strip()
 
 
+def youtube_description(caption: str, link: str) -> str:
+    """The Instagram caption, rewritten for a surface with no DMs.
+
+    The keyword mechanic has no equivalent on YouTube: no private replies, and
+    no way to answer a comment with a link. A description saying "comment
+    TENSORFLOW if you want the link" is a promise nothing can keep, so the
+    written ask comes out and the repo URL goes in directly.
+
+    Here rather than in the gateway, because this is where `strip_written_cta`
+    and the wording rules already live, and a gateway that rebuilt the copy
+    would be a second place for it to drift. That drift is the exact failure
+    `strip_written_cta` was written for.
+
+    The hashtags stay, and stay last. YouTube reads the first three hashtags in
+    a description as the ones it shows above the title, and they are the same
+    topic words either way.
+    """
+    lines = [line for line in strip_written_cta(caption).splitlines() if line.strip()]
+    tags = lines.pop() if lines and lines[-1].lstrip().startswith("#") else ""
+    prose = "\n".join(lines).strip()
+    return "\n\n".join(part for part in (prose, f"Repo: {link}", tags) if part)
+
+
 def strip_cta_cues(cues: list[VisualCue]) -> list[VisualCue]:
     """Take the model's own ask out of the visual cues, the third channel.
 
@@ -318,8 +341,18 @@ def enqueue(
     repo_full_name: str | None = None,
     approved: bool = False,
     client: httpx.Client | None = None,
+    account: str | None = None,
+    title: str = "",
 ) -> dict | None:
-    """Hand a rendered Reel to the gateway's schedule. None means it did not take.
+    """Hand a rendered video to the gateway's schedule. None means it did not take.
+
+    `account` picks the destination and defaults to the Instagram one. A
+    YouTube channel is another account row with its own queue and its own
+    slots, so the same video going to both is two calls here rather than one
+    call with a list: the two rows are approved, reordered, held and cancelled
+    independently, and one failing must not take the other with it.
+
+    `title` is required by YouTube and meaningless on Instagram.
 
     The odd one out in this module: everything else here shrugs on failure
     because a publish has already happened and the video exists either way.
@@ -336,7 +369,7 @@ def enqueue(
 
     url = f"{cfg.gateway_url.rstrip('/')}/api/queue"
     payload = {
-        "ig_user_id": cfg.ig_user_id,
+        "ig_user_id": account or cfg.ig_user_id,
         "video_name": video_name,
         "cover_name": cover_name,
         "caption": caption,
@@ -344,6 +377,7 @@ def enqueue(
         "link": link,
         "repo_full_name": repo_full_name,
         "approved": approved,
+        "title": title,
     }
     try:
         with client or httpx.Client(timeout=_TIMEOUT) as http:

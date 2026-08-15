@@ -112,6 +112,41 @@ curl -s -X POST localhost:8000/api/accounts \
 That call also subscribes the account to `messages`. Skipping it produces no
 error and no webhooks, which looks exactly like nobody messaging the account.
 
+### Registering a YouTube channel
+
+A second destination. It shares the queue, the slots, the claims and the admin
+panel, because none of that is Meta-specific; only the publish call is. What
+tells them apart is `accounts.platform`, and `ig_user_id` holds the channel id
+on a YouTube row. The column name lies on those rows, which was worth less than
+renaming it across every query and template in the same change that added the
+feature.
+
+```bash
+curl -s -X POST localhost:8000/api/accounts/youtube \
+  -H "authorization: Bearer $GATEWAY_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"channel_id":"UC...","client_id":"...","client_secret":"...",
+       "refresh_token":"...","username":"@handle"}'
+```
+
+The one-time browser authorisation happens wherever is convenient; its result
+lives here from then on, in the cluster secret rather than in a file beside the
+renderer. Google refresh tokens do not expire on a clock the way Meta's 60 day
+tokens do, so there is no refresher loop for these and no expiry to watch.
+
+**Every Meta loop reads Instagram rows only**, and that filter is load bearing
+rather than tidy. A YouTube row has an empty `access_token` and a null
+`token_expires_at`, which the refresher would otherwise read as an unknown
+expiry and therefore as due, posting an empty token to Meta forever. The
+comment sweep and the insights sweep would ask about video ids that were never
+Meta's. `db.active_accounts` and `db.all_accounts` default to Instagram for
+that reason: forgetting the argument at a new call site costs a no-op, where a
+default of everything would cost a live error. The scheduler and the admin
+panel pass `platform=None` and say so in the open.
+
+`docs/youtube-publishing-plan.md` has the rest of the shape, and
+`docs/youtube-api-setup.md` covers the account layout and the audit.
+
 ## The scheduled queue
 
 ```
@@ -147,8 +182,19 @@ a ConfigMap as a block string:
 GATEWAY_SLOTS: |
   18:00 Europe/Oslo jitter=15
   08:30 Europe/Oslo jitter=20 days=6,7
+  19:30 Europe/Oslo account=UCH8RDOkbzDna2mDAlq4GaFw
   # only the time is required; days are ISO weekdays, 1 for Monday
 ```
+
+`account` names the destination, and is how one config holds more than one.
+A line without it belongs to `GATEWAY_SLOTS_ACCOUNT`, or to the single
+registered Instagram account when that is unambiguous; when it is not, those
+lines are dropped with a warning and the ones naming an account still apply,
+because applying the unambiguous half beats applying nothing.
+
+Removing an account's lines removes its slots. That is deliberate rather than
+incidental: config is the truth for these, and a channel deleted from it that
+kept publishing on a schedule nobody can read any more is the worse failure.
 
 Applied at startup and owned by config from then on: these rows are replaced on
 every boot, so the admin UI shows them as `config` and does not offer a delete
