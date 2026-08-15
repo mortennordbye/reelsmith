@@ -30,7 +30,6 @@ async POST, inside a service that has no room for a synchronous client.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
@@ -184,12 +183,11 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--save",
+        "--env",
         action="store_true",
         help=(
-            "write the credentials to data/yt_token.json instead of "
-            "registering them, for proving an upload from the Mac before the "
-            "gateway can accept them"
+            "print the .env lines instead of registering, for driving an "
+            "upload from the Mac before the gateway can accept a registration"
         ),
     )
     args = parser.parse_args()
@@ -222,16 +220,14 @@ def main() -> None:
         "username": snippet.get("customUrl", ""),
     }
 
-    if args.save:
-        # The same home `data/ig_token.json` has, and gitignored by the same
-        # `data/*` rule. A stepping stone rather than the destination: once the
-        # gateway can take the registration, the token belongs in the cluster
-        # secret and this file should be deleted.
-        token_file = ROOT / "data" / "yt_token.json"
-        token_file.parent.mkdir(parents=True, exist_ok=True)
-        token_file.write_text(json.dumps(payload, indent=2) + "\n")
-        token_file.chmod(0o600)
-        print(f"\nWrote {token_file}. Delete it once the gateway holds these.")
+    if args.env:
+        # No token file, unlike the Instagram side. `data/ig_token.json` exists
+        # because a Meta token is refreshed every 60 days and the new one has
+        # to be written back somewhere; a Google refresh token does not rotate
+        # and does not expire on a clock, so `.env` can simply hold it.
+        print("\nAdd to .env:\n")
+        print(f"YOUTUBE_REFRESH_TOKEN={credentials.refresh_token}")
+        print(f"YOUTUBE_CHANNEL_ID={channel['id']}")
         return
 
     if args.print_token:

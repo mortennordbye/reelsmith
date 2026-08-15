@@ -32,10 +32,9 @@ import httpx
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from config import Settings  # noqa: E402
 from gateway import youtube  # noqa: E402
 from pipeline.gateway import strip_written_cta  # noqa: E402
-
-TOKEN_FILE = ROOT / "data" / "yt_token.json"
 
 
 def description_for(folder: Path, link: str) -> str:
@@ -70,11 +69,22 @@ def link_for(folder: Path) -> str:
 
 
 async def run(args: argparse.Namespace) -> int:
-    if not TOKEN_FILE.exists():
-        raise SystemExit(
-            f"No {TOKEN_FILE}. Run scripts/youtube_authorise.py --save first."
+    cfg = Settings()
+    missing = [
+        name
+        for name, value in (
+            ("YOUTUBE_CLIENT_ID", cfg.youtube_client_id),
+            ("YOUTUBE_CLIENT_SECRET", cfg.youtube_client_secret),
+            ("YOUTUBE_REFRESH_TOKEN", cfg.youtube_refresh_token),
+            ("YOUTUBE_CHANNEL_ID", cfg.youtube_channel_id),
         )
-    credentials = json.loads(TOKEN_FILE.read_text())
+        if not value
+    ]
+    if missing:
+        raise SystemExit(
+            f"Missing in .env: {', '.join(missing)}.\n"
+            "Run scripts/youtube_authorise.py to produce them."
+        )
 
     folder = args.folder
     video = folder / "out.mp4"
@@ -85,7 +95,7 @@ async def run(args: argparse.Namespace) -> int:
     link = link_for(folder)
     description = description_for(folder, link)
 
-    print(f"Channel:     {credentials['channel_id']} ({credentials.get('username', '')})")
+    print(f"Channel:     {cfg.youtube_channel_id}")
     print(f"Video:       {video} ({video.stat().st_size / 1_048_576:.1f} MB)")
     print(f"Title:       {title}")
     print(f"Privacy:     {args.privacy}")
@@ -98,9 +108,9 @@ async def run(args: argparse.Namespace) -> int:
         try:
             result = await youtube.upload(
                 http,
-                client_id=credentials["client_id"],
-                client_secret=credentials["client_secret"],
-                refresh_token=credentials["refresh_token"],
+                client_id=cfg.youtube_client_id,
+                client_secret=cfg.youtube_client_secret,
+                refresh_token=cfg.youtube_refresh_token,
                 video_path=video,
                 title=title,
                 description=description,
