@@ -22,6 +22,9 @@ VERIFY_TOKEN = "test-verify-token"
 API_TOKEN = "test-api-token"
 ACCOUNT = "17841400000000000"
 IGSID = "9876543210"
+# A YouTube channel id: `UC` and 22 more characters. Registered as an account
+# row alongside the Instagram one, which is the shape the cluster runs.
+CHANNEL = "UCq0Ff3lJ7dK2sWnEv8mXtLp"
 
 
 @dataclass

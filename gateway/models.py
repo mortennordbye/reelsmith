@@ -61,6 +61,42 @@ class AccountRegistration(BaseModel):
     subscribe: bool = True
 
 
+class YouTubeAccountRegistration(BaseModel):
+    """A YouTube channel this gateway publishes to.
+
+    A separate model from `AccountRegistration` rather than a union with it,
+    because almost nothing matches: no long-lived token, no expiry, no messages
+    subscription, and three credential fields Meta has no equivalent of. One
+    model covering both would be half optional and would validate neither.
+
+    The one-time browser authorisation happens wherever it is convenient. What
+    arrives here is its result, and this is where it lives from then on: the
+    refresh token belongs in the cluster secret rather than in a file beside
+    the renderer, because publishing happens here.
+    """
+
+    channel_id: str = Field(min_length=1)
+    client_id: str = Field(min_length=1)
+    client_secret: str = Field(min_length=1)
+    refresh_token: str = Field(min_length=1)
+    # The @handle, for the admin UI. Same column as an Instagram username.
+    username: str = ""
+
+    @field_validator("channel_id")
+    @classmethod
+    def _looks_like_a_channel_id(cls, v: str) -> str:
+        """Catch the handle-instead-of-id paste, which is the likely mistake.
+
+        Channel ids are `UC` and 22 more characters. Pasting `@handle` or a
+        channel URL here would otherwise register cleanly and fail at the first
+        publish, weeks later and nowhere near the cause.
+        """
+        v = v.strip()
+        if not v.startswith("UC"):
+            raise ValueError("channel_id must be the UC... channel id, not a handle or URL")
+        return v
+
+
 class QueueSubmission(BaseModel):
     """A rendered Reel the gateway should publish on the next due slot.
 

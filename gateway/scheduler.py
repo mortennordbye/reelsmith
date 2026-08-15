@@ -186,7 +186,10 @@ async def tick_once(
     """One pass over every account's slots. Returns how many posts went out."""
     moment = db.now()
     published = 0
-    for account in await db.active_accounts(conn):
+    # Every platform, not just Instagram. This is the one loop that is about
+    # the queue rather than about Meta, and a destination missing from here is
+    # a destination that silently stops posting.
+    for account in await db.active_accounts(conn, platform=None):
         for row in await db.active_slots(conn, account["ig_user_id"]):
             slot = schedule.Slot.from_row(row)
             local_day = schedule.due(

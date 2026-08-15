@@ -63,10 +63,16 @@ async def _apply_config_slots(conn: aiosqlite.Connection, cfg: GatewaySettings) 
     if not account:
         # One account is the normal case, so the id does not have to be
         # repeated in config. More than one is ambiguous and says so.
-        accounts = await db.all_accounts(conn)
+        #
+        # Instagram rows only, deliberately. Registering a YouTube channel
+        # would otherwise take the count to two and silently stop applying a
+        # schedule that had worked for months, which is the failure this
+        # function exists to make loud. `GATEWAY_SLOTS` gaining a per-line
+        # account is what lets a second destination be declared here too.
+        accounts = await db.all_accounts(conn, platform=db.PLATFORM_INSTAGRAM)
         if len(accounts) != 1:
             log.warning(
-                "GATEWAY_SLOTS is set but %d accounts are registered. "
+                "GATEWAY_SLOTS is set but %d Instagram accounts are registered. "
                 "Set GATEWAY_SLOTS_ACCOUNT, or declare the slots in the admin UI.",
                 len(accounts),
             )
