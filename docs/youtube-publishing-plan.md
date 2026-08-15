@@ -106,12 +106,22 @@ explicit in config and set to `private` until the audit lands, so the pre-audit
 behaviour is chosen rather than discovered. `containsSyntheticMedia` decided and
 the reasoning written down. A Homelab PR for the ConfigMap and the secret.
 
-**The slot config needs work here.** `GATEWAY_SLOTS` assumes one account via
-`slots_account`, and the comment tells you to use the admin UI when there are
-several. But slots live in config precisely so they survive a redeploy, so the
-UI is the wrong answer for a second permanent account. `parse_slots` needs an
-optional `account=` token per line. Small, and easy to not notice until the
-first rollout quietly leaves YouTube with no schedule.
+**The slot config needs work here, and more of it than one extra account
+implies.** More channels are expected after the first, so this is the one part
+of the design that does not already scale.
+
+Everything else does. A channel is an account row with its own credentials, its
+own slots, its own queue and its own claims, and nothing in the queue, the
+scheduler or the panel is written for exactly one of anything. `GATEWAY_SLOTS`
+is the exception twice over: it holds slots for a single account, and with no
+`GATEWAY_SLOTS_ACCOUNT` it resolves that account by there being exactly one,
+which stops meaning anything the moment there are three.
+
+So `parse_slots` needs an optional `account=` token per line, and the
+resolve-by-count fallback should stay only as the single-account convenience it
+already is. Doing it when the second channel arrives means a rollout that
+quietly leaves a channel with no schedule, which is the failure the
+fails-the-boot rule everywhere else in this file exists to prevent.
 
 Cadence starts below the Instagram one. The exposure worth managing is the
 pattern rather than any single video, and three a day of an identical layout is
