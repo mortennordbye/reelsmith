@@ -36,9 +36,11 @@ from pathlib import Path
 
 import httpx
 from google_auth_oauthlib.flow import InstalledAppFlow
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from config import Settings  # noqa: E402
 
 # Asked for together, in one authorisation, because adding a scope later means
 # going back through the browser and re-consenting.
@@ -57,29 +59,13 @@ SCOPES = [
 CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels"
 
 
-class YouTubeClient(BaseSettings):
-    """The OAuth client pair, from `.env` like everything else in this repo.
-
-    A settings class of its own rather than a field on `config.Settings`,
-    because the pipeline never touches these and should not fail to start over
-    a variable it has no use for.
-    """
-
-    model_config = SettingsConfigDict(
-        env_file=ROOT / ".env", env_file_encoding="utf-8", extra="ignore"
-    )
-
-    youtube_client_id: str = ""
-    youtube_client_secret: str = ""
-
-
 def _flow(secrets_file: Path | None) -> InstalledAppFlow:
     """The console's JSON if given, otherwise the pair from `.env`."""
     if secrets_file:
         return InstalledAppFlow.from_client_secrets_file(str(secrets_file), scopes=SCOPES)
 
-    client = YouTubeClient()
-    if not client.youtube_client_id or not client.youtube_client_secret:
+    cfg = Settings()
+    if not cfg.youtube_client_id or not cfg.youtube_client_secret:
         raise SystemExit(
             "Set YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET in .env, or pass\n"
             "the client_secret_*.json the Google Cloud console downloaded."
@@ -87,8 +73,8 @@ def _flow(secrets_file: Path | None) -> InstalledAppFlow:
     return InstalledAppFlow.from_client_config(
         {
             "installed": {
-                "client_id": client.youtube_client_id,
-                "client_secret": client.youtube_client_secret,
+                "client_id": cfg.youtube_client_id,
+                "client_secret": cfg.youtube_client_secret,
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
             }
@@ -238,13 +224,18 @@ def main() -> None:
         print(credentials.refresh_token)
         return
 
-    api_token = os.environ.get("GATEWAY_API_TOKEN", "")
-    if not args.gateway or not api_token:
+    # The same GATEWAY_URL and GATEWAY_TOKEN the pipeline already uses. One
+    # gateway and one bearer token, so asking for a second pair of variables
+    # here would only be a second pair to keep in step.
+    cfg = Settings()
+    base_url = args.gateway or cfg.gateway_url
+    api_token = os.environ.get("GATEWAY_API_TOKEN", "") or cfg.gateway_token
+    if not base_url or not api_token:
         raise SystemExit(
-            "Set GATEWAY_BASE_URL and GATEWAY_API_TOKEN to register this, or\n"
-            "pass --print-token to seal the refresh token into a secret by hand."
+            "Set GATEWAY_URL and GATEWAY_TOKEN in .env to register this, or\n"
+            "pass --env to print the lines and register it later."
         )
-    register(args.gateway, api_token, payload)
+    register(base_url, api_token, payload)
 
 
 if __name__ == "__main__":
