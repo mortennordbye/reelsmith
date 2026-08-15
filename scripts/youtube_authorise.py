@@ -9,12 +9,16 @@ history or a terminal scrollback on the way.
 
 Run it once per channel:
 
+    uv run python scripts/youtube_authorise.py
+
+It reads `YOUTUBE_CLIENT_ID` and `YOUTUBE_CLIENT_SECRET` from `.env`, the same
+way every other secret in this repo is read. The console's downloaded JSON
+works too, if you would rather not keep the pair on disk:
+
     uv run python scripts/youtube_authorise.py ~/Downloads/client_secret_*.json
 
-The credentials JSON is the file the Google Cloud console gives you when you
-create an OAuth client of type Desktop app. Passing the file rather than the
-secret on the command line is deliberate: argv is visible in `ps` and lands in
-shell history, and a client secret that leaked that way has to be rotated.
+Neither route takes the secret on the command line, and that is deliberate:
+argv is visible in `ps` and lands in shell history.
 
 `google-auth-oauthlib` rather than a hand-rolled loopback listener, because
 this is the authorisation code flow with PKCE and a single-shot local server,
@@ -26,12 +30,16 @@ async POST, inside a service that has no room for a synchronous client.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
 
 import httpx
 from google_auth_oauthlib.flow import InstalledAppFlow
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+ROOT = Path(__file__).resolve().parent.parent
 
 # Asked for together, in one authorisation, because adding a scope later means
 # going back through the browser and re-consenting.
@@ -50,7 +58,47 @@ SCOPES = [
 CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels"
 
 
-def authorise(secrets_file: Path):
+class YouTubeClient(BaseSettings):
+    """The OAuth client pair, from `.env` like everything else in this repo.
+
+    A settings class of its own rather than a field on `config.Settings`,
+    because the pipeline never touches these and should not fail to start over
+    a variable it has no use for.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=ROOT / ".env", env_file_encoding="utf-8", extra="ignore"
+    )
+
+    youtube_client_id: str = ""
+    youtube_client_secret: str = ""
+
+
+def _flow(secrets_file: Path | None) -> InstalledAppFlow:
+    """The console's JSON if given, otherwise the pair from `.env`."""
+    if secrets_file:
+        return InstalledAppFlow.from_client_secrets_file(str(secrets_file), scopes=SCOPES)
+
+    client = YouTubeClient()
+    if not client.youtube_client_id or not client.youtube_client_secret:
+        raise SystemExit(
+            "Set YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET in .env, or pass\n"
+            "the client_secret_*.json the Google Cloud console downloaded."
+        )
+    return InstalledAppFlow.from_client_config(
+        {
+            "installed": {
+                "client_id": client.youtube_client_id,
+                "client_secret": client.youtube_client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        },
+        scopes=SCOPES,
+    )
+
+
+def authorise(secrets_file: Path | None):
     """Open the browser, catch the code on loopback, exchange it.
 
     `access_type=offline` asks for a refresh token and `prompt=consent` insists
@@ -58,7 +106,7 @@ def authorise(secrets_file: Path):
     been granted returns an access token and no refresh token, which looks like
     success and stores nothing usable.
     """
-    flow = InstalledAppFlow.from_client_secrets_file(str(secrets_file), scopes=SCOPES)
+    flow = _flow(secrets_file)
     return flow.run_local_server(
         port=0,
         access_type="offline",
@@ -116,7 +164,11 @@ def main() -> None:
     parser.add_argument(
         "secrets_file",
         type=Path,
-        help="the client_secret_*.json downloaded from the Google Cloud console",
+        nargs="?",
+        help=(
+            "the client_secret_*.json from the Google Cloud console; omit to "
+            "use YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET from .env"
+        ),
     )
     parser.add_argument(
         "--gateway",
@@ -131,9 +183,18 @@ def main() -> None:
             "into a cluster secret by hand"
         ),
     )
+    parser.add_argument(
+        "--save",
+        action="store_true",
+        help=(
+            "write the credentials to data/yt_token.json instead of "
+            "registering them, for proving an upload from the Mac before the "
+            "gateway can accept them"
+        ),
+    )
     args = parser.parse_args()
 
-    if not args.secrets_file.exists():
+    if args.secrets_file and not args.secrets_file.exists():
         raise SystemExit(f"No such file: {args.secrets_file}")
 
     credentials = authorise(args.secrets_file)
@@ -160,6 +221,18 @@ def main() -> None:
         "refresh_token": credentials.refresh_token,
         "username": snippet.get("customUrl", ""),
     }
+
+    if args.save:
+        # The same home `data/ig_token.json` has, and gitignored by the same
+        # `data/*` rule. A stepping stone rather than the destination: once the
+        # gateway can take the registration, the token belongs in the cluster
+        # secret and this file should be deleted.
+        token_file = ROOT / "data" / "yt_token.json"
+        token_file.parent.mkdir(parents=True, exist_ok=True)
+        token_file.write_text(json.dumps(payload, indent=2) + "\n")
+        token_file.chmod(0o600)
+        print(f"\nWrote {token_file}. Delete it once the gateway holds these.")
+        return
 
     if args.print_token:
         # Deliberately the only path that puts the token on a terminal, and it
