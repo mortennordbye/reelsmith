@@ -172,6 +172,17 @@ class GraphClient:
         self._http = http
         self._cfg = cfg
 
+    @property
+    def http(self) -> httpx.AsyncClient:
+        """The underlying client, for callers that talk to somebody else.
+
+        `gateway/youtube.py` needs an async client and has nothing to do with
+        the Graph API. Sharing this one rather than opening a second pool,
+        since every URL here is absolute and there is no base_url to collide
+        over.
+        """
+        return self._http
+
     async def _request(
         self,
         method: str,

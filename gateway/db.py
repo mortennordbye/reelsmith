@@ -28,7 +28,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -317,6 +317,16 @@ _MIGRATIONS: tuple[str, ...] = (
         refresh_token TEXT NOT NULL,
         created_at    TEXT NOT NULL
     );
+    """,
+    # v11. A title, which Instagram has no concept of and YouTube requires.
+    #
+    # Built on the Mac and stored, rather than derived here. `strip_written_cta`,
+    # the wording rules in PROFILE.md and the hook the scriptwriter already caps
+    # at 60 characters all live over there, and a gateway that reconstructed a
+    # title would be a second place for the same copy to drift. Empty on an
+    # Instagram row, where nothing reads it.
+    """
+    ALTER TABLE queued_posts ADD COLUMN title TEXT NOT NULL DEFAULT '';
     """,
 )
 
@@ -907,8 +917,13 @@ async def enqueue_post(
     repo_full_name: str | None = None,
     approved: bool = False,
     slot_override: datetime | None = None,
+    title: str = "",
 ) -> int:
-    """Put a rendered Reel in the line. Returns its queue id."""
+    """Put a rendered video in the line. Returns its queue id.
+
+    `title` is required by YouTube and meaningless on Instagram, so it defaults
+    to empty and only the YouTube publish path reads it.
+    """
     row = await _one(
         conn, "SELECT COALESCE(MAX(position), 0) + 1 FROM queued_posts WHERE ig_user_id = ?",
         (ig_user_id,),
@@ -918,8 +933,8 @@ async def enqueue_post(
         """
         INSERT INTO queued_posts
             (ig_user_id, state, video_name, cover_name, caption, repo_full_name,
-             keyword, link, slot_override, position, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             keyword, link, slot_override, position, created_at, title)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             ig_user_id,
@@ -933,6 +948,7 @@ async def enqueue_post(
             iso(slot_override),
             position,
             iso(now()),
+            title,
         ),
     ) as cur:
         queued_id = int(cur.lastrowid or 0)

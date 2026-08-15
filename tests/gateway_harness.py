@@ -28,6 +28,57 @@ CHANNEL = "UCq0Ff3lJ7dK2sWnEv8mXtLp"
 
 
 @dataclass
+class FakeYouTube:
+    """Stands in for oauth2.googleapis.com and the resumable upload endpoint.
+
+    Three calls, and the interesting assertions are about the boundary between
+    the second and the third: a failure before the session URI exists is
+    retryable and one after it is not, which is the same line
+    `publisher.PublishError` draws and the reason the queue can be restarted
+    safely.
+    """
+
+    video_id: str = "yt-video-1"
+    session_uri: str = "https://upload.googleapis.com/resumable/session-1"
+    # What the video resource reports back. Setting this to "private" while the
+    # caller asked for "public" is the unaudited project lock.
+    privacy_status: str = "private"
+    token_status: int = 200
+    session_status: int = 200
+    upload_status: int = 200
+    # Every resumable init body, so a test can assert what the metadata said.
+    sessions: list[dict[str, Any]] = field(default_factory=list)
+    # Byte counts of each completed PUT.
+    uploads: list[int] = field(default_factory=list)
+
+    def handle(self, request: httpx.Request) -> httpx.Response | None:
+        """Answer if this is ours, otherwise None so Meta gets a look."""
+        url = str(request.url)
+
+        if url.startswith("https://oauth2.googleapis.com/token"):
+            if self.token_status != 200:
+                return httpx.Response(self.token_status, json={"error": "invalid_grant"})
+            return httpx.Response(200, json={"access_token": "ya29.fake", "expires_in": 3599})
+
+        if url.startswith("https://www.googleapis.com/upload/youtube/v3/videos"):
+            if self.session_status != 200:
+                return httpx.Response(self.session_status, json={"error": "nope"})
+            self.sessions.append(json.loads(request.content))
+            return httpx.Response(200, headers={"location": self.session_uri})
+
+        if url == self.session_uri:
+            if self.upload_status not in (200, 201):
+                return httpx.Response(self.upload_status, text="upload rejected")
+            self.uploads.append(len(request.content))
+            return httpx.Response(
+                200,
+                json={"id": self.video_id, "status": {"privacyStatus": self.privacy_status}},
+            )
+
+        return None
+
+
+@dataclass
 class FakeMeta:
     """Stands in for graph.instagram.com.
 
@@ -55,6 +106,9 @@ class FakeMeta:
     # retention ones, which is how Meta treats an image post. The client is
     # expected to notice and ask again without them.
     not_a_reel: set[str] = field(default_factory=set)
+    # The gateway hands one httpx client to both upstreams, so one transport
+    # has to answer for both. Google gets first refusal and falls through.
+    youtube: FakeYouTube = field(default_factory=FakeYouTube)
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self._handle)
@@ -70,6 +124,10 @@ class FakeMeta:
         path = request.url.path
         self.calls.append(f"{request.method} {path}")
         self.requests.append(request)
+
+        google = self.youtube.handle(request)
+        if google is not None:
+            return google
 
         if path.endswith("/messages") and request.method == "POST":
             if self.fail_sends_with:
