@@ -220,6 +220,11 @@ class SlotSpec:
     tz: str
     jitter_minutes: int
     days: str  # already in the stored "1,3,5" form
+    # Which destination this slot belongs to. Empty means the one account, and
+    # `GATEWAY_SLOTS_ACCOUNT` or a lone registered account resolves it. Naming
+    # it per line is what lets one config hold several channels, which the UI
+    # cannot do because slots clicked there do not survive a redeploy.
+    account: str = ""
 
 
 class SlotSpecError(ValueError):
@@ -235,10 +240,17 @@ def parse_slots(raw: str, *, default_tz: str = "UTC", default_jitter: int = 15) 
         18:00 Europe/Oslo jitter=15
         08:30 Europe/Oslo jitter=20 days=6,7
         12:00
+        19:30 Europe/Oslo account=UCq0Ff3lJ7dK2sWnEv8mXtLp
 
     Only the time is required. `days` is ISO weekdays, 1 for Monday, and
     leaving it out means every day. A `#` starts a comment, because a schedule
     is exactly the kind of config someone wants to leave a note on.
+
+    `account` names the destination and is how one config holds more than one.
+    Without it a line belongs to `GATEWAY_SLOTS_ACCOUNT`, or to the single
+    registered Instagram account when that is unambiguous. The admin UI is not
+    an answer for a second permanent channel, because slots clicked there are a
+    separate set that the next rollout does not rewrite.
 
     Raises rather than skipping a bad line. A schedule that silently drops the
     slot with the typo is a schedule that quietly stops posting.
@@ -261,11 +273,15 @@ def parse_slots(raw: str, *, default_tz: str = "UTC", default_jitter: int = 15) 
         if not (0 <= hour <= 23 and 0 <= minute <= 59):
             raise SlotSpecError(f"{line!r}: {clock!r} is out of range")
 
-        tz, jitter, days = default_tz, default_jitter, ""
+        tz, jitter, days, account = default_tz, default_jitter, "", ""
         for token in parts[1:]:
             key, sep, value = token.partition("=")
             if not sep:
                 tz = key  # a bare token is the zone
+            elif key == "account":
+                account = value.strip()
+                if not account:
+                    raise SlotSpecError(f"{line!r}: account= named nothing")
             elif key == "jitter":
                 try:
                     jitter = max(0, int(value))
@@ -285,7 +301,14 @@ def parse_slots(raw: str, *, default_tz: str = "UTC", default_jitter: int = 15) 
             raise SlotSpecError(f"{line!r}: {tz!r} is not a known timezone")
 
         specs.append(
-            SlotSpec(hour=hour, minute=minute, tz=tz, jitter_minutes=jitter, days=days)
+            SlotSpec(
+                hour=hour,
+                minute=minute,
+                tz=tz,
+                jitter_minutes=jitter,
+                days=days,
+                account=account,
+            )
         )
     return specs
 

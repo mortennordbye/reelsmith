@@ -1232,6 +1232,23 @@ async def sync_config_slots(
     return len(specs)
 
 
+async def config_slot_accounts(conn: aiosqlite.Connection) -> list[str]:
+    """Every account that currently holds config-declared slots.
+
+    So that removing an account's lines from `GATEWAY_SLOTS` actually stops it
+    posting. Without this, `_apply_config_slots` would only ever visit accounts
+    still named in the config, and a channel deleted from it would keep its
+    slots and keep publishing, which is the opposite of what deleting the lines
+    was meant to do.
+    """
+    rows = await _all(
+        conn,
+        "SELECT DISTINCT ig_user_id FROM schedule_slots WHERE source = ?",
+        (SLOT_SOURCE_CONFIG,),
+    )
+    return [str(row["ig_user_id"]) for row in rows]
+
+
 async def active_slots(conn: aiosqlite.Connection, ig_user_id: str | None = None) -> list[Any]:
     where, args = ("AND ig_user_id = ?", (ig_user_id,)) if ig_user_id else ("", ())
     return await _all(

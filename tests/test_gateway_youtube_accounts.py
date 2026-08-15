@@ -17,7 +17,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from gateway import db, insights, poller, scheduler
+from gateway import db, insights, poller, schedule, scheduler
 from gateway.app import create_app
 from gateway.graph import GraphClient
 from gateway.metrics import Metrics
@@ -293,3 +293,106 @@ async def test_config_slots_still_apply_once_a_channel_is_registered(cfg, meta):
 
     assert len(slots) == 1
     assert slots[0]["hour"] == 18
+
+
+# --- Slots for more than one destination -------------------------------------
+
+
+def test_a_slot_line_can_name_its_own_account():
+    specs = schedule.parse_slots(
+        "18:00 Europe/Oslo jitter=15\n"
+        f"19:30 Europe/Oslo jitter=20 account={CHANNEL}"
+    )
+
+    assert specs[0].account == ""
+    assert specs[1].account == CHANNEL
+
+
+def test_an_empty_account_token_fails_the_boot():
+    """Same rule as every other bad line. A schedule that silently drops the
+    one with the typo is a schedule that quietly stops posting."""
+    with pytest.raises(schedule.SlotSpecError):
+        schedule.parse_slots("18:00 Europe/Oslo account=")
+
+
+async def test_each_destination_gets_its_own_slots(cfg, meta):
+    """One a day on the channel, alongside whatever Instagram is doing."""
+    cfg = settings(
+        cfg.db_path.parent,
+        slots=f"18:00 Europe/Oslo jitter=15\n19:30 Europe/Oslo account={CHANNEL}",
+    )
+    conn = await db.connect(cfg.db_path)
+    try:
+        await db.upsert_account(conn, ig_user_id=ACCOUNT, access_token="tok")
+        await db.upsert_account(
+            conn, ig_user_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
+        )
+    finally:
+        await conn.close()
+
+    async with meta.client() as fake_meta:
+        app = create_app(cfg, http=fake_meta, background=False)
+        async with app.router.lifespan_context(app):
+            instagram = await db.all_slots(app.state.db, ACCOUNT)
+            youtube = await db.all_slots(app.state.db, CHANNEL)
+
+    assert [s["hour"] for s in instagram] == [18]
+    assert [s["hour"] for s in youtube] == [19]
+
+
+async def test_removing_a_channels_lines_stops_it_posting(cfg, meta):
+    """The reason `config_slot_accounts` exists.
+
+    Deleting a channel's lines from the ConfigMap has to actually stop it.
+    Visiting only the accounts still named in config would leave the old rows
+    in place and the channel would keep publishing on a schedule that no longer
+    exists anywhere a person can read.
+    """
+    directory = cfg.db_path.parent
+    with_channel = settings(
+        directory, slots=f"18:00 Europe/Oslo\n19:30 Europe/Oslo account={CHANNEL}"
+    )
+    conn = await db.connect(with_channel.db_path)
+    try:
+        await db.upsert_account(conn, ig_user_id=ACCOUNT, access_token="tok")
+        await db.upsert_account(
+            conn, ig_user_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
+        )
+    finally:
+        await conn.close()
+
+    async with meta.client() as fake_meta:
+        app = create_app(with_channel, http=fake_meta, background=False)
+        async with app.router.lifespan_context(app):
+            assert len(await db.all_slots(app.state.db, CHANNEL)) == 1
+
+        # The same database, booted again with that line taken out.
+        without = settings(directory, slots="18:00 Europe/Oslo")
+        app = create_app(without, http=fake_meta, background=False)
+        async with app.router.lifespan_context(app):
+            assert await db.all_slots(app.state.db, CHANNEL) == []
+            assert len(await db.all_slots(app.state.db, ACCOUNT)) == 1
+
+
+async def test_named_lines_still_apply_when_an_unnamed_one_is_ambiguous(cfg, meta):
+    """Applying the unambiguous half beats applying nothing."""
+    cfg = settings(
+        cfg.db_path.parent,
+        slots=f"18:00 Europe/Oslo\n19:30 Europe/Oslo account={CHANNEL}",
+    )
+    conn = await db.connect(cfg.db_path)
+    try:
+        # Two Instagram accounts, so the unnamed line cannot be resolved.
+        await db.upsert_account(conn, ig_user_id=ACCOUNT, access_token="tok")
+        await db.upsert_account(conn, ig_user_id="17841400000000001", access_token="tok")
+        await db.upsert_account(
+            conn, ig_user_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
+        )
+    finally:
+        await conn.close()
+
+    async with meta.client() as fake_meta:
+        app = create_app(cfg, http=fake_meta, background=False)
+        async with app.router.lifespan_context(app):
+            assert len(await db.all_slots(app.state.db, CHANNEL)) == 1
+            assert await db.all_slots(app.state.db, ACCOUNT) == []

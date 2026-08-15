@@ -182,8 +182,19 @@ a ConfigMap as a block string:
 GATEWAY_SLOTS: |
   18:00 Europe/Oslo jitter=15
   08:30 Europe/Oslo jitter=20 days=6,7
+  19:30 Europe/Oslo account=UCH8RDOkbzDna2mDAlq4GaFw
   # only the time is required; days are ISO weekdays, 1 for Monday
 ```
+
+`account` names the destination, and is how one config holds more than one.
+A line without it belongs to `GATEWAY_SLOTS_ACCOUNT`, or to the single
+registered Instagram account when that is unambiguous; when it is not, those
+lines are dropped with a warning and the ones naming an account still apply,
+because applying the unambiguous half beats applying nothing.
+
+Removing an account's lines removes its slots. That is deliberate rather than
+incidental: config is the truth for these, and a channel deleted from it that
+kept publishing on a schedule nobody can read any more is the worse failure.
 
 Applied at startup and owned by config from then on: these rows are replaced on
 every boot, so the admin UI shows them as `config` and does not offer a delete
