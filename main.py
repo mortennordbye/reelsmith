@@ -1144,24 +1144,24 @@ def _youtube_video_name(cfg: Settings, run_dir: Path, fallback: str) -> str:
     """Upload the version without the ask, or fall back to the full one.
 
     The Reel says "comment ANYDOC if you want the link" out loud, in the
-    captions and on an end card. YouTube has no private replies, so that is a
-    promise nothing on the surface can keep, and the ask is in the voiceover so
-    no render flag removes it. `renderer.trim_cta` cuts the video where the ask
-    begins, which the spec recorded when it gave the ask its own scene.
+    captions, and on a chip that runs from halfway to the last frame. YouTube
+    has no private replies, so that is a promise nothing on the surface can
+    keep. `renderer.render_without_cta` renders it again without any of them,
+    reusing the voiceover so nothing goes back through TTS.
 
-    Falling back rather than failing when there is nothing to cut: a Short
+    Falling back rather than failing when there is no such version: a Short
     carrying an ask it cannot honour is a smaller problem than no Short.
     """
     spec_path = run_dir / "video.json"
     if not spec_path.exists():
         return fallback
 
-    trimmed = renderer.trim_cta(
-        run_dir / "out.mp4", VideoSpec.model_validate_json(spec_path.read_text()), cfg
-    )
+    spec = VideoSpec.model_validate_json(spec_path.read_text())
+    with console.status("Rendering the version without the ask..."):
+        trimmed = renderer.render_without_cta(spec, run_dir, cfg)
     if trimmed is None:
         console.print(
-            "[yellow]No clean cut for the ask.[/] "
+            "[yellow]No version without the ask.[/] "
             "[dim]The Short gets the full video, ask included.[/]"
         )
         return fallback

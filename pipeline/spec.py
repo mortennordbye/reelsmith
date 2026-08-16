@@ -29,6 +29,7 @@ log = logging.getLogger(__name__)
 # Every scene gets at least this long, or fast cuts become unreadable.
 MIN_SCENE_SECONDS = 1.8
 
+
 # How long the opening README hero holds. Still the longest scene in the video:
 # it is the one shot the maintainer actually designed (logo, title lockup,
 # badges), it carries the most information per second, and it needs time to be
@@ -294,6 +295,7 @@ def build_spec(
     # frame it opens with makes the seam invisible.
     min_frames = int(MIN_SCENE_SECONDS * fps)
     outro: tuple[int, int] | None = None
+    ask_frame: int | None = None
     if spoken_cta and allocations:
         cta_frame = _cta_start_frame(captions, spoken_cta, fps)
         if cta_frame is not None:
@@ -302,6 +304,7 @@ def build_spec(
             if kept >= min_frames and tail >= min_frames:
                 allocations[-1] = (start, kept)
                 outro = (cta_frame, tail)
+                ask_frame = cta_frame
             else:
                 log.info(
                     "The ask starts %.1fs in, too close to a boundary to split.",
@@ -371,7 +374,7 @@ def build_spec(
         # Only when the ask got a scene of its own. Without that split there is
         # no frame where the video stops being about the repo and starts asking
         # for a comment, so there is nothing honest to cut at.
-        ctaFromFrame=outro[0] if outro else None,
+        ctaFromFrame=ask_frame,
     )
 
     log.info(
