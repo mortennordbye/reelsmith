@@ -182,12 +182,17 @@ async def publish_queued_youtube(
         "Uploaded queue %d to %s as %s (%s)",
         queued_id, channel_id, result.video_id, result.privacy_status,
     )
-    if result.privacy_status == "private" and cfg.youtube_privacy_status != "private":
+    if result.privacy_status != cfg.youtube_privacy_status:
+        # Measured as not applying to this project on 2026-08-16, so if it ever
+        # starts, that is news and worth a line naming the likely cause rather
+        # than a silent downgrade. Compares against what was asked for rather
+        # than against "private", so any downgrade is caught and not just the
+        # one failure mode that was expected.
         log.warning(
-            "Queue %d asked for %s and got private. That is the unaudited "
-            "project lock, which lives on the API project rather than the "
-            "video, so nothing here or in Studio can change it.",
-            queued_id, cfg.youtube_privacy_status,
+            "Queue %d asked for %s and got %s. The usual cause is the audit "
+            "restriction on an API project, which lives on the project rather "
+            "than the video, so nothing here or in Studio would change it.",
+            queued_id, cfg.youtube_privacy_status, result.privacy_status,
         )
     return True, False
 

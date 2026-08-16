@@ -17,21 +17,37 @@ scheduler path existed. **The gateway itself has not published to YouTube yet**,
 because nothing has been enqueued since it went live. The first one is the real
 test of the path, and it is worth watching the log for rather than assuming.
 
-## Blocking: the audit
+## The audit, which turned out not to block anything
 
-**Nothing publishes publicly until this clears.** Every video uploaded through
-`videos.insert` from an unaudited project is locked private, permanently. The
-lock lives on the API project rather than the video, so no config here and no
-edit in Studio changes it. `gateway/scheduler.py` logs a warning naming the
-cause if the config ever asks for public and gets private back.
+**The private lock does not apply to this project.** Measured on 2026-08-16
+rather than assumed: three uploads asking for `private`, `unlisted` and
+`public` each kept the value they asked for, with no rejection reason and the
+values still holding after processing.
 
-The form is linked from `docs/youtube-api-setup.md`. Draft answers, including
-the project number and the compliance framing, are in the private `PROFILE.md`
-under "The audit, and what to answer". It reviews the project rather than a
-video, so it can be submitted at any time and the queue is weeks.
+```
+Zm9_d8rJBGU  public    reject=none
+asYaC8xnhbE  unlisted  reject=none
+8mruyznHbMs  private   reject=none
+```
 
-When it clears: set `GATEWAY_YOUTUBE_PRIVACY_STATUS=public` in the Homelab
-ConfigMap. That is the whole change.
+This contradicts `docs/youtube-api-setup.md` and the published behaviour, which
+say uploads from an API project created after 28 July 2020 and not yet audited
+are locked to private permanently. That doc's warning shaped this whole design,
+and the reason it does not hold here is unknown. Do not assume it will keep not
+holding: `gateway/scheduler.py` logs whenever a returned privacy status differs
+from the one requested, which is what the restriction would look like if it
+starts.
+
+So the audit is worth submitting for quota headroom and compliance standing,
+and it gates neither. Draft answers are in the private `PROFILE.md` under "The
+audit, and what to answer"; the form is linked from
+`docs/youtube-api-setup.md`. One thing to say explicitly on it: you are **not**
+requesting a quota increase. The form's only sensible entry point is the
+"request additional quota" option, and one upload a day against an allowance of
+100 otherwise reads as confusion.
+
+Going public is `GATEWAY_YOUTUBE_PRIVACY_STATUS=public` in the Homelab
+ConfigMap, whenever you want it.
 
 ## Decisions left
 

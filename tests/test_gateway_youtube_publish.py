@@ -240,12 +240,16 @@ async def test_a_missing_video_file_fails_before_the_network(
 # --- The audit lock ---------------------------------------------------------
 
 
-async def test_asking_for_public_and_getting_private_is_reported(
+async def test_a_downgraded_privacy_status_is_reported(
     conn, graph, cfg, metrics, meta, caplog
 ):
-    """The unaudited project lock. It lives on the API project rather than the
-    video, so the upload succeeds and quietly downgrades, which is worth a log
-    line rather than looking like everything worked."""
+    """An upload that succeeds but comes back less public than it asked for.
+
+    The known cause is the audit restriction on an API project, which was
+    measured as not applying here on 2026-08-16. That makes this more worth
+    keeping rather than less: if it ever starts, the upload still succeeds and
+    the only sign is a value that quietly differs from the one requested.
+    """
     cfg = settings(cfg.db_path.parent, youtube_privacy_status="public")
     queued_id = await _queue(conn, cfg)
 
@@ -253,7 +257,23 @@ async def test_asking_for_public_and_getting_private_is_reported(
         published, _ = await _publish(conn, graph, cfg, metrics, queued_id)
 
     assert published is True
-    assert "unaudited" in caplog.text
+    assert "asked for public and got private" in caplog.text
+
+
+async def test_a_privacy_status_that_sticks_says_nothing(
+    conn, graph, cfg, metrics, meta, caplog
+):
+    """The normal case, and the one that would have been noise if the check
+    compared against the word "private" instead of against what was asked."""
+    cfg = settings(cfg.db_path.parent, youtube_privacy_status="public")
+    meta.youtube.privacy_status = "public"
+    queued_id = await _queue(conn, cfg)
+
+    with caplog.at_level("WARNING"):
+        published, _ = await _publish(conn, graph, cfg, metrics, queued_id)
+
+    assert published is True
+    assert "asked for" not in caplog.text
 
 
 # --- The other platform is untouched ----------------------------------------

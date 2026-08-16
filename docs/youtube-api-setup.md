@@ -11,6 +11,13 @@ taught:
   2020 is *locked* to private. Not defaulted to private. Locked, and not
   changeable in Studio afterwards. Quota is fine without an audit; publishing is
   not. Budget weeks, not days, and submit the form before writing any code.
+
+  **This did not hold for `the-nightly-build`.** Tested on 2026-08-16, one day
+  after the project was created and with no audit submitted: three uploads
+  asking for private, unlisted and public each kept the value they asked for,
+  and the values still held after processing. Why is unknown, so the paragraph
+  above stays as the documented behaviour and the thing to design against. It
+  is not what happens here. See `docs/youtube-handover.md`.
 - **YouTube takes pushed bytes.** Meta fetches the MP4 from a public URL, which
   is why `pipeline/gateway.upload_media` exists and why the gateway hosts
   anything at all. YouTube is a resumable upload: three HTTP calls, file goes up
