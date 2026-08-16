@@ -168,10 +168,19 @@ class GatewaySettings(BaseSettings):
     # `accounts.active` is the per-destination kill switch. A fourth switch
     # would be a fourth thing to check when nothing goes out.
     #
-    # Private until the API project clears its audit, which is not a
-    # preference. Every video uploaded from an unaudited project is locked
-    # private whatever this says, so asking for public before then produces a
-    # private video and a confusing log line. Flip it when the audit clears.
+    # What a published Short goes out as.
+    #
+    # The documentation says uploads from an API project created after 28 July
+    # 2020 and not yet audited are locked to private whatever this asks for.
+    # That is not true of this project, measured rather than assumed on
+    # 2026-08-16: three uploads asking for private, unlisted and public each
+    # kept the value they asked for, with no rejection reason. So the audit
+    # gates quota and standing, not publishing.
+    #
+    # Left at private as the safe default for a fresh deployment rather than
+    # because anything forces it. The scheduler still logs if a request comes
+    # back downgraded, since that is what the lock would look like if it ever
+    # does apply here.
     youtube_privacy_status: str = "private"
     # A declaration, not a default. This account's voice is a clone of a real
     # person reading a script that person commissioned, which is a judgment
