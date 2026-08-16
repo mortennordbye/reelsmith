@@ -193,6 +193,19 @@ section is.
   one or two and stop on their own. A ten-post queue is the case
   `db.live_media_names` already exists to protect, so nothing on the gateway
   side has to change to hold one.
+- **One render feeds both destinations.** `--enqueue` and `--recover` make an
+  Instagram row and a YouTube row from the same MP4, uploaded once, so the
+  nightly needs no second render and no extra step to keep the channel fed. It
+  is driven by `YOUTUBE_CHANNEL_ID` in the render host's `.env`, and without it
+  the fan-out skips YouTube silently and only the Reel is queued. The channel
+  id is all that host needs: the gateway holds the OAuth credentials, so no
+  Google secret reaches the machine that renders.
+- **`--max-queue` counts the Instagram queue only.** YouTube drains one a day
+  against Instagram's three, so its queue grows by design. Counted in the
+  ceiling it would climb past `--max-queue` on its own and pin the batch at
+  zero renders, permanently, with every component still reporting healthy. The
+  ceiling asks whether the feed is stocked far enough ahead, and the feed is
+  Instagram.
 - **Cancelling is the only review left.** Nothing reads the script before it
   goes live. The validators still catch dashes and hype vocabulary; they cannot
   catch a claim that is wrong about the project. Cancelling in the admin UI
