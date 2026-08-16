@@ -657,3 +657,30 @@ def test_enqueue_can_target_a_channel_instead(cfg):
 
     assert seen["ig_user_id"] == "UCq0Ff3lJ7dK2sWnEv8mXtLp"
     assert seen["title"] == "A hook that fits a title"
+
+
+def test_the_queue_ceiling_counts_only_the_feed(cfg):
+    """One render makes two rows, and the YouTube queue grows on purpose.
+
+    Counting every destination would halve the ceiling the nightly was
+    calibrated against, and then keep climbing on its own until the batch
+    stopped rendering entirely with every component still reporting healthy.
+    """
+    asked = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.update(dict(request.url.params))
+        return httpx.Response(
+            200,
+            json={
+                "queue": [
+                    {"state": "approved", "ig_user_id": cfg.ig_user_id},
+                    {"state": "draft", "ig_user_id": cfg.ig_user_id},
+                ]
+            },
+        )
+
+    count = gateway.fetch_pending_count(cfg, client=_client(handler))
+
+    assert asked["ig_user_id"] == cfg.ig_user_id
+    assert count == 2

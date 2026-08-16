@@ -472,13 +472,27 @@ def fetch_pending_count(cfg: Settings, *, client: httpx.Client | None = None) ->
 
     None rather than 0 when the gateway cannot be reached, because the two mean
     opposite things to the caller: 0 invites a batch, and unknown must not.
+
+    **Only the Instagram queue counts**, and that is the whole point of the
+    filter. One render now makes two rows, so counting every destination would
+    halve the ceiling the nightly was calibrated against. Worse, YouTube drains
+    one a day against Instagram's three, so its queue grows on purpose and by
+    design: counted here it would climb past `--max-queue` on its own and pin
+    the batch at zero renders, permanently and with every component reporting
+    healthy.
+
+    The ceiling asks "is the feed stocked far enough ahead", and the feed is
+    Instagram. A second destination running deliberately deep behind it is not
+    a reason to stop making videos.
     """
     if not _configured(cfg):
         return None
     url = f"{cfg.gateway_url.rstrip('/')}/api/queue"
     try:
         with client or httpx.Client(timeout=_TIMEOUT) as http:
-            response = http.get(url, headers=_headers(cfg))
+            response = http.get(
+                url, headers=_headers(cfg), params={"ig_user_id": cfg.ig_user_id}
+            )
             response.raise_for_status()
             rows = response.json().get("queue") or []
     except (httpx.HTTPError, ValueError) as exc:
