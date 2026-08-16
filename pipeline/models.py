@@ -266,3 +266,17 @@ class VideoSpec(BaseModel):
     # it, so the video has to say it too or the mechanic depends on a tap that
     # does not happen.
     ctaKeyword: str | None = None  # noqa: N815
+
+    # The frame the ask begins on, so a surface that cannot deliver it can cut
+    # the video there rather than carry a promise it cannot keep.
+    #
+    # The ask is spoken, captioned and shown at once, so there is no render
+    # flag that removes it: dropping it any other way means a second voiceover,
+    # which is the step that holds four gigabytes and has taken the batch down
+    # with it. Stopping the video before the ask starts costs one ffmpeg cut.
+    #
+    # Recorded rather than derived from scene lengths, because the ask only
+    # gets a scene of its own when the split lands clear of a boundary. When it
+    # does not, this stays None and the full video is the only version there
+    # is, which is the honest answer rather than a cut in the wrong place.
+    ctaFromFrame: int | None = None  # noqa: N815

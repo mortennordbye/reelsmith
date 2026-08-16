@@ -188,3 +188,73 @@ def write_spec(spec: VideoSpec, path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(json.loads(spec.model_dump_json()), indent=2))
     return path
+
+
+# The name the trimmed version always takes, beside `out.mp4` in the run folder.
+# Fixed rather than passed around, because two callers have to agree on it: the
+# step that writes it and the enqueue that looks for it days later.
+NO_CTA_NAME = "out-no-cta.mp4"
+
+
+def trim_cta(video_path: Path, spec: VideoSpec, cfg: Settings) -> Path | None:
+    """Write a copy that stops before the ask. Returns it, or None.
+
+    YouTube has no private replies, so "comment ANYDOC if you want the link" is
+    a promise nothing on that surface can keep. The ask is spoken, captioned
+    and shown at once, so no render flag removes it and the alternative is a
+    second voiceover, which is the step that holds four gigabytes and has taken
+    the whole batch down with it. Cutting the tail costs one ffmpeg call.
+
+    None when there is nothing to cut, which is a normal answer rather than a
+    failure: no ask at all, or an ask the spec refused to give its own scene
+    because it landed too close to a boundary. The caller falls back to the
+    full video, and a Short carrying an ask is a smaller problem than one cut
+    mid-sentence.
+
+    Re-encoded rather than stream-copied. A copy can only cut at a keyframe, so
+    it would land up to a second away from the frame asked for, which is either
+    a clipped last word or the first syllable of the ask. Seconds of CPU on a
+    thirty second clip is the cheaper mistake.
+
+    Remotion's bundled ffmpeg rather than a system one, because it is already a
+    dependency of the render and ships the encoders this needs. A system ffmpeg
+    is on the Linux host and not on the Mac, so relying on it would mean the
+    trim silently not happening depending on where `--enqueue` was run.
+    """
+    if spec.ctaFromFrame is None:
+        return None
+
+    video_dir = cfg.video_dir
+    seconds = spec.ctaFromFrame / spec.fps
+    out_path = video_path.with_name(NO_CTA_NAME)
+    cmd = [
+        "npx", "remotion", "ffmpeg", "-y", "-loglevel", "error",
+        "-i", str(video_path.resolve()),
+        "-t", f"{seconds:.3f}",
+        # CRF 18 and a slower preset than feels necessary, because the frame is
+        # burned-in captions and a rendered README over flat colour. That is
+        # the content h264 handles worst, and a cheap encode shows it as fringing
+        # on the text rather than as softness nobody would notice. The whole
+        # clip is thirty seconds; the extra CPU is not the cost worth saving.
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+        "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart",
+        str(out_path.resolve()),
+    ]
+    try:
+        proc = subprocess.run(  # noqa: S603 - argv list, no shell
+            cmd, cwd=video_dir, capture_output=True, text=True, check=False, timeout=600
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.warning("Could not trim the ask off %s: %s", video_path.name, exc)
+        return None
+
+    if proc.returncode != 0 or not out_path.exists():
+        log.warning("ffmpeg refused to trim %s: %s", video_path.name, proc.stderr[-300:])
+        return None
+
+    log.info(
+        "Wrote %s, %.1fs of %.1fs, without the ask",
+        out_path.name, seconds, spec.durationInFrames / spec.fps,
+    )
+    return out_path

@@ -368,6 +368,10 @@ def build_spec(
         ),
         scenes=scenes,
         captions=captions,
+        # Only when the ask got a scene of its own. Without that split there is
+        # no frame where the video stops being about the repo and starts asking
+        # for a comment, so there is nothing honest to cut at.
+        ctaFromFrame=outro[0] if outro else None,
     )
 
     log.info(
