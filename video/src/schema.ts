@@ -94,6 +94,16 @@ export const videoSpecSchema = z.object({
    * promise the account cannot keep.
    */
   ctaKeyword: z.string().nullable().optional(),
+  /**
+   * The frame the ask begins on, so a surface with no way to deliver it can
+   * cut the video there. Nothing in the render reads this: it is carried so
+   * the spec stays the single description of the video, rather than a trim
+   * re-deriving a boundary the spec has already decided.
+   *
+   * Null when there is no ask, and when the split was refused for landing too
+   * close to a scene boundary.
+   */
+  ctaFromFrame: z.number().int().nullable().optional(),
 });
 
 /**

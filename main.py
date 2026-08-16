@@ -1102,7 +1102,7 @@ def _enqueue_run(cfg: Settings, run_dir: Path, *, approved: bool) -> None:
     youtube_result = _enqueue_youtube(
         cfg,
         run_dir,
-        video_name=video_url.rsplit("/", 1)[-1],
+        fallback_video_name=video_url.rsplit("/", 1)[-1],
         link=repo.url if repo else "",
         caption=caption,
         repo_full_name=repo.full_name if repo else None,
@@ -1140,11 +1140,45 @@ def _enqueue_run(cfg: Settings, run_dir: Path, *, approved: bool) -> None:
         )
 
 
+def _youtube_video_name(cfg: Settings, run_dir: Path, fallback: str) -> str:
+    """Upload the version without the ask, or fall back to the full one.
+
+    The Reel says "comment ANYDOC if you want the link" out loud, in the
+    captions and on an end card. YouTube has no private replies, so that is a
+    promise nothing on the surface can keep, and the ask is in the voiceover so
+    no render flag removes it. `renderer.trim_cta` cuts the video where the ask
+    begins, which the spec recorded when it gave the ask its own scene.
+
+    Falling back rather than failing when there is nothing to cut: a Short
+    carrying an ask it cannot honour is a smaller problem than no Short.
+    """
+    spec_path = run_dir / "video.json"
+    if not spec_path.exists():
+        return fallback
+
+    trimmed = renderer.trim_cta(
+        run_dir / "out.mp4", VideoSpec.model_validate_json(spec_path.read_text()), cfg
+    )
+    if trimmed is None:
+        console.print(
+            "[yellow]No clean cut for the ask.[/] "
+            "[dim]The Short gets the full video, ask included.[/]"
+        )
+        return fallback
+
+    with console.status("Uploading the version without the ask..."):
+        url = gateway.upload_media(trimmed, f"{run_dir.name}-no-cta", cfg)
+    if not url:
+        console.print("[yellow]Could not upload the trimmed video.[/] [dim]Using the full one.[/]")
+        return fallback
+    return url.rsplit("/", 1)[-1]
+
+
 def _enqueue_youtube(
     cfg: Settings,
     run_dir: Path,
     *,
-    video_name: str,
+    fallback_video_name: str,
     link: str,
     caption: str,
     repo_full_name: str | None,
@@ -1152,8 +1186,10 @@ def _enqueue_youtube(
 ) -> dict | None:
     """Queue the same render on the YouTube channel, if one is configured.
 
-    The MP4 is already uploaded and `/api/media` names files by their own
-    digest, so both rows point at one file and nothing is sent twice.
+    Not quite the same file: the Short gets a copy that stops before the ask,
+    since the keyword mechanic has no equivalent there. Everything else is
+    identical, and `/api/media` names files by their own digest, so nothing is
+    uploaded twice.
 
     **Best effort, and loudly so.** The Reel is the primary surface and its row
     is already committed by the time this runs, so a YouTube failure must not
@@ -1175,7 +1211,7 @@ def _enqueue_youtube(
     title = VideoScript.model_validate_json(script_path.read_text()).hook
 
     result = gateway.enqueue(
-        video_name,
+        _youtube_video_name(cfg, run_dir, fallback_video_name),
         link,
         cfg,
         caption=gateway.youtube_description(caption, link),

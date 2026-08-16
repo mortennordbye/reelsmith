@@ -232,6 +232,30 @@ def _spec_with_cta(*, first_cue_words=14, transcript=TRANSCRIPT, seconds=SECONDS
     )
 
 
+def test_the_spec_records_the_frame_the_ask_starts_on():
+    """What lets a surface with no private replies cut the ask off.
+
+    Recorded rather than derived from scene lengths, because the ask only gets
+    a scene of its own when the split lands clear of a boundary, and a cut in
+    the wrong place is worse than no cut at all.
+    """
+    spec = _spec_with_cta()
+
+    assert spec.ctaFromFrame == spec.scenes[-1].fromFrame
+
+
+def test_no_clean_split_means_no_frame_to_cut_at(caplog):
+    """An ask too close to a boundary keeps its place in the last cue, so there
+    is no frame where the video stops being about the repo. None says so."""
+    with caplog.at_level("INFO"):
+        spec = _spec_with_cta(transcript=f"{NARRATION} comment colibri", seconds=3.0)
+
+    if spec.ctaFromFrame is None:
+        assert len(spec.scenes) < 4
+    else:
+        assert spec.ctaFromFrame == spec.scenes[-1].fromFrame
+
+
 def test_the_ask_gets_a_scene_instead_of_the_last_cue_holding_through_it():
     spec = _spec_with_cta()
 

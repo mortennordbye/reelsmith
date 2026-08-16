@@ -131,6 +131,26 @@ const Hook: React.FC<{ text: string }> = ({ text }) => {
 const CTA_FROM_FRACTION = 0.55;
 
 /**
+ * Where the ask actually starts now: the frame the spec gave it, which is the
+ * scene the voice asks in. `CTA_FROM_FRACTION` is only the fallback for a spec
+ * that has no such frame, either because it pre-dates the field or because the
+ * split landed too close to a scene boundary to make.
+ *
+ * This is a deliberate trade, made on 2026-08-16, and it costs Instagram
+ * something. Starting at 55% meant a viewer who left at 70% had still seen the
+ * ask; confined to the closing scene, that viewer has not. What it buys is a
+ * single frame where the video stops being about the repo and starts asking
+ * for a comment, so a surface with no way to deliver the link can cut there.
+ * Without it the chip runs to the last frame and the only way to produce a
+ * version without it is a second render.
+ */
+const ctaStartFrame = (spec: {
+  ctaFromFrame?: number | null;
+  durationInFrames: number;
+}): number =>
+  spec.ctaFromFrame ?? Math.round(spec.durationInFrames * CTA_FROM_FRACTION);
+
+/**
  * The ask, on screen. The caption carries the same line, but a caption sits
  * behind a "more" tap that most viewers never make, so without this the whole
  * comment-to-DM mechanic depends on an interaction that does not happen.
@@ -202,9 +222,7 @@ export const Reel: React.FC<VideoSpec> = (spec) => {
   const { fps } = useVideoConfig();
   // Where the ask appears. It no longer takes anything from the captions, so
   // they run to the last frame and the video ends on content.
-  const ctaFrom = spec.ctaKeyword
-    ? Math.round(spec.durationInFrames * CTA_FROM_FRACTION)
-    : undefined;
+  const ctaFrom = spec.ctaKeyword ? ctaStartFrame(spec) : undefined;
 
   return (
     <AbsoluteFill style={{ backgroundColor: theme.color.bgDeep }}>
@@ -229,11 +247,10 @@ export const Reel: React.FC<VideoSpec> = (spec) => {
         <Hook text={spec.hook} />
       </Sequence>
 
-      {/* Runs from the middle to the last frame rather than sitting in a slot at
-          the end, so a viewer who leaves at 70% has still seen the ask. It is at
+      {/* Starts on the frame the voice starts asking, and runs to the end. At
           the top of the frame, so the captions keep the bottom band and the
-          video's final frame is scene content, which loops cleanly back into
-          the hook. */}
+          final frame is still scene content, which loops cleanly back into the
+          hook. See `ctaStartFrame` for what moving it here cost and bought. */}
       {spec.ctaKeyword && ctaFrom !== undefined ? (
         <Sequence
           from={ctaFrom}
