@@ -15,7 +15,7 @@ import subprocess
 from pathlib import Path
 
 from config import Settings
-from pipeline.models import VideoSpec
+from pipeline.models import CueKind, Scene, VideoSpec
 
 log = logging.getLogger(__name__)
 
@@ -190,71 +190,122 @@ def write_spec(spec: VideoSpec, path: Path) -> Path:
     return path
 
 
-# The name the trimmed version always takes, beside `out.mp4` in the run folder.
-# Fixed rather than passed around, because two callers have to agree on it: the
-# step that writes it and the enqueue that looks for it days later.
+# The name the version without the ask always takes, beside `out.mp4` in the
+# run folder. Fixed rather than passed around, because two callers have to
+# agree on it: the step that writes it and the enqueue that looks for it later.
 NO_CTA_NAME = "out-no-cta.mp4"
 
 
-def trim_cta(video_path: Path, spec: VideoSpec, cfg: Settings) -> Path | None:
-    """Write a copy that stops before the ask. Returns it, or None.
+
+# How long the README hero holds at the end of the version without the ask.
+# Only that version: the hero bookends the video, and on the full one the
+# closing hero is the scene the ask is spoken over. Cutting at the ask removes
+# it, so a Short would end on whichever content cue happened to be last, and
+# the best looking asset in the video would appear only in the part that was
+# cut off.
+#
+# Done here rather than in `spec.py` because this is a separate render. Moving
+# it there would take the same seconds off the last content scene on Instagram
+# too, to fix an ending only YouTube has.
+HERO_TAIL_SECONDS = 1.6
+
+# What the content scene the hero cuts into keeps. Lower than
+# `MIN_SCENE_SECONDS`, deliberately: that floor is about a cut being
+# readable in the middle of a video, and this is the last thing on screen
+# before a closing hold on an image the viewer already saw at the start.
+# Without the lower floor the hero never fits at all, because the last
+# content scene usually runs about 2.6s against a 1.8s minimum.
+MIN_TAIL_CONTENT_SECONDS = 1.0
+
+# Below this a closing hero is a flash rather than a hold, and the frames
+# are worth more on the content scene that would otherwise lose them.
+MIN_HERO_TAIL_SECONDS = 0.8
+
+
+def _scenes_ending_on_hero(spec: VideoSpec) -> list[Scene]:
+    """The scenes up to the ask, closing on the README hero.
+
+    The hero has to come from somewhere, and the only place is the tail of the
+    last content scene. That is affordable here in a way it is not on the full
+    video: this render exists to end well, and the seconds spent are seconds a
+    viewer would otherwise have spent on a cue that has finished being spoken.
+
+    Falls back to a plain truncation when the last content scene cannot spare
+    the time without dropping under `MIN_SCENE_SECONDS`, or when there is no
+    hero image to cut to.
+    """
+    cut = spec.ctaFromFrame
+    kept = [s for s in spec.scenes if s.fromFrame < cut]
+    if not kept:
+        return spec.scenes
+
+    hero = next((s for s in spec.scenes if s.kind is CueKind.SCREENSHOT and s.imageSrc), None)
+    last = kept[-1]
+    spare = (cut - last.fromFrame) - int(MIN_TAIL_CONTENT_SECONDS * spec.fps)
+    tail = min(int(HERO_TAIL_SECONDS * spec.fps), max(0, spare))
+
+    truncated = [
+        s.model_copy(update={"durationInFrames": min(s.durationInFrames, cut - s.fromFrame)})
+        for s in kept
+    ]
+    if hero is None or tail < int(MIN_HERO_TAIL_SECONDS * spec.fps):
+        return truncated
+
+    truncated[-1] = truncated[-1].model_copy(
+        update={"durationInFrames": cut - tail - last.fromFrame}
+    )
+    truncated.append(
+        hero.model_copy(update={"fromFrame": cut - tail, "durationInFrames": tail})
+    )
+    return truncated
+
+
+def render_without_cta(spec: VideoSpec, out_dir: Path, cfg: Settings) -> Path | None:
+    """Render the same video with no ask in it. Returns the path, or None.
 
     YouTube has no private replies, so "comment ANYDOC if you want the link" is
-    a promise nothing on that surface can keep. The ask is spoken, captioned
-    and shown at once, so no render flag removes it and the alternative is a
-    second voiceover, which is the step that holds four gigabytes and has taken
-    the whole batch down with it. Cutting the tail costs one ffmpeg call.
+    a promise nothing on that surface can keep. The ask is in three places at
+    once: spoken in the voiceover, in the burned-in captions, and on a chip
+    that runs from the middle of the video to the last frame.
 
-    None when there is nothing to cut, which is a normal answer rather than a
-    failure: no ask at all, or an ask the spec refused to give its own scene
-    because it landed too close to a boundary. The caller falls back to the
-    full video, and a Short carrying an ask is a smaller problem than one cut
-    mid-sentence.
+    That last one is why this is a second render rather than a cut of the
+    first. A chip visible from halfway cannot also be absent from a truncation
+    of the same file; the pixels are either there or they are not. Dropping
+    `ctaKeyword` removes it, and stopping at `ctaFromFrame` drops the spoken
+    ask and the captions that transcribe it, because Remotion renders the audio
+    for the frames it renders and no others.
 
-    Re-encoded rather than stream-copied. A copy can only cut at a keyframe, so
-    it would land up to a second away from the frame asked for, which is either
-    a clipped last word or the first syllable of the ask. Seconds of CPU on a
-    thirty second clip is the cheaper mistake.
+    **No second voiceover.** The audio file is reused exactly as it is, which
+    matters: TTS is the step that holds about four gigabytes and has taken the
+    whole nightly batch down with it. This costs CPU and minutes, not memory.
 
-    Remotion's bundled ffmpeg rather than a system one, because it is already a
-    dependency of the render and ships the encoders this needs. A system ffmpeg
-    is on the Linux host and not on the Mac, so relying on it would mean the
-    trim silently not happening depending on where `--enqueue` was run.
+    None when there is nothing to remove, or when the ask never got a frame of
+    its own, in which case there is no honest place to stop and the caller
+    falls back to the full video.
     """
-    if spec.ctaFromFrame is None:
+    if not spec.ctaKeyword or spec.ctaFromFrame is None:
         return None
 
-    video_dir = cfg.video_dir
-    seconds = spec.ctaFromFrame / spec.fps
-    out_path = video_path.with_name(NO_CTA_NAME)
-    cmd = [
-        "npx", "remotion", "ffmpeg", "-y", "-loglevel", "error",
-        "-i", str(video_path.resolve()),
-        "-t", f"{seconds:.3f}",
-        # CRF 18 and a slower preset than feels necessary, because the frame is
-        # burned-in captions and a rendered README over flat colour. That is
-        # the content h264 handles worst, and a cheap encode shows it as fringing
-        # on the text rather than as softness nobody would notice. The whole
-        # clip is thirty seconds; the extra CPU is not the cost worth saving.
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-        "-c:a", "aac", "-b:a", "192k",
-        "-movflags", "+faststart",
-        str(out_path.resolve()),
-    ]
+    # Same spec, minus the ask and everything after it.
+    without = spec.model_copy(
+        update={
+            "ctaKeyword": None,
+            "durationInFrames": spec.ctaFromFrame,
+            "scenes": _scenes_ending_on_hero(spec),
+        }
+    )
+    out_path = out_dir / NO_CTA_NAME
     try:
-        proc = subprocess.run(  # noqa: S603 - argv list, no shell
-            cmd, cwd=video_dir, capture_output=True, text=True, check=False, timeout=600
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        log.warning("Could not trim the ask off %s: %s", video_path.name, exc)
-        return None
-
-    if proc.returncode != 0 or not out_path.exists():
-        log.warning("ffmpeg refused to trim %s: %s", video_path.name, proc.stderr[-300:])
+        render(without, out_path, cfg)
+    except RenderError as exc:
+        # Never fatal. The Reel is already rendered and queued by the time this
+        # runs, and a Short carrying an ask it cannot honour is a smaller
+        # problem than no Short at all.
+        log.warning("Could not render the version without the ask: %s", exc)
         return None
 
     log.info(
-        "Wrote %s, %.1fs of %.1fs, without the ask",
-        out_path.name, seconds, spec.durationInFrames / spec.fps,
+        "Rendered %s, %.1fs of %.1fs, no ask",
+        out_path.name, spec.ctaFromFrame / spec.fps, spec.durationInFrames / spec.fps,
     )
     return out_path
