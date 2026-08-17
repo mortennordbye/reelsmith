@@ -297,17 +297,34 @@ def test_the_block_carries_the_hooks_and_their_numbers(cfg):
     assert "80.4%" in block
 
 
-def test_the_block_says_the_whole_list_is_underperforming():
-    """Otherwise the model copies the top of a sorted list of failures.
-
-    Every hook this account has published skipped 64 to 80 percent of its
-    viewers against a 30 to 40 percent average, so the best line in the block
-    is still a bad one and the prompt has to say so.
-    """
+def test_a_list_that_is_all_bad_is_labelled_as_all_bad():
+    """Otherwise the model copies the top of a sorted list of failures. When
+    this was written every published hook skipped 64 to 80 percent against a 30
+    to 40 percent average, so the best line was still a bad one."""
     block = _results_block(past(("the least bad one", 64.2)))
 
     assert "30 to 40 percent" in block
     assert "underperforming" in block
+
+
+def test_a_list_with_a_real_winner_in_it_is_not(cfg):
+    """By 53 posts the best hook had reached 45.8 percent, which is near the
+    benchmark rather than far below it. Hardcoded, the "all underperforming"
+    line had become an instruction to ignore the account's own best work."""
+    block = _results_block(past(("the one that worked", 45.8), ("a formula", 80.4)))
+
+    assert "underperforming" not in block
+    assert "evidence of what works here" in block
+
+
+def test_the_verdict_switches_on_the_best_score_not_the_worst():
+    """A single strong hook is enough to make the list worth learning from,
+    however bad the rest of it is."""
+    all_bad = _results_block(past(("a", 60.1), ("b", 89.0)))
+    one_good = _results_block(past(("a", 49.9), ("b", 89.0)))
+
+    assert "underperforming" in all_bad
+    assert "underperforming" not in one_good
 
 
 def test_the_block_asks_for_a_shape_that_is_not_in_it():
