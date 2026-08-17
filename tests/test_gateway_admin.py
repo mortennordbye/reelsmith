@@ -918,3 +918,42 @@ async def test_an_unknown_account_falls_back_to_everything(client):
     response = await http.get("/admin/?account=does-not-exist")
     assert response.status_code == 200
     assert "nightly" in response.text
+
+
+# --- Which surface a board describes ----------------------------------------
+
+
+@pytest.mark.parametrize("page", ["/admin/", "/admin/slots", "/admin/posts", "/admin/health"])
+async def test_every_board_names_its_platform(client, page):
+    """A YouTube channel is its own account row publishing on its own schedule
+    under its own rules. Before this, two boards appeared with nothing but a
+    username between them."""
+    http, app = client
+    await db.upsert_account(
+        app.state.db, ig_user_id="UC-chan", access_token="tok",
+        username="thenightlybuild", platform=db.PLATFORM_YOUTUBE,
+    )
+
+    body = (await http.get(page)).text
+
+    # The badge markup, not the bare word: the stylesheet explains itself and
+    # mentions both platforms by name, so a substring match passes on a page
+    # that renders no badge at all.
+    assert 'class="platform youtube"' in body, f"{page} does not mark the channel board"
+    assert 'class="platform instagram"' in body, f"{page} does not mark the Reels board"
+
+
+async def test_a_single_board_still_names_its_platform(client):
+    """The posts page used to hide the heading when only one board was shown,
+    which is exactly when the switcher has narrowed to one account and nothing
+    else on the page says which surface it is."""
+    http, app = client
+    await db.upsert_account(
+        app.state.db, ig_user_id="UC-chan", access_token="tok",
+        username="thenightlybuild", platform=db.PLATFORM_YOUTUBE,
+    )
+
+    body = (await http.get("/admin/posts?account=UC-chan")).text
+
+    assert 'class="platform youtube"' in body
+    assert 'class="platform instagram"' not in body, "the switcher narrowed to one account"

@@ -10,10 +10,7 @@
 
 {% for board in boards %}
   {% set account = board.account %}
-  <h2>
-    {{ account['username'] or account['ig_user_id'] }}
-    {% if not account['active'] %}<span class="tag failed">paused</span>{% endif %}
-  </h2>
+  {% include "_account_heading.html" %}
 
   {% if not board.has_slots %}
     <div class="card muted small">
@@ -47,9 +44,20 @@
               </span>
             </div>
 
+            {# The link leads, because it is the part that is still used: it goes
+               into the YouTube description and is what a DM would carry.
+
+               The keyword follows, marked dormant. Nothing advertises it any
+               more, so a row reading "comment IMMICH for ..." described a video
+               that says no such thing. The poller is still armed, which is why
+               the word is shown at all rather than dropped. #}
             <p class="small muted" style="margin:6px 0">
-              comment <strong>{{ row['keyword'] }}</strong> for
               <span class="mono">{{ row['link'] }}</span>
+              {% if row['keyword'] %}
+                <span class="dormant" title="The videos ask for a follow now. Nothing tells anyone this word, so the poller will not hear it.">
+                  dm keyword {{ row['keyword'] }} · dormant
+                </span>
+              {% endif %}
             </p>
 
             {% if row['failure'] %}

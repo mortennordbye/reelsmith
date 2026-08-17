@@ -11,7 +11,7 @@
 
 {% for board in boards %}
   {% set account = board.account %}
-  <h2>{{ account['username'] or account['ig_user_id'] }}</h2>
+  {% include "_account_heading.html" %}
 
   <div class="card">
     {% if board.slots %}

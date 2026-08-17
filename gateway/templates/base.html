@@ -2,8 +2,21 @@
    this page has to render inside a cluster that cannot reach a CDN, and a
    control panel that fails to style itself is a control panel nobody trusts.
 
-   Colours are the repo's palette, GitHub-dark-adjacent on purpose, so the
-   panel looks like it belongs to the thing it controls. #}
+   Colours and type are lifted from nordbye.it, so the panel looks like it
+   belongs to the person who owns it rather than to GitHub. It used to be the
+   repo's GitHub-dark palette, which was a reasonable default and shared exactly
+   nothing with anything else its owner runs.
+
+   **This is deliberately not the video's palette.** `CLAUDE.md` keeps the Reels
+   GitHub-dark-adjacent because the audience there stares at that scheme all day
+   and it has to read as native. This page has an audience of one, so the same
+   argument points the other way.
+
+   Fraunces is the site's display face and JetBrains Mono its mono. Neither is
+   fetched: the stacks name them first and fall back to a system serif and a
+   system mono, so a machine that has them gets them and the cluster never asks
+   a CDN for anything. #}
+{% from "_icons.html" import platform_icon %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -13,14 +26,23 @@
   {% block head %}{% endblock %}
   <style>
     :root {
-      --bg: #0d1117; --panel: #161b22; --line: #30363d; --ink: #e6edf3;
-      --dim: #8b949e; --accent: #58a6ff; --good: #3fb950; --warn: #d29922;
-      --bad: #f85149;
+      /* nordbye.it, .dark */
+      --bg: #0a0a0a; --panel: #141414; --line: #262626; --line-2: #3a3a3a;
+      --ink: #e7e7e7; --dim: #a5a5a5; --faint: #7a7a7a;
+      --accent: #51a45e; --accent-soft: #8ec798; --good: #51a45e;
+      --warn: #bf9752; --bad: #d18c82;
+      --r-sm: 6px; --r-md: 10px; --r-lg: 18px;
+      --serif: Fraunces, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0; background: var(--bg); color: var(--ink);
-      font: 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+      font: 15px/1.6 Inter, ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+      /* The site's hero wash, at the same angle and opacity. Fixed, so it stays
+         put while a long queue scrolls under it. */
+      background-image:
+        radial-gradient(58% 76% at 24% -8%, #51a45e17, transparent 62%);
+      background-attachment: fixed;
     }
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
@@ -29,50 +51,80 @@
       display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
       background: var(--panel); position: sticky; top: 0; z-index: 5;
     }
-    header .brand { font-weight: 600; padding: 14px 0; margin-right: 8px; }
+    header .brand {
+      font-family: var(--serif); font-weight: 600; font-size: 17px;
+      padding: 14px 0; margin-right: 8px; letter-spacing: .01em;
+    }
     header nav a {
       display: inline-block; padding: 14px 2px; color: var(--dim);
       border-bottom: 2px solid transparent; margin-right: 16px;
     }
-    header nav a.on { color: var(--ink); border-bottom-color: #f78166; }
+    header nav a.on { color: var(--ink); border-bottom-color: var(--accent); }
     main { padding: 20px; max-width: 1100px; margin: 0 auto; }
-    h1 { font-size: 20px; margin: 0 0 4px; }
-    h2 { font-size: 16px; margin: 28px 0 10px; }
+    h1 {
+      font-family: var(--serif); font-size: 26px; font-weight: 600;
+      margin: 0 0 6px; letter-spacing: .01em;
+    }
+    h2 {
+      font-family: var(--serif); font-size: 19px; font-weight: 600;
+      margin: 30px 0 12px; letter-spacing: .01em;
+    }
     .sub { color: var(--dim); font-size: 13px; margin: 0 0 20px; }
     .card {
       background: var(--panel); border: 1px solid var(--line);
-      border-radius: 8px; padding: 14px 16px; margin-bottom: 14px;
+      border-radius: var(--r-md); padding: 15px 17px; margin-bottom: 14px;
     }
     .row { display: flex; gap: 14px; align-items: flex-start; }
     .row > .grow { flex: 1; min-width: 0; }
     .muted { color: var(--dim); }
     .small { font-size: 13px; }
-    .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+    .mono { font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
     .tag {
       display: inline-block; font-size: 11px; text-transform: uppercase;
       letter-spacing: .04em; padding: 2px 7px; border-radius: 999px;
       border: 1px solid var(--line); color: var(--dim);
     }
-    .tag.approved { color: var(--good); border-color: #1f6f34; }
-    .tag.draft { color: var(--warn); border-color: #6b4d10; }
-    .tag.failed, .tag.cancelled { color: var(--bad); border-color: #7d2019; }
-    .tag.published { color: var(--accent); border-color: #1f4b7d; }
-    .tag.claimed { color: var(--warn); border-color: #6b4d10; }
+    .tag.approved { color: var(--good); border-color: #2f5f37; }
+    .tag.draft { color: var(--warn); border-color: #5c4620; }
+    .tag.failed, .tag.cancelled { color: var(--bad); border-color: #6b3a34; }
+    .tag.published { color: var(--accent-soft); border-color: #3f6b47; }
+    .tag.claimed { color: var(--warn); border-color: #5c4620; }
+    /* Which surface a board describes. Instagram and YouTube are separate
+       account rows publishing on different schedules under different rules, and
+       until this existed the only thing telling two boards apart was a
+       username. Colour alone would not be enough, so the word is always there
+       and the colour only makes it findable at a glance. */
+    .platform {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 11px; text-transform: uppercase;
+      letter-spacing: .06em; font-weight: 600; padding: 3px 9px;
+      border-radius: var(--r-sm); vertical-align: middle; margin-right: 4px;
+    }
+    /* Violet and red rather than anything from the palette above: green,
+       copper and salmon already mean approved, waiting and failed, and a badge
+       that borrows a state colour is a badge that gets misread as a state. */
+    .platform.instagram { color: #c98ae0; background: #241a2b; border: 1px solid #4d3a63; }
+    .platform.youtube { color: #ff6b5e; background: #2b1310; border: 1px solid #6b2b24; }
+    /* The stripe repeats the badge down the left edge, so scrolling past a
+       heading does not lose which surface you are looking at. */
+    h2.board { display: flex; align-items: center; gap: 8px; padding-left: 10px; }
+    h2.board.instagram { border-left: 3px solid #4d3a63; }
+    h2.board.youtube { border-left: 3px solid #6b2b24; }
     button, .btn {
-      font: inherit; font-size: 13px; padding: 5px 11px; border-radius: 6px;
-      border: 1px solid var(--line); background: #21262d; color: var(--ink);
+      font: inherit; font-size: 13px; padding: 5px 11px; border-radius: var(--r-sm);
+      border: 1px solid var(--line-2); background: #1c1c1c; color: var(--ink);
       cursor: pointer;
     }
-    button:hover { border-color: var(--dim); }
-    button.primary { background: #1f6f34; border-color: #2ea043; }
-    button.danger { background: #4a1a16; border-color: #7d2019; }
+    button:hover { border-color: var(--accent); color: #fff; }
+    button.primary { background: #2f5f37; border-color: var(--accent); color: #fff; }
+    button.danger { background: #3a1c18; border-color: #6b3a34; }
     button.link { background: none; border: none; color: var(--dim); padding: 5px 4px; }
     form.inline { display: inline; }
     input, select, textarea {
-      font: inherit; font-size: 13px; background: #0d1117; color: var(--ink);
-      border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px;
+      font: inherit; font-size: 13px; background: #050505; color: var(--ink);
+      border: 1px solid var(--line); border-radius: var(--r-sm); padding: 5px 8px;
     }
-    textarea { width: 100%; font-family: ui-monospace, Menlo, monospace; }
+    textarea { width: 100%; font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; }
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
     th { color: var(--dim); font-weight: 500; font-size: 12px; text-transform: uppercase; }
@@ -88,7 +140,12 @@
       color: var(--dim); padding: 3px 9px; border-radius: 999px;
       border: 1px solid transparent;
     }
-    .switcher a.on { color: var(--ink); border-color: var(--line); background: #21262d; }
+    .switcher a.on { color: var(--ink); border-color: var(--line-2); background: #1c1c1c; }
+    /* Same two hues as the board badges, so the picker and the heading it
+       selects agree without the header growing a second word. */
+    .switcher .mark { margin-right: 5px; }
+    .switcher .mark.instagram { color: #c98ae0; }
+    .switcher .mark.youtube { color: #ff6b5e; }
     /* Per-post numbers. A fixed grid rather than a table, because the row has
        a thumbnail beside it and a table would fight the video element. */
     .metrics { display: flex; gap: 20px; flex-wrap: wrap; margin: 8px 0 0; }
@@ -100,11 +157,18 @@
     }
     .metrics .none { color: var(--dim); font-weight: 400; }
     .empty { color: var(--dim); padding: 18px 0; text-align: center; }
-    video { width: 150px; border-radius: 6px; border: 1px solid var(--line); display: block; }
+    /* Something the panel still stores and no longer acts on. Dimmer than
+       muted, so it reads as a footnote rather than as a current instruction. */
+    .dormant {
+      color: var(--faint); font-size: 11px; margin-left: 8px;
+      border: 1px solid var(--line); border-radius: var(--r-sm);
+      padding: 1px 6px; white-space: nowrap;
+    }
+    video { width: 150px; border-radius: var(--r-sm); border: 1px solid var(--line); display: block; }
     details summary { cursor: pointer; color: var(--dim); font-size: 13px; }
     .banner {
-      border: 1px solid #7d2019; background: #2d1214; color: #ffb3ad;
-      border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 14px;
+      border: 1px solid #6b3a34; background: #2a1512; color: #e8a89f;
+      border-radius: var(--r-md); padding: 10px 14px; margin-bottom: 16px; font-size: 14px;
     }
     /* The queue is the reason to open this, so it stays readable on a phone:
        the kill switch and the cancel button are the two things most likely to
@@ -136,9 +200,15 @@
         <span class="switcher small">
           <a href="?" class="{{ 'on' if not scope.selected }}">All</a>
           {% for a in scope.accounts %}
+            {# The platform, not just the handle. The Instagram account and the
+               YouTube channel share a username here, so a switcher listing only
+               usernames offered the same word twice and no way to tell which
+               was which. #}
             <a href="?account={{ a['ig_user_id'] }}"
                class="{{ 'on' if scope.selected and scope.selected['ig_user_id'] == a['ig_user_id'] }}">
-              {{ a['username'] or a['ig_user_id'][:8] }}
+              <span class="mark {{ a['platform'] or 'instagram' }}">{{
+                platform_icon(a['platform'] or 'instagram', 12) }}</span>{{
+                a['username'] or a['ig_user_id'][:8] }}
               {% if not a['active'] %}&#9679;{% endif %}
             </a>
           {% endfor %}
