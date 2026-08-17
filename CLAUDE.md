@@ -9,6 +9,13 @@ It is gitignored and therefore absent from a fresh clone. It holds the account
 identity and the editorial register every script, caption and DM has to match.
 Without it you can still work on the code, but do not write copy.
 
+**If `IDEAS.md` exists, read it before proposing a change to the video.** It is
+gitignored, so a fresh clone does not have it. It ranks what to try next and,
+more usefully, records what was already rejected and why, argued from the
+account's own view counts and skip rates. Three separate proposals here have
+been for things the pipeline already had. The panel that maintains it is
+`.claude/skills/reel-council`.
+
 **If `HANDOVER.md` exists, read it before doing anything else.** It means a
 session ended mid-thread, and it records uncommitted work and open decisions
 that are not visible from the code. Delete it once its open items are resolved.
