@@ -89,11 +89,10 @@ export const videoSpecSchema = z.object({
   scenes: z.array(sceneSchema),
   captions: z.array(captionSchema),
   /**
-   * The word to comment for the link, shown as an end card. Null when no
-   * gateway is configured: asking for a comment nothing listens for is a
-   * promise the account cannot keep.
+   * Whether the follow ask appears as an end card. Was `ctaKeyword`, the word
+   * to comment for the link; the ask is a follow now and needs no word.
    */
-  ctaKeyword: z.string().nullable().optional(),
+  showFollowCta: z.boolean().optional(),
   /**
    * The frame the ask begins on, so a surface with no way to deliver it can
    * cut the video there. Nothing in the render reads this: it is carried so

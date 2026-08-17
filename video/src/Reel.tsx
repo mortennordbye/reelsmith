@@ -12,7 +12,7 @@ import {
 
 import { Background } from "./components/Background";
 import { Captions } from "./components/Captions";
-import { SceneRenderer } from "./scenes/SceneRenderer";
+import { OpeningSceneContext, SceneRenderer } from "./scenes/SceneRenderer";
 import { theme } from "./theme";
 import type { VideoSpec } from "./types";
 
@@ -46,12 +46,21 @@ const Hook: React.FC<{ text: string }> = ({ text }) => {
   //
   // The scrim thins rather than clearing. It is what keeps the hook legible on
   // a light README hero, and plenty of them are light.
-  const resolve = interpolate(frame, [0, durationInFrames * 0.75], [0, 1], {
+  // Resolves inside the first second rather than over three quarters of the
+  // hook, and starts at a blur that still reads as a GitHub page rather than as
+  // a smear. Recognition is the entire reason for opening on the hero, and
+  // `skip_rate` scores the first three seconds, so anything still resolving at
+  // second two resolved after the decision.
+  //
+  // The scrim is unchanged. It is what keeps white hook text legible on a light
+  // README, plenty of them are light, and darkening a sharp screenshot costs
+  // recognition far less than blurring it does.
+  const resolve = interpolate(frame, [0, fps], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
   const scrim = interpolate(resolve, [0, 1], [0.55, 0.25]);
-  const blur = interpolate(resolve, [0, 1], [6, 0]);
+  const blur = interpolate(resolve, [0, 1], [2, 0]);
   // Fade out over the last 12 frames rather than cutting, which reads as a
   // glitch at this size.
   const exit = interpolate(
@@ -127,8 +136,19 @@ const Hook: React.FC<{ text: string }> = ({ text }) => {
  * before 85% never saw it at all, and because it took the bottom band from the
  * captions the video ended on a card rather than on content, so there was
  * nothing to loop back into. Replays are watch time.
+ *
+ * Then it was 0.55, on the theory that earlier is seen by more people. The
+ * account's own numbers do not support paying for that: average watch is 4.6
+ * seconds against a 25 second video, and in 1 of 53 posts did the average
+ * viewer reach even the 55% mark. Moving the ask later costs almost no
+ * exposure, because the people who get there are the ones who stayed, and it
+ * buys back a quarter of the video with nothing sitting on top of it.
+ *
+ * Do not read that 4.6 seconds as "everyone quits at five". It averages in the
+ * ~72% who skip inside three seconds, so it restates the skip rate rather than
+ * describing a second problem.
  */
-const CTA_FROM_FRACTION = 0.55;
+const CTA_FROM_FRACTION = 0.78;
 
 /**
  * The ask, on screen. The caption carries the same line, but a caption sits
@@ -143,7 +163,7 @@ const CTA_FROM_FRACTION = 0.55;
  * what lets it run for the back half of the video alongside the captions
  * instead of replacing them for the last four seconds.
  */
-const CallToAction: React.FC<{ keyword: string }> = ({ keyword }) => {
+const CallToAction: React.FC = () => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   // Rises rather than pops. A spring here reads as a template transition.
@@ -180,7 +200,7 @@ const CallToAction: React.FC<{ keyword: string }> = ({ keyword }) => {
             lineHeight: 1.1,
           }}
         >
-          Comment <span style={{ color: theme.color.accent }}>{keyword}</span>
+          <span style={{ color: theme.color.accent }}>Follow</span>
         </div>
         <div
           style={{
@@ -191,7 +211,7 @@ const CallToAction: React.FC<{ keyword: string }> = ({ keyword }) => {
             marginTop: 6,
           }}
         >
-          if you want the link
+          new one every night
         </div>
       </div>
     </AbsoluteFill>
@@ -202,7 +222,7 @@ export const Reel: React.FC<VideoSpec> = (spec) => {
   const { fps } = useVideoConfig();
   // Where the ask appears. It no longer takes anything from the captions, so
   // they run to the last frame and the video ends on content.
-  const ctaFrom = spec.ctaKeyword
+  const ctaFrom = spec.showFollowCta
     ? Math.round(spec.durationInFrames * CTA_FROM_FRACTION)
     : undefined;
 
@@ -219,7 +239,9 @@ export const Reel: React.FC<VideoSpec> = (spec) => {
           // spring/stagger animations inside restart per scene.
           layout="none"
         >
-          <SceneRenderer scene={scene} repo={spec.repo} />
+          <OpeningSceneContext.Provider value={scene.fromFrame === 0}>
+            <SceneRenderer scene={scene} repo={spec.repo} />
+          </OpeningSceneContext.Provider>
         </Sequence>
       ))}
 
@@ -235,16 +257,16 @@ export const Reel: React.FC<VideoSpec> = (spec) => {
           video's final frame is scene content, which loops cleanly back into
           the hook.
 
-          A version with no ask at all is a second render with ctaKeyword null,
-          not a cut of this one: an ask visible from the middle cannot also be
-          absent from a truncation of the same file. See renderer.render_without_cta. */}
-      {spec.ctaKeyword && ctaFrom !== undefined ? (
+          A version with no ask at all is a second render with showFollowCta
+          false, not a cut of this one: an ask visible from the middle cannot also
+          be absent from a truncation of the same file. See renderer.render_without_cta. */}
+      {spec.showFollowCta && ctaFrom !== undefined ? (
         <Sequence
           from={ctaFrom}
           durationInFrames={spec.durationInFrames - ctaFrom}
           layout="none"
         >
-          <CallToAction keyword={spec.ctaKeyword} />
+          <CallToAction />
         </Sequence>
       ) : null}
 

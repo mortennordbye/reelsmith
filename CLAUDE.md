@@ -248,6 +248,20 @@ days. It imports nothing from `pipeline/` or `config.py`, which is what keeps
 its container image free of the models and the voice. Its own README carries
 the three Meta rules it exists to obey.
 
+**Nothing advertises the keyword any more, so the DM half is dormant.** The
+video, the end card and the caption asked for a comment for the first 53 posts
+and drew two, both from people who unfollowed once the link arrived. It could
+not have gone otherwise: what the DM trades is a public GitHub URL, findable
+faster than a comment can be typed, and gating that behind a follow selects
+exactly the follower who leaves with it. All three channels now ask for a
+follow instead (`SPOKEN_CTA` and `CAPTION_CTA` in `pipeline/gateway.py`).
+
+The mechanic is left wired rather than deleted: `keyword_for` still runs,
+`register_post` still arms the poller, and the comment and DM paths are
+untouched. Nobody can guess an unadvertised keyword, so treat it as off. Putting
+it back is a change to those two constants and the end card, and it should take
+numbers beating a follow ask, not a hunch.
+
 Two things about the queue are load bearing and easy to undo by accident:
 
 - **Media retention is keyed on the queue, not on age.** `_prune_media` sweeps

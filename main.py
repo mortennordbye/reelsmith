@@ -448,9 +448,8 @@ def _render_one(
     # The voice reads the ask too. The caption carries it and so does the end
     # card, but the caption is behind a "more" tap and the card can be scrolled
     # past, so the one channel that reaches everyone who watches is the audio.
-    cta_keyword = gateway.keyword_for(repo.full_name, cfg)
     # Strip any ask the model wrote itself before appending ours, or the voice
-    # reads two of them back to back asking for two different words.
+    # reads two of them back to back.
     spoken = gateway.strip_written_cta(script.spoken_script)
     # The cues quote that same ask, and an excerpt describing speech we just
     # stripped can never be found in the transcript, which costs the whole
@@ -458,7 +457,7 @@ def _render_one(
     script = script.model_copy(
         update={"visual_cues": gateway.strip_cta_cues(script.visual_cues)}
     )
-    cta_line = gateway.spoken_cta(cta_keyword, cfg)
+    cta_line = gateway.spoken_cta(cfg)
     if cta_line:
         spoken = f"{spoken.rstrip()} {cta_line}"
 
@@ -523,9 +522,9 @@ def _render_one(
         # know its words to give it a scene of its own.
         spoken_cta=cta_line,
     )
-    # The end card. Same word the voice just read and the caption carries, so
-    # the three cannot disagree about what to comment.
-    video_spec = video_spec.model_copy(update={"ctaKeyword": cta_keyword if cta_line else None})
+    # The end card. Shown only when the voice actually read the ask, so the two
+    # cannot disagree about whether there is one.
+    video_spec = video_spec.model_copy(update={"showFollowCta": bool(cta_line)})
     renderer.write_spec(video_spec, run_dir / "video.json")
 
     out_path = run_dir / "out.mp4"
@@ -552,11 +551,7 @@ def _render_one(
     # The caption is written either way: --post needs it to send, and a run you
     # come back to tomorrow needs it because the clipboard is long gone.
     if script.caption_text:
-        # The same derivation runs again at publish time, so the word burned
-        # into the caption and the word the poller watches for cannot drift.
-        caption_out = gateway.add_caption_cta(
-            script.caption_text.strip(), cfg, keyword=gateway.keyword_for(repo.full_name, cfg)
-        )
+        caption_out = gateway.add_caption_cta(script.caption_text.strip(), cfg)
         (run_dir / "caption.txt").write_text(caption_out.rstrip() + "\n")
 
     return script

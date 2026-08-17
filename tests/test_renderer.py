@@ -1,10 +1,10 @@
 """The version of a video that carries no ask.
 
-YouTube has no private replies, so "comment ANYDOC if you want the link" is a
-promise nothing on that surface can keep. The ask is spoken, captioned and shown
-on a chip that runs from halfway to the last frame, so this is a second render
-rather than a cut: pixels present from the middle of a file cannot be absent
-from a truncation of it.
+The ask is Instagram's word: "Follow for a new one every night" points a YouTube
+viewer at a button that surface calls subscribing. It is spoken, captioned and
+shown on a chip that runs from halfway to the last frame, so this is a second
+render rather than a cut: pixels present from the middle of a file cannot be
+absent from a truncation of it.
 
 What is tested here is the scene surgery, because that is the part with a
 judgement in it. The render itself is Remotion's job.
@@ -13,6 +13,7 @@ judgement in it. The render itself is Remotion's job.
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 
 from pipeline import renderer
 from pipeline.models import CueKind, RepoMeta, Scene, VideoSpec
@@ -40,7 +41,7 @@ def _spec(**over):
                   imageSrc="a-b-repo.png"),
         ],
         captions=[],
-        ctaKeyword="ANYDOC",
+        showFollowCta=True,
         ctaFromFrame=727,
     )
     base.update(over)
@@ -97,3 +98,15 @@ def test_no_hero_image_means_a_plain_truncation():
 
     assert [s.kind for s in scenes] == [CueKind.STAT, CueKind.BULLETS]
     assert scenes[-1].fromFrame + scenes[-1].durationInFrames == 727
+
+
+def test_no_second_render_when_the_video_carries_no_ask():
+    """The cut exists only to remove the ask, so with no ask there is nothing to
+    remove and the caller falls back to the full render.
+
+    Worth pinning: the flag was `ctaKeyword` and pydantic ignores unknown
+    fields, so a fixture left on the old name sets nothing, `showFollowCta`
+    defaults to False, and every test of this path passes while exercising none
+    of it.
+    """
+    assert renderer.render_without_cta(_spec(showFollowCta=False), Path("/nope"), None) is None

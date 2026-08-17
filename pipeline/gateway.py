@@ -38,11 +38,26 @@ log = logging.getLogger(__name__)
 #
 #   a line of its own       "Comment ADHD and I will send you the link."
 #   the tail of a paragraph "...patched only afterwards. Comment REVIEW for the link."
-_CTA_LINE_RE = re.compile(r"^\s*comment\s+[A-Za-z0-9]{2,}\b.*$", re.IGNORECASE)
+_CTA_LINE_RE = re.compile(
+    r"^\s*(?:comment\s+[A-Za-z0-9]{2,}|follow\s+(?:for|to|so|us|me|this|the\s+account))\b.*$",
+    re.IGNORECASE,
+)
 # Inside a paragraph the keyword must be capitalised to count, which every
 # instance of the ask is. That keeps ordinary prose such as "Comment on the
 # issue and the maintainer replies" from being mistaken for one.
-_CTA_SENTENCE_RE = re.compile(r"\s*Comment\s+[A-Z][A-Z0-9]+\b[^.!?\n]*[.!?]")
+#
+# The follow half needs the same care for the same reason. "Follow the migration
+# guide" and "follow the symlink" are ordinary sentences in this niche, so only
+# the handful of words that can only be a request count, and "follow the" is
+# deliberately not among them.
+_CTA_SENTENCE_RE = re.compile(
+    r"\s*(?:Comment\s+[A-Z][A-Z0-9]+|Follow\s+(?:for|so|us|me|this account|the account))"
+    r"\b[^.!?\n]*[.!?]"
+)
+
+# A run of hashtags closing the last line of prose, so it can be lifted onto a
+# line of its own. Anchored at the end, so tags mentioned mid-sentence stay put.
+_TRAILING_TAGS_RE = re.compile(r"(\s+#[^\s#]+(?:\s+#[^\s#]+)*)\s*$")
 
 # Words too ordinary to use as the ask. `comment_matches` in the gateway tests
 # whole words against the comment text, so a keyword of OPEN on a video about
@@ -117,10 +132,12 @@ def strip_written_cta(text: str) -> str:
     breath. The caption had the same pair. Fixing one channel and not the
     other is how that shipped, so both now call this.
     """
+    # Our own caption ask is two sentences on one line, so the line rule does
+    # not see it and the sentence rule would take only its second half. Matched
+    # whole and dropped first, which is what keeps `add_caption_cta` idempotent.
+    kept = [line for line in text.splitlines() if line.strip() != CAPTION_CTA]
     cleaned = "\n".join(
-        _CTA_SENTENCE_RE.sub("", line).rstrip()
-        for line in text.splitlines()
-        if not _CTA_LINE_RE.match(line)
+        _CTA_SENTENCE_RE.sub("", line).rstrip() for line in kept if not _CTA_LINE_RE.match(line)
     )
     return cleaned.strip()
 
@@ -128,10 +145,12 @@ def strip_written_cta(text: str) -> str:
 def youtube_description(caption: str, link: str) -> str:
     """The Instagram caption, rewritten for a surface with no DMs.
 
-    The keyword mechanic has no equivalent on YouTube: no private replies, and
-    no way to answer a comment with a link. A description saying "comment
-    TENSORFLOW if you want the link" is a promise nothing can keep, so the
-    written ask comes out and the repo URL goes in directly.
+    The ask does not port, for a different reason than it used to. It was that
+    a description saying "comment TENSORFLOW if you want the link" promised a
+    private reply YouTube has no way to send. Now the ask is a follow, which
+    that surface calls subscribing, so the wording is still wrong even though
+    the action exists. Either way the written ask comes out and the repo URL
+    goes in directly.
 
     Here rather than in the gateway, because this is where `strip_written_cta`
     and the wording rules already live, and a gateway that rebuilt the copy
@@ -178,8 +197,25 @@ def strip_cta_cues(cues: list[VisualCue]) -> list[VisualCue]:
     return kept or cues
 
 
-def spoken_cta(keyword: str, cfg: Settings) -> str | None:
-    """The sentence the voice reads at the end, or None if nothing is listening.
+# The ask, in the one wording all three channels use. The voice reads it, the
+# end card shows it and the caption carries it, so it lives here once.
+#
+# **It asks for a follow, and it used to ask for a comment.** "Comment SEND if
+# you want the link" ran for the account's first 53 posts and drew two comments,
+# both from people who unfollowed once the DM arrived. It could not have done
+# much else: the thing being traded is a public GitHub URL, which a developer
+# can find faster than they can comment and wait, and gating it behind a follow
+# selects precisely the follower who leaves when they have it. A tap is the
+# cheapest action a viewer can take and the account was never asking for it.
+#
+# The nightly cadence is the reason given, because the brand name already
+# promises it and a reason to come back is what a follow actually is.
+SPOKEN_CTA = "Follow for a new one every night."
+CAPTION_CTA = "New one every night. Follow so tomorrow's finds you."
+
+
+def spoken_cta(cfg: Settings) -> str | None:
+    """The sentence the voice reads at the end.
 
     Appended after the scriptwriter rather than requested from it, for two
     reasons. It is the same every time, so spending prompt budget and a
@@ -189,18 +225,19 @@ def spoken_cta(keyword: str, cfg: Settings) -> str | None:
 
     It lands after the `max_script_words` check on purpose: the limit exists to
     keep Claude terse, and this is not Claude's text.
+
+    **No longer gated on the gateway being configured.** It was, because a video
+    telling people to comment a word nothing listens for is a promise the
+    account cannot keep. A follow needs nothing listening, so a checkout with no
+    gateway now gets the ask too. It still returns `str | None` because
+    `pipeline/spec.py` reads None as "no outro scene", and that is the seam for
+    turning the ask off.
     """
-    if not _configured(cfg):
-        return None
-    return f"Comment {keyword.strip().upper()} if you want the link."
+    return SPOKEN_CTA
 
 
-def add_caption_cta(caption: str, cfg: Settings, *, keyword: str | None = None) -> str:
-    """Insert the "comment the keyword" line, above the hashtags.
-
-    Only when the gateway is configured. Telling people to comment a word that
-    nothing is listening for is a promise the account cannot keep, and it is the
-    kind of thing that reads as a template rather than as a person.
+def add_caption_cta(caption: str, cfg: Settings) -> str:
+    """Insert the follow ask, above the hashtags.
 
     It goes above the hashtags rather than at the very top, because the first
     line of a caption competes with the hook for the one line Instagram shows
@@ -208,22 +245,27 @@ def add_caption_cta(caption: str, cfg: Settings, *, keyword: str | None = None) 
 
     **Any call to action the model wrote is removed first**, not just a byte
     identical one. The scriptwriter writes its own often enough to matter, in
-    its own wording and with its own idea of the word, and `comment_matches` in
-    the gateway compares whole words: a caption asking for ADHD while the post
-    is registered for IHAVEADHD sends nothing to anyone who does as it says.
-    The keyword passed in here is the one the voice reads and the end card
-    shows, so it is the one that survives.
+    its own wording and its own placement, and two asks in one caption is worse
+    than either alone.
 
     Obeys the same text rules as everything else: no colons, no dashes, no
     hype.
     """
-    if not _configured(cfg):
-        return caption
-
-    word = (keyword or cfg.gateway_keyword).strip().upper()
-    cta = f"Comment {word} if you want the link."
+    cta = CAPTION_CTA
 
     lines = strip_written_cta(caption).splitlines()
+    # Hashtags are asked for as a trailing block, and the model routinely ends
+    # the last sentence with them instead. Line-anchored, that block is
+    # invisible, the ask lands underneath it, and the caption reads exactly the
+    # way this function exists to prevent. Split them onto a line of their own
+    # first, so the ask goes above them and the tags still end the caption.
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if lines and not lines[-1].lstrip().startswith("#"):
+        run = _TRAILING_TAGS_RE.search(lines[-1])
+        if run:
+            lines[-1] = lines[-1][: run.start()].rstrip()
+            lines.append(run.group(1).strip())
     # Hashtags live in a trailing block. Find where it starts so the call to
     # action lands in the prose rather than after a wall of tags nobody reads.
     first_tag = next(

@@ -259,13 +259,14 @@ class VideoSpec(BaseModel):
     scenes: list[Scene]
     captions: list[Caption]
 
-    # The word to comment for the link, shown as an end card. None when no
-    # gateway is configured, because asking for a comment nothing is listening
-    # for is a promise the account cannot keep. The caption carries the same
-    # ask, but a caption sits behind a "more" tap and most viewers never open
-    # it, so the video has to say it too or the mechanic depends on a tap that
-    # does not happen.
-    ctaKeyword: str | None = None  # noqa: N815
+    # Whether the follow ask appears as an end card. The caption carries the
+    # same ask, but a caption sits behind a "more" tap and most viewers never
+    # open it, so the video has to say it too.
+    #
+    # This was `ctaKeyword`, the word to comment for the link. The ask is a
+    # follow now and needs no word, so the field is a flag; see `SPOKEN_CTA` in
+    # `pipeline/gateway.py` for why it changed.
+    showFollowCta: bool = False  # noqa: N815
 
     # The frame the ask begins on, so a surface that cannot deliver it can cut
     # the video there rather than carry a promise it cannot keep.
