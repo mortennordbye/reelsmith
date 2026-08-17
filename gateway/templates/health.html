@@ -36,7 +36,7 @@
 
 {% for item in accounts %}
   {% set account = item.row %}
-  <h2>{{ account['username'] or account['ig_user_id'] }}</h2>
+  {% include "_account_heading.html" %}
   <div class="card">
     <div class="stat">
       <div>

@@ -10,12 +10,11 @@
 </p>
 
 {% for board in boards %}
-  {% if boards | length > 1 %}
-    <h2>
-      {{ board.account['username'] or board.account['ig_user_id'] }}
-      {% if not board.account['active'] %}<span class="tag failed">paused</span>{% endif %}
-    </h2>
-  {% endif %}
+  {# Shown even for a single board. The heading used to appear only when there
+     were two, which hid the surface exactly when the switcher had narrowed to
+     one account and the page gave no other clue which it was. #}
+  {% set account = board.account %}
+  {% include "_account_heading.html" %}
 
   {% if board.posts %}
     <div class="card">

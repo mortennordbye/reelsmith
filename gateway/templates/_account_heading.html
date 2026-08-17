@@ -1,0 +1,23 @@
+{# The heading above every per-account board.
+
+   One partial rather than the same line in four templates, because the whole
+   point is that a board is never ambiguous about which surface it describes,
+   and four copies is four chances for one of them to drift.
+
+   `platform` is a column on `accounts`, so a YouTube channel is its own account
+   row and gets its own board. Nothing rendered it until now, so two boards
+   appeared with only a username to tell them apart, and the YouTube one is
+   published to on a different schedule with different rules.
+
+   Icon *and* word. The mark is what the eye finds while scrolling; the word is
+   what makes it unambiguous, and it is what a screen reader gets. #}
+{% from "_icons.html" import platform_icon %}
+{% set _platform = account['platform'] or 'instagram' %}
+<h2 class="board {{ _platform }}">
+  <span class="platform {{ _platform }}">
+    {{ platform_icon(_platform) }}
+    {{ 'YouTube' if _platform == 'youtube' else 'Instagram' }}
+  </span>
+  {{ account['username'] or account['ig_user_id'] }}
+  {% if not account['active'] %}<span class="tag failed">paused</span>{% endif %}
+</h2>
