@@ -263,15 +263,20 @@ def _scenes_ending_on_hero(spec: VideoSpec) -> list[Scene]:
 def render_without_cta(spec: VideoSpec, out_dir: Path, cfg: Settings) -> Path | None:
     """Render the same video with no ask in it. Returns the path, or None.
 
-    YouTube has no private replies, so "comment ANYDOC if you want the link" is
-    a promise nothing on that surface can keep. The ask is in three places at
-    once: spoken in the voiceover, in the burned-in captions, and on a chip
-    that runs from the middle of the video to the last frame.
+    The ask is Instagram's word. "Follow for a new one every night" asks a
+    YouTube viewer for something that surface calls subscribing, and an account
+    that cannot name the button it is pointing at reads as reposted from
+    somewhere else, which is the one thing a channel under an inauthentic
+    content review should not look like. It was a harder promise before, when
+    the ask was "comment ANYDOC if you want the link" and YouTube had no private
+    replies to deliver it with. The ask is in three places at once: spoken in
+    the voiceover, in the burned-in captions, and on a chip that runs from the
+    middle of the video to the last frame.
 
     That last one is why this is a second render rather than a cut of the
     first. A chip visible from halfway cannot also be absent from a truncation
-    of the same file; the pixels are either there or they are not. Dropping
-    `ctaKeyword` removes it, and stopping at `ctaFromFrame` drops the spoken
+    of the same file; the pixels are either there or they are not. Clearing
+    `showFollowCta` removes it, and stopping at `ctaFromFrame` drops the spoken
     ask and the captions that transcribe it, because Remotion renders the audio
     for the frames it renders and no others.
 
@@ -283,13 +288,13 @@ def render_without_cta(spec: VideoSpec, out_dir: Path, cfg: Settings) -> Path | 
     its own, in which case there is no honest place to stop and the caller
     falls back to the full video.
     """
-    if not spec.ctaKeyword or spec.ctaFromFrame is None:
+    if not spec.showFollowCta or spec.ctaFromFrame is None:
         return None
 
     # Same spec, minus the ask and everything after it.
     without = spec.model_copy(
         update={
-            "ctaKeyword": None,
+            "showFollowCta": False,
             "durationInFrames": spec.ctaFromFrame,
             "scenes": _scenes_ending_on_hero(spec),
         }

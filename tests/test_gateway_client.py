@@ -305,7 +305,7 @@ def test_the_cta_lands_above_the_hashtags(cfg):
     out = gateway.add_caption_cta(CAPTION, cfg)
     lines = [line for line in out.splitlines() if line.strip()]
 
-    cta = next(i for i, line in enumerate(lines) if line.startswith("Comment SEND"))
+    cta = next(i for i, line in enumerate(lines) if line == gateway.CAPTION_CTA)
     tags = next(i for i, line in enumerate(lines) if line.startswith("#"))
     assert cta < tags, "the call to action must not sit below the hashtag block"
     assert lines[0].startswith("Colibri"), "the hook keeps the first line"
@@ -313,7 +313,29 @@ def test_the_cta_lands_above_the_hashtags(cfg):
 
 def test_a_caption_with_no_hashtags_still_gets_the_cta(cfg):
     out = gateway.add_caption_cta("One sentence.", cfg)
-    assert "Comment SEND if you want the link." in out
+    assert gateway.CAPTION_CTA in out
+
+
+def test_inline_hashtags_are_lifted_so_the_ask_stays_above_them(cfg):
+    """Seen on the real immich run. The model ended its last sentence with the
+    tags instead of giving them a block, the line rule saw no tag line, and the
+    follow ask landed underneath a wall of hashtags nobody reads."""
+    caption = "Budget 8 GB of RAM and a spare drive. #selfhosted #immich #docker"
+    out = [line for line in gateway.add_caption_cta(caption, cfg).splitlines() if line.strip()]
+
+    assert out == [
+        "Budget 8 GB of RAM and a spare drive.",
+        gateway.CAPTION_CTA,
+        "#selfhosted #immich #docker",
+    ]
+
+
+def test_a_hashtag_inside_a_sentence_is_not_a_block(cfg):
+    """Only a run closing the line counts. Otherwise prose gets cut in half."""
+    caption = "The #1 reason it is fast is the cache. Try it today."
+    out = gateway.add_caption_cta(caption, cfg)
+
+    assert "The #1 reason it is fast is the cache. Try it today." in out
 
 
 def test_the_cta_is_not_added_twice(cfg):
@@ -321,37 +343,31 @@ def test_the_cta_is_not_added_twice(cfg):
     assert gateway.add_caption_cta(once, cfg) == once
 
 
-def test_no_cta_when_nothing_is_listening(off):
-    """Telling people to comment a word no service watches is a promise the
-    account cannot keep."""
-    assert gateway.add_caption_cta(CAPTION, off) == CAPTION
+def test_the_ask_does_not_depend_on_a_gateway(off):
+    """It did, when it asked for a comment a service had to answer. A follow
+    needs nothing listening, so a checkout with no gateway gets it too."""
+    assert gateway.CAPTION_CTA in gateway.add_caption_cta(CAPTION, off)
 
 
 def test_the_cta_obeys_the_repo_text_rules(cfg):
-    out = gateway.add_caption_cta("Body.", cfg)
-    cta = next(line for line in out.splitlines() if line.startswith("Comment"))
+    cta = gateway.CAPTION_CTA
 
     assert not (set(cta) & _BANNED_PUNCTUATION), "no colons or dashes in viewer-facing copy"
     assert not any(ord(c) > 0x2500 for c in cta), "no emoji"
 
 
-def test_the_keyword_is_configurable_and_shown_uppercase(cfg):
-    cfg = cfg.model_copy(update={"gateway_keyword": "link"})
-    assert "Comment LINK if you want the link." in gateway.add_caption_cta("B.", cfg)
+def test_the_ask_is_for_a_follow_not_a_comment(cfg):
+    """The comment ask ran for 53 posts, drew two comments, and both unfollowed
+    once the DM arrived. A tap is the cheapest action a viewer can take."""
+    out = gateway.add_caption_cta("B.", cfg)
 
-
-def test_a_per_post_keyword_overrides_the_default(cfg):
-    out = gateway.add_caption_cta("B.", cfg, keyword="GROK")
-    assert "Comment GROK if you want the link." in out
+    assert "follow" in out.lower()
+    assert "comment" not in out.lower()
 
 
 def test_a_model_written_cta_is_replaced_rather_than_joined(cfg):
-    """The caption may only ask for one word, and it must be the registered one.
-
-    Seen for real on ayghri/i-have-adhd: Claude wrote "Comment ADHD" while the
-    post was registered for IHAVEADHD. `comment_matches` compares whole words,
-    so every viewer who did as the caption said would have got nothing back.
-    """
+    """A caption may carry one ask. Two compete, and the model writes its own
+    often enough to matter."""
     caption = (
         "Ten rules, zero lines of code.\n"
         "\n"
@@ -359,10 +375,10 @@ def test_a_model_written_cta_is_replaced_rather_than_joined(cfg):
         "\n"
         "#devtools\n"
     )
-    out = gateway.add_caption_cta(caption, cfg, keyword="IHAVEADHD")
+    out = gateway.add_caption_cta(caption, cfg)
 
-    asks = [line for line in out.splitlines() if line.lower().startswith("comment ")]
-    assert asks == ["Comment IHAVEADHD if you want the link."]
+    assert "Comment ADHD" not in out
+    assert out.count(gateway.CAPTION_CTA) == 1
 
 
 @pytest.mark.parametrize(
@@ -375,8 +391,8 @@ def test_a_model_written_cta_is_replaced_rather_than_joined(cfg):
 )
 def test_any_wording_of_the_ask_is_replaced(cfg, written):
     out = gateway.add_caption_cta(f"Body.\n\n{written}\n\n#tag\n", cfg)
-    asks = [line for line in out.splitlines() if line.lower().startswith("comment ")]
-    assert asks == ["Comment SEND if you want the link."]
+    assert not [line for line in out.splitlines() if line.lower().startswith("comment ")]
+    assert out.count(gateway.CAPTION_CTA) == 1
 
 
 def test_an_ask_at_the_tail_of_a_paragraph_is_removed_too(cfg):
@@ -391,10 +407,9 @@ def test_an_ask_at_the_tail_of_a_paragraph_is_removed_too(cfg):
         "\n"
         "#golang\n"
     )
-    out = gateway.add_caption_cta(caption, cfg, keyword="OPENCODEREVIEW")
+    out = gateway.add_caption_cta(caption, cfg)
 
     assert "Comment REVIEW" not in out
-    assert out.count("Comment ") == 1
     assert "ran internally for two years." in out, "the prose it rode on must survive"
 
 
@@ -413,6 +428,47 @@ def test_the_voice_never_reads_two_asks_back_to_back():
 
     assert "Comment" not in cleaned
     assert cleaned.endswith("More misses."), "the script it rode on must survive"
+
+
+@pytest.mark.parametrize(
+    "written",
+    ["Follow for more of these.", "Follow so you catch tomorrow's."],
+)
+def test_a_follow_shaped_ask_riding_a_paragraph_is_stripped(written):
+    """The stripper only knew comment-shaped asks, because that is all the ask
+    used to be. The model writes whatever the prompt implies, so it now has to
+    know both or the video carries two."""
+    cleaned = gateway.strip_written_cta(f"Fewer false alarms. {written}")
+
+    assert "ollow" not in cleaned
+    assert cleaned == "Fewer false alarms."
+
+
+@pytest.mark.parametrize(
+    "written",
+    ["Follow for the daily one.", "follow us for more", "Follow this and you get one nightly."],
+)
+def test_a_follow_shaped_ask_on_its_own_line_is_stripped(written):
+    """A line only has to open with the ask. Capitalisation is required inside a
+    paragraph, where prose is at stake, and not here, where nothing else is."""
+    cleaned = gateway.strip_written_cta(f"Fewer false alarms.\n\n{written}\n")
+
+    assert "ollow" not in cleaned
+    assert cleaned == "Fewer false alarms."
+
+
+@pytest.mark.parametrize(
+    "prose",
+    [
+        "Follow the migration guide and it upgrades cleanly.",
+        "It will follow the symlink rather than resolving it.",
+        "Follow up in the issue if it still fails.",
+    ],
+)
+def test_prose_that_merely_uses_the_word_follow_survives(prose):
+    """"Follow the migration guide" is an ordinary sentence in this niche. Only
+    the handful of words that can only be a request count as one."""
+    assert gateway.strip_written_cta(prose) == prose
 
 
 def test_stripping_leaves_a_script_that_never_asked_untouched():
@@ -546,25 +602,26 @@ def test_the_keyword_is_always_a_single_typable_word(cfg):
 
 
 def test_the_voice_reads_the_ask(cfg):
-    assert gateway.spoken_cta("GROK", cfg) == "Comment GROK if you want the link."
+    assert gateway.spoken_cta(cfg) == gateway.SPOKEN_CTA
 
 
-def test_no_spoken_ask_when_nothing_is_listening(off):
-    assert gateway.spoken_cta("GROK", off) is None
+def test_the_spoken_ask_does_not_depend_on_a_gateway(off):
+    """It returned None with no gateway, because a comment ask needs something
+    listening. A follow does not."""
+    assert gateway.spoken_cta(off) == gateway.SPOKEN_CTA
 
 
 def test_the_spoken_ask_obeys_the_text_rules(cfg):
-    line = gateway.spoken_cta("GROK", cfg)
+    line = gateway.spoken_cta(cfg)
     assert not (set(line) & _BANNED_PUNCTUATION), "no colons or dashes in anything spoken"
     assert not any(ord(c) > 0x2500 for c in line)
 
 
-def test_the_three_channels_agree_on_the_word(cfg):
-    """The end card, the voiceover and the caption all derive from one place.
-    If they ever disagreed, viewers would comment a word nothing watches for."""
-    keyword = gateway.keyword_for("xai-org/grok-build", cfg)
-    assert keyword in gateway.spoken_cta(keyword, cfg)
-    assert keyword in gateway.add_caption_cta("Body.", cfg, keyword=keyword)
+def test_all_three_channels_ask_for_the_same_thing(cfg):
+    """The end card, the voiceover and the caption all derive from one place, so
+    a viewer never hears one ask and reads another."""
+    assert "follow" in gateway.spoken_cta(cfg).lower()
+    assert "follow" in gateway.add_caption_cta("Body.", cfg).lower()
 
 
 def test_a_measured_post_is_not_logged_as_watched(cfg, caplog):

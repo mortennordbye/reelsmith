@@ -11,10 +11,26 @@ import type { RepoMeta, Scene } from "../types";
  * two-thirds, leaving the lower third clear for captions. Nothing here may
  * drift into the caption safe area.
  */
+/**
+ * Set for the scene that starts on frame 0, which skips the entrance entirely.
+ *
+ * Every scene rises and fades in, which is right for a cut between beats and
+ * wrong for the first frame of the video. The first frame is what a scroller
+ * sees before deciding, and it was the background: the hero arrived over the
+ * following second while `skip_rate` was being decided in three. Frames pulled
+ * from a real render had no browser chrome at all until frame 10.
+ *
+ * A context rather than a prop because `Stage` is wrapped by six scene
+ * components and none of the others have any reason to know about this.
+ */
+export const OpeningSceneContext = React.createContext(false);
+
 const Stage: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const enter = spring({ frame, fps, config: { damping: 200, stiffness: 160, mass: 0.6 } });
+  const opening = React.useContext(OpeningSceneContext);
+  const rise = spring({ frame, fps, config: { damping: 200, stiffness: 160, mass: 0.6 } });
+  const enter = opening ? 1 : rise;
 
   return (
     <AbsoluteFill
