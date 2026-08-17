@@ -122,8 +122,17 @@ def _results_block(past: list[PastPost]) -> str:
     shape it should use. Five of the first seven opened "Your coding agent" and
     then a complaint, which is what a rule like "open on the problem" produces
     when it is read as a template. Handing over a new template would buy the
-    same thing again in a different costume, and there is one outlier in seven
-    posts here, which is not enough evidence to write a rule from.
+    same thing again in a different costume.
+
+    That held while the evidence was one outlier in seven posts. At 53 posts it
+    stopped holding: skip rate and views correlate at -0.70, the ten hooks under
+    60 percent skip took a median 813 views against 133 for the twenty-one over
+    70, and the ten share a describable property. So `SYSTEM_PROMPT` now names
+    it, under "Name something the viewer already runs". This block still refuses
+    to hand over a template, because the failure it was written against is real
+    and asking the model to beat the list is what keeps the shapes moving. The
+    rule in the prompt is about what the hook is *about*; this block is about
+    what it must not *look* like. Keep them doing those two different jobs.
     """
     if not past:
         return ""
@@ -212,6 +221,25 @@ characters -- this is validated, and a longer hook fails the run. It must make
     named behaviour, a constraint. If your research turned up nothing specific
     enough to survive the test above, that is a finding about the project
     rather than a licence to write a general hook.
+
+    **Name something the viewer already runs, and say what changed about it.**
+    Of this account's first 53 videos, the ten that held their audience were
+    almost all about a project the viewer already depends on, and each reported
+    a change or an admission rather than announcing a tool. "TensorFlow is
+    removing the part that runs on phones" kept 49 percent of viewers past three
+    seconds. "Vercel agrees its own prefetching looked ridiculous" kept 47.
+    "Downloading one video means running YouTube's own code" kept 47. The median
+    video kept 27.
+
+    Recognition on its own does not do it. "Claude, Codex and Copilot in one VS
+    Code sidebar" names three things the viewer knows and still lost 80 percent
+    of them, because it announces a feature and nothing in it costs the viewer
+    anything. The recognised subject buys the half second of attention. The
+    change is what spends it.
+
+    When the project itself is unknown, the recognised thing has to come from
+    elsewhere in the sentence: what it replaces, what it breaks, or the number
+    it beats.
 
     No colons and no hyphens or dashes anywhere in the hook. This is validated
     and a violation fails the run. Rewrite around them: "92k stars" not
@@ -310,12 +338,19 @@ visual_cues
     Use at least one `code` or `terminal` cue -- this audience wants to see the
     actual interface. Only cite a `stat` you are confident is real.
 
-    **Never show an install, add or setup command, and never read one aloud.**
-    Explain what the project is and how it works; getting hold of it is the
-    viewer's next step, not this video's. They can search the name, or comment
-    the keyword and the account sends them the link. That is what makes the ask
-    worth answering rather than decoration, so a video that hands the install
-    line over for free has given away the only thing it had to trade.
+    **Show the install or entry command where there is a real one**, in a
+    `terminal` or `code` cue, and let the voiceover name it in passing rather
+    than dictating it. A viewer who can see the exact line has a reason to save
+    the video and send it to somebody, and saves and shares are what decide
+    whether the next one reaches anybody.
+
+    This rule used to be its exact opposite: no install command anywhere, so
+    that the DM had something to trade for a comment. Across the first 53 posts
+    that trade drew two comments and retained no followers, while the videos
+    reached a median of 153 accounts. Withholding the one line a developer would
+    have screenshotted, to protect an offer that is a public URL anybody can
+    search in less time than it takes to comment, is a bad trade in both
+    directions. Do not reinstate it without numbers saying so.
 
 caption_text
     The Instagram caption: two or three sentences, then 5-8 relevant hashtags.
