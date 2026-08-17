@@ -27,6 +27,11 @@ notes/*.md
 # because it carries account performance numbers, and backed up because losing
 # it loses the thread.
 HANDOVER.md
+# Ranked ideas for the Reels and the reasons old ones died. Private for the same
+# reason as HANDOVER.md, since every idea is argued from view counts, skip rates
+# and follower numbers. The method that produces it is public in
+# .claude/skills/reel-council; only the evidence and the decisions are not.
+IDEAS.md
 .env
 data/star_history.json
 data/used_repos.json
