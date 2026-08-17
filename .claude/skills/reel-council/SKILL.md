@@ -28,11 +28,23 @@ process exists to prevent came from reasoning about the video from memory.
 3. **Read the code that draws it.** `video/src/Reel.tsx`,
    `video/src/scenes/SceneRenderer.tsx`, `video/src/components/`, and
    `SYSTEM_PROMPT` in `pipeline/scriptwriter.py`.
-4. **Read `IDEAS.md`.** Anything already tried, rejected or in flight is not a
-   new idea, and the reason it was rejected is usually still true.
+4. **Read `IDEAS.md` and `notes/*.md`.** Both are gitignored, so a fresh clone
+   has neither and a fresh session will not think to look. Anything already
+   tried, rejected or in flight is not a new idea, and the reason it was
+   rejected is usually still true. The notes carry prior research runs and their
+   *Still open* sections, which are the highest value part of the repository for
+   this skill and the easiest thing in it to miss. The first council session
+   proposed two things already sitting in a research note from ten days earlier.
 
 Three separate proposals have been made in this project for things the pipeline
 already had. Checking costs one grep.
+
+**Do not assume `skip_rate` is the only thing worth moving.** It is the metric
+the pipeline happens to collect and the one every analysis here reaches for
+first, which is not the same as it being the metric that decides reach. Before
+optimising it again, check what else the gateway already stores and what the
+research notes claim actually drives distribution. Being able to measure
+something is not evidence that it matters most.
 
 ## The council
 
