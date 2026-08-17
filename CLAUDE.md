@@ -376,10 +376,15 @@ does the join and `_results_block` in `pipeline/scriptwriter.py` renders it.
   come from a human; then a publish receipt; then the later date. Taking the
   last folder in sorted order instead reported a rejected draft as the hook that
   scored 79.5 percent, which nothing downstream could have caught.
-- **The block states the benchmark next to the list.** Every hook so far skipped
-  64 to 80 percent of viewers against a 30 to 40 percent average for the format,
-  so the top of a sorted list is still a bad hook and the prompt has to say so or
-  the model copies it.
+- **The block states the benchmark next to the list, and derives its verdict on
+  the list from it.** The format averages 30 to 40 percent. When the loop was
+  built every hook here skipped 64 to 80, so the top of a sorted list was still
+  a bad hook and the prompt had to say so or the model copied it. That sentence
+  was hardcoded, and by 53 posts the best had reached 45.8 percent, at which
+  point it was telling the model to disregard the one hook that worked. The
+  verdict now switches on the actual best score in the block. Do not write it
+  back down as prose; a fact about the numbers goes stale silently and the only
+  symptom is worse scripts.
 - **A post that skipped the pipeline joins on its caption instead.**
   `main.py --backfill` lists the account's live Reels against the run folders
   and `--yes` registers the ones it matched. The join is the first paragraph of
@@ -450,6 +455,13 @@ and for every security update, and holds routine majors back for a human.
 
 ## Working on this repo
 
+- **`git pull` before starting anything.** This checkout is not the only thing
+  committing to it. The 02:00 and 05:00 sessions run on the Linux host against
+  their own clone, and anything they push is not here until you fetch it.
+  Starting from a stale `main` means a conflict at the end of the work rather
+  than at the start, or worse, quietly reverting a fix that already landed.
+  Dependabot and the weekly recompile job push here too, so a checkout left
+  alone for a few days is behind by default.
 - `pipeline/models.py` holds the only interface between stages. Change a field
   there and mirror it in `video/src/schema.ts`.
 - Stages re-use artifacts already on disk. To force a regeneration, move the run

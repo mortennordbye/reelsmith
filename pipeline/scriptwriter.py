@@ -111,12 +111,15 @@ def _results_block(past: list[PastPost]) -> str:
 
     Two decisions in here are load bearing and easy to undo by accident.
 
-    **The benchmark is stated next to the list.** Every hook this account has
-    published skipped between 64 and 80 percent of its viewers against a 30 to
-    40 percent average for the format, so the best line in the block is still a
-    bad one. Without that sentence the model reads the top of a sorted list as
-    a model to copy, and copying the least bad of seven failures is a way to
-    keep failing carefully.
+    **The benchmark is stated next to the list, and the verdict on the list is
+    derived from it.** When this was written every published hook skipped
+    between 64 and 80 percent against a 30 to 40 percent average for the format,
+    so the best line in the block was still a bad one, and saying so stopped the
+    model copying the least bad of seven failures. By 53 posts the best had
+    reached 45.8 percent, which is near the benchmark rather than far below it,
+    and the sentence had quietly become an instruction to ignore the account's
+    own best work. So the verdict now switches on the actual best score instead
+    of being written down. Do not hardcode it again.
 
     **It asks for a shape that is not in the list**, rather than naming the
     shape it should use. Five of the first seven opened "Your coding agent" and
@@ -137,6 +140,21 @@ def _results_block(past: list[PastPost]) -> str:
     if not past:
         return ""
     lines = "\n".join(f"  {p.line}" for p in past)
+    best = min(p.skip_rate for p in past)
+    # Whether the top of the list is worth learning from is a fact about the
+    # numbers, so it is derived rather than written down. The prose used to say
+    # "read the whole list as underperforming", which was true when every hook
+    # sat between 64 and 80 percent and false by the time the best reached 45.8.
+    # Left hardcoded it would eventually tell the model to disregard its own
+    # best work, which is the opposite of what this block is for.
+    verdict = (
+        "The top of this list is at or near that benchmark, so treat the best "
+        "lines as evidence of what works here and the worst as evidence of what "
+        "does not."
+        if best <= 50
+        else "Read the whole list as underperforming rather than reading the top "
+        "of it as something to copy."
+    )
     return f"""
 ## What this account's own videos did
 
@@ -145,8 +163,7 @@ scrolled past inside the first three seconds. Lower is better.
 
 {lines}
 
-Educational videos in this format average 30 to 40 percent, so read the whole
-list as underperforming rather than reading the top of it as something to copy.
+Educational videos in this format average 30 to 40 percent. {verdict}
 
 Two things to take from it. Do not write a variation on any shape above: a
 viewer meets these in sequence and a repeated formula is visible by the third
