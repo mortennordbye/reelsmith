@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 
+import pytest
 from conftest import candidate
 
 from pipeline import scraper
 from pipeline.scraper import (
     _DEFAULT_ENRICH_TOP,
+    ThemeSaturation,
     UsedRepos,
     _cold_start_velocity,
     _is_relevant,
@@ -167,10 +170,10 @@ def test_the_breakdown_explains_the_score(tmp_path):
 
     [scored] = score_candidates([cand], used_repos(tmp_path), TODAY)
 
-    assert set(scored.score_breakdown) == {
-        "velocity", "stars", "hackernews", "readme", "cooldown_multiplier",
-    }
-    components = {k: v for k, v in scored.score_breakdown.items() if k != "cooldown_multiplier"}
+    multipliers = {"cooldown_multiplier", "theme_multiplier"}
+    parts = {"velocity", "stars", "hackernews", "readme"}
+    assert set(scored.score_breakdown) == parts | multipliers
+    components = {k: v for k, v in scored.score_breakdown.items() if k not in multipliers}
     assert scored.score == sum(components.values())
     # Hacker News saturates at 300 points; 600 must not count double.
     assert scored.score_breakdown["hackernews"] == 0.15
@@ -370,3 +373,140 @@ def test_a_small_batch_does_not_lower_the_ceiling(monkeypatch):
 
     find_trending_repos(cfg=object(), count=1)
     assert seen["enrich_top"] == _DEFAULT_ENRICH_TOP
+
+
+# --------------------------------------------------------------------------
+# Theme spreading
+# --------------------------------------------------------------------------
+
+
+def test_a_batch_does_not_repeat_a_theme():
+    """Three videos from one batch reach one audience inside one day, and the
+    account's first 52 repos carried `ai-agents` eleven times."""
+    ranked = [
+        candidate("o/agent-a", score=0.9, topics=["ai-agents", "llm"]),
+        candidate("o/agent-b", score=0.8, topics=["ai-agents", "claude-code"]),
+        candidate("o/db", score=0.7, topics=["database", "sql"]),
+    ]
+    picked = scraper._spread_themes(ranked, 2)
+
+    assert [c.full_name for c in picked] == ["o/agent-a", "o/db"]
+
+
+def test_a_language_in_common_is_not_a_theme_in_common():
+    """Two Rust CLIs are not the same video. Only what a repo is *about*
+    collides, so build-and-packaging tags never block a pick."""
+    ranked = [
+        candidate("o/one", score=0.9, language="Rust", topics=["rust", "cli", "search"]),
+        candidate("o/two", score=0.8, language="Rust", topics=["rust", "cli", "terminal"]),
+    ]
+    picked = scraper._spread_themes(ranked, 2)
+
+    assert len(picked) == 2
+
+
+def test_a_single_theme_pool_still_fills_the_batch():
+    """A night where everything trending is agents is a real Tuesday. A batch
+    of one is worse than a batch of three that overlap, so it backfills on
+    score rather than returning short."""
+    ranked = [
+        candidate(f"o/agent-{i}", score=1.0 - i / 10, topics=["ai-agents"]) for i in range(4)
+    ]
+    picked = scraper._spread_themes(ranked, 3)
+
+    assert [c.full_name for c in picked] == ["o/agent-0", "o/agent-1", "o/agent-2"]
+
+
+def test_an_untagged_repo_never_blocks_another():
+    """No topics means no theme to collide on, not a theme that matches
+    everything."""
+    ranked = [
+        candidate("o/one", score=0.9, topics=[]),
+        candidate("o/two", score=0.8, topics=[]),
+    ]
+    picked = scraper._spread_themes(ranked, 2)
+
+    assert len(picked) == 2
+
+
+# --------------------------------------------------------------------------
+# Theme saturation across days
+# --------------------------------------------------------------------------
+
+
+def _built(tmp_path, day: str, name: str, topics: list[str]):
+    run = tmp_path / day / name
+    run.mkdir(parents=True)
+    (run / "repo.json").write_text(
+        json.dumps({"full_name": f"o/{name}", "name": name, "owner": "o",
+                    "url": "u", "stars": 1, "topics": topics})
+    )
+
+
+def test_a_theme_the_last_few_days_were_all_about_is_penalised(tmp_path):
+    """Three a day on a velocity ranking means the same subject every day, and
+    within-batch spreading cannot see yesterday."""
+    for i, day in enumerate(["2026-08-14", "2026-08-15", "2026-08-16"]):
+        _built(tmp_path, day, f"agent{i}", ["ai-agents"])
+    sat = ThemeSaturation.from_build_dir(tmp_path, date(2026, 8, 17))
+
+    assert sat.penalty(candidate("o/new", topics=["ai-agents"])) == pytest.approx(0.3)
+    assert sat.penalty(candidate("o/other", topics=["database"])) == 1.0
+
+
+def test_saturation_only_looks_at_the_recent_window(tmp_path):
+    """A theme covered a fortnight ago is not saturation, it is history. The
+    30 day repo cooldown is what stops the repo itself repeating."""
+    _built(tmp_path, "2026-07-20", "old", ["ai-agents"])
+    sat = ThemeSaturation.from_build_dir(tmp_path, date(2026, 8, 17))
+
+    assert sat.penalty(candidate("o/new", topics=["ai-agents"])) == 1.0
+
+
+def test_a_partly_saturated_theme_is_only_partly_penalised(tmp_path):
+    """It has to lose to a comparable candidate on a fresh theme, not to every
+    candidate."""
+    _built(tmp_path, "2026-08-16", "a", ["ai-agents"])
+    _built(tmp_path, "2026-08-16", "b", ["database"])
+    sat = ThemeSaturation.from_build_dir(tmp_path, date(2026, 8, 17))
+
+    assert sat.penalty(candidate("o/new", topics=["ai-agents"])) == pytest.approx(0.65)
+
+
+def test_an_unreadable_run_folder_does_not_fail_a_run(tmp_path):
+    """A half written folder is a normal thing to find in build/."""
+    (tmp_path / "2026-08-16" / "broken").mkdir(parents=True)
+    (tmp_path / "2026-08-16" / "broken" / "repo.json").write_text("{not json")
+    _built(tmp_path, "2026-08-16", "ok", ["ai-agents"])
+    sat = ThemeSaturation.from_build_dir(tmp_path, date(2026, 8, 17))
+
+    assert sat.penalty(candidate("o/new", topics=["ai-agents"])) == pytest.approx(0.3)
+
+
+def test_an_empty_build_dir_scores_exactly_as_before(tmp_path):
+    """A fresh checkout has no history to be saturated by."""
+    sat = ThemeSaturation.from_build_dir(tmp_path, date(2026, 8, 17))
+    assert sat.penalty(candidate("o/new", topics=["ai-agents"])) == 1.0
+
+
+def test_saturation_is_optional_in_scoring(tmp_path):
+    """Absent means no penalty, so a caller with no build directory to read
+    scores exactly as it did before."""
+    cands = [candidate("o/a", velocity=5.0, topics=["ai-agents"])]
+    [scored] = score_candidates(cands, used_repos(tmp_path), TODAY)
+
+    assert scored.score_breakdown["theme_multiplier"] == 1.0
+
+
+def test_a_run_folder_from_an_older_version_has_no_theme(tmp_path):
+    """`repo.json` is read back with `model_construct`, which skips validation.
+    A folder written before topics were recorded must read as "no theme" rather
+    than raising in the middle of discovery."""
+    run = tmp_path / "2026-08-16" / "old"
+    run.mkdir(parents=True)
+    run.joinpath("repo.json").write_text(
+        json.dumps({"full_name": "o/old", "name": "old", "owner": "o", "url": "u", "stars": 1})
+    )
+    sat = ThemeSaturation.from_build_dir(tmp_path, date(2026, 8, 17))
+
+    assert sat.penalty(candidate("o/new", topics=["ai-agents"])) == 1.0

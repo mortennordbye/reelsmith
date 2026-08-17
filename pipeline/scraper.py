@@ -20,6 +20,7 @@ import json
 import logging
 import math
 import re
+from collections import Counter
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -278,6 +279,144 @@ def _readme_quality(readme: str) -> float:
     return min(score, 1.0)
 
 
+# Tags that say what a repo is built with or how it is packaged rather than what
+# it is about. Two Rust CLIs are not the same video; two agent frameworks are.
+# Languages come off `RepoCandidate.language` and do not need listing here.
+_GENERIC_TOPICS = frozenset(
+    {
+        "ai",
+        "automation",
+        "cli",
+        "developer-tools",
+        "devtools",
+        "framework",
+        "hacktoberfest",
+        "library",
+        "open-source",
+        "opensource",
+        "productivity",
+        "self-hosted",
+        "tool",
+        "tools",
+    }
+)
+
+
+# How far back saturation looks, and how hard it bites. Four days is a little
+# over one drain of a three-a-day schedule, so a theme has to be genuinely
+# repeating rather than merely twice.
+_SATURATION_DAYS = 4
+# A theme occupying every recent video keeps 30% of its score. Enough to lose to
+# a comparable candidate on a fresh theme, not enough to starve a pool where
+# everything trending is one subject.
+_SATURATION_BITE = 0.7
+
+
+def _theme(cand: RepoCandidate) -> set[str]:
+    """What a repo is *about*, for deciding whether two videos collide."""
+    generic = set(_GENERIC_TOPICS)
+    if cand.language:
+        generic.add(cand.language.lower())
+    return {t.lower() for t in cand.topics} - generic
+
+
+class ThemeSaturation:
+    """How much of the last few days of videos each theme already occupies.
+
+    `_spread_themes` keeps one batch from repeating itself. This is the other
+    half: three videos a day, every day, on a ranking that follows GitHub star
+    velocity means the same subject every day, and within-batch spreading cannot
+    see yesterday.
+
+    **It is worth having because the account measured the cost.** Of 44 posts
+    with insights, the 29 about agent and LLM tooling took a median 136 views
+    and produced one breakout; the 15 about anything else took 193 and produced
+    five. The gap holds at both star tiers, so it is the subject rather than the
+    fame of the repo. Star velocity selects for what is hot on GitHub, which is
+    the narrowest audience this account publishes to.
+
+    **Measured rather than listed.** No hardcoded "AI" tag set, because the
+    saturated theme in a year will be something else and a list would still say
+    agents. Saturation is read off what was actually built, so it retargets
+    itself.
+
+    **Read from `build/` rather than a store of its own.** Those folders already
+    are the record: every run writes `repo.json` with the topics the ranking
+    saw, and `--recover` already sweeps the same directory. A second file would
+    need its own merge contract with the gateway, the way `used_repos.json` has
+    one, for a signal that is reconstructible from disk.
+    """
+
+    def __init__(self, counts: Counter[str], total: int):
+        self._counts = counts
+        self._total = total
+
+    @classmethod
+    def from_build_dir(
+        cls, build_dir: Path, on: date | None = None, days: int = _SATURATION_DAYS
+    ) -> ThemeSaturation:
+        cutoff = (on or date.today()) - timedelta(days=days)
+        counts: Counter[str] = Counter()
+        total = 0
+        for meta_path in sorted(build_dir.glob("*/*/repo.json")):
+            try:
+                stamp = date.fromisoformat(meta_path.parent.parent.name)
+            except ValueError:
+                continue  # not a dated run folder
+            if stamp < cutoff:
+                continue
+            try:
+                meta = json.loads(meta_path.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue  # a half written folder is not worth failing a run over
+            total += 1
+            counts.update(_theme(RepoCandidate.model_construct(**meta)))
+        return cls(counts, total)
+
+    def penalty(self, cand: RepoCandidate) -> float:
+        """1.0 for a theme nothing recent shares, down to 0.3 for one they all do."""
+        theme = _theme(cand)
+        if not theme or not self._total:
+            return 1.0
+        share = max(self._counts[t] for t in theme) / self._total
+        return 1.0 - _SATURATION_BITE * min(share, 1.0)
+
+
+def _spread_themes(ranked: list[RepoCandidate], count: int) -> list[RepoCandidate]:
+    """Best-first, skipping repos that repeat a theme already taken.
+
+    A batch is three videos landing on the same audience within one day, and at
+    the time of writing `ai-agents`, `claude-code` and `llm` each carried 11 of
+    the account's first 52 repos. Straight top-N by score hands that audience
+    the same subject three times before lunch, which is the shape a viewer reads
+    as a feed to mute rather than three separate videos.
+
+    Falls back to score order rather than returning short. A thin pool where
+    everything trending is the same theme is a real Tuesday, and a batch of one
+    is worse than a batch of three that overlap. Untagged repos have no theme to
+    collide on, so they never block each other.
+    """
+    picked: list[RepoCandidate] = []
+    taken: set[str] = set()
+    for cand in ranked:
+        theme = _theme(cand)
+        if theme & taken:
+            continue
+        picked.append(cand)
+        taken |= theme
+        if len(picked) == count:
+            return picked
+
+    seen = {c.full_name for c in picked}
+    for cand in ranked:  # pool exhausted, backfill on score alone
+        if len(picked) == count:
+            break
+        if cand.full_name not in seen:
+            picked.append(cand)
+            seen.add(cand.full_name)
+    return picked
+
+
 def _normalise(values: list[float]) -> list[float]:
     """Scale to 0..1 against the pool max. Empty/flat pools score 0."""
     hi = max(values, default=0.0)
@@ -287,9 +426,16 @@ def _normalise(values: list[float]) -> list[float]:
 
 
 def score_candidates(
-    candidates: list[RepoCandidate], used: UsedRepos, on: date | None = None
+    candidates: list[RepoCandidate],
+    used: UsedRepos,
+    on: date | None = None,
+    themes: ThemeSaturation | None = None,
 ) -> list[RepoCandidate]:
-    """Assign scores in place and return the list sorted best-first."""
+    """Assign scores in place and return the list sorted best-first.
+
+    `themes` is optional and absent means no saturation penalty, so a caller
+    with no build directory to read scores exactly as it did before.
+    """
     if not candidates:
         return []
 
@@ -307,8 +453,13 @@ def score_candidates(
             "readme": 0.10 * readme,
         }
         penalty = used.penalty(cand.full_name, on)
-        cand.score_breakdown = {**breakdown, "cooldown_multiplier": penalty}
-        cand.score = sum(breakdown.values()) * penalty
+        saturation = themes.penalty(cand) if themes else 1.0
+        cand.score_breakdown = {
+            **breakdown,
+            "cooldown_multiplier": penalty,
+            "theme_multiplier": saturation,
+        }
+        cand.score = sum(breakdown.values()) * penalty * saturation
 
     return sorted(candidates, key=lambda c: c.score, reverse=True)
 
@@ -447,7 +598,8 @@ def collect_candidates(
                     cand.hn_points, cand.hn_url = story
 
     history.save()
-    return score_candidates(list(seen.values()), used, today)
+    themes = ThemeSaturation.from_build_dir(cfg.build_dir, today)
+    return score_candidates(list(seen.values()), used, today, themes)
 
 
 def snapshot_stars(cfg: Settings, *, on: date | None = None) -> int:
@@ -505,6 +657,12 @@ def find_trending_repos(
     batch of three that only found two good repos should still make two videos,
     and the caller says so out loud.
 
+    **The top `count` by score is not the batch.** `_spread_themes` picks
+    best-first while refusing a second repo on a theme already taken, because
+    three videos from one batch land on one audience inside one day. It only
+    spreads *within* a batch; two consecutive nights can still both be about
+    agents, which needs a record of recent themes rather than one ranking.
+
     **Enrichment has to cover the whole batch.** The shortlist that gets a
     README is picked by velocity, while the final ranking is by score, where the
     README is only a tenth and velocity is over half. So a repo can place inside
@@ -522,7 +680,7 @@ def find_trending_repos(
             "too tight: try lowering MIN_STARS_BREAKOUT or widening "
             "BREAKOUT_WINDOW_DAYS in .env"
         )
-    winners = [c for c in ranked[:count] if c.score > 0]
+    winners = _spread_themes([c for c in ranked if c.score > 0], count)
     if not winners:
         raise RuntimeError(
             "Every candidate scored zero, which means the pool is flat rather "
