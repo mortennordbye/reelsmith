@@ -1509,6 +1509,38 @@ async def rendered_repos_list(
     )
 
 
+async def rendered_at_for(
+    conn: aiosqlite.Connection, repos: list[str | None]
+) -> dict[str, str]:
+    """When each of these repos was rendered, for the ones we have a record of.
+
+    Deliberately not filtered by account. A render belongs to the repo and the
+    machine that made it, not to a destination: one MP4 feeds the Instagram row
+    and the YouTube row, and the pipeline records it once under whichever
+    account it happened to have configured. Filtering by the reading account
+    would leave the YouTube board with no dates at all.
+
+    Missing is normal rather than wrong. `--unmark` deletes the row, a post
+    backfilled from a live Reel never had one, and anything published before
+    this table existed predates the record.
+    """
+    names = [r for r in dict.fromkeys(repos) if r]
+    if not names:
+        return {}
+    marks = ",".join("?" * len(names))
+    rows = await _all(
+        conn,
+        f"""
+        SELECT repo_full_name, MIN(rendered_at) AS rendered_at
+        FROM rendered_repos
+        WHERE repo_full_name IN ({marks})
+        GROUP BY repo_full_name
+        """,
+        names,
+    )
+    return {row["repo_full_name"]: row["rendered_at"] for row in rows}
+
+
 async def forget_rendered(
     conn: aiosqlite.Connection, repo_full_name: str, ig_user_id: str | None = None
 ) -> int:

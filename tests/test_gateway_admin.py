@@ -336,6 +336,55 @@ async def test_the_queue_page_shows_a_queued_post_and_its_keyword(client):
     assert "UV" in body
 
 
+async def test_the_queue_page_says_when_the_video_was_made(client):
+    """A queue three days deep means the date a post goes out says nothing
+    about how old the video is, and a Reel about a repo that trended on Monday
+    is a different proposition on Thursday."""
+    http, app = client
+    await queue(http)
+    await db.record_rendered(
+        app.state.db,
+        repo_full_name="astral-sh/uv",
+        ig_user_id=ACCOUNT,
+        rendered_at="2026-08-14T02:31:00+00:00",
+    )
+
+    body = (await http.get("/admin/")).text
+
+    assert "made Fri 14 Aug 02:31" in body
+
+
+async def test_a_post_with_no_render_on_record_says_when_it_arrived_instead(client):
+    """`--unmark` deletes the render row and a backfilled post never had one,
+    so the fallback has to be labelled as the different thing it is rather than
+    printed as if it were the render date."""
+    http, _ = client
+    await queue(http)
+
+    body = (await http.get("/admin/")).text
+
+    assert "made " not in body
+    assert "queued " in body
+
+
+async def test_the_youtube_row_gets_the_date_too(client):
+    """The render is recorded once, under whichever account the Mac had, and
+    one MP4 feeds both destinations. Filtering by the reading account would
+    leave the second board blank."""
+    http, app = client
+    await queue(http)
+    await db.record_rendered(
+        app.state.db,
+        repo_full_name="astral-sh/uv",
+        ig_user_id="UCq0Ff3lJ7dK2sWnEv8mXtLp",
+        rendered_at="2026-08-14T02:31:00+00:00",
+    )
+
+    body = (await http.get("/admin/")).text
+
+    assert "made Fri 14 Aug 02:31" in body
+
+
 async def test_the_page_says_so_when_the_scheduler_is_off(tmp_path):
     """A queue nothing drains looks identical to a working one, right up until
     the first slot is missed."""
