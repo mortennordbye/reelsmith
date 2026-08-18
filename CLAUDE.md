@@ -330,6 +330,38 @@ fetch on its way to being dropped.
 - Failure is an empty dict, like the results loop. A gateway that is down, or
   one older than this endpoint, leaves discovery behaving exactly as before.
 
+### Depth is what the list costs discovery
+
+Search is sorted by stars descending, so the repos featured in the last 30 days
+are the highest starred things the queries match and they sit in front of
+everything else every night. A fixed window of *results* is therefore not a
+fixed number of *candidates*, and on 17 and 18 August 2026 it was zero of them
+twice in a row: 60 repos on cooldown, 54 of them inside the top 150 by stars,
+and the batch died at ranking with `No candidate repositories survived
+filtering`. The pool was never thin, the two queries matched about 9,900 repos
+that morning. The window into it was.
+
+- **Discovery pages until it has candidates, not until it has results.**
+  `CANDIDATE_TARGET` (50) is survivors per query and `CANDIDATE_SEARCH_CAP`
+  (400) is how deep it may page to find them, so the window widens by exactly
+  as much as the cooldown list grows and costs nothing on a night when it does
+  not have to. `iter_repositories` is a generator for that reason: a page
+  nobody asks for is a search request never spent.
+- **The target is per query, not per run.** One counter shared between them
+  would let a productive first query satisfy the whole run and leave the second
+  unread, which is the difference between breakouts and established projects.
+- **The snapshot reads to the cap, not to the target**, because it cannot know
+  how deep discovery will go tonight. Reading only the shallow slice would hand
+  measured velocity to the repos most likely to be on cooldown and the cold
+  start proxy to everything discovery had to dig for.
+- **The old error message named the wrong lever.** `MIN_STARS_BREAKOUT` and
+  `BREAKOUT_WINDOW_DAYS` widen the query, which does nothing when the top of
+  the result set is what is being lost. It points at the cap and the cooldown
+  length now.
+- GitHub refuses to read one query past 1000 results whatever `total_count`
+  says, so the cap has a ceiling of its own. Getting past that needs a
+  different query, not another page.
+
 ### Rendered is a second, weaker list
 
 `GET /api/rendered` is the repos a video already exists for, and it is

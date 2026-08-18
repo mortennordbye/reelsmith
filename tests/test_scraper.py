@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 from datetime import date, timedelta
+from itertools import islice
 
 import pytest
 from conftest import candidate
 
+from config import Settings
 from pipeline import scraper
 from pipeline.scraper import (
     _DEFAULT_ENRICH_TOP,
@@ -16,9 +18,11 @@ from pipeline.scraper import (
     _cold_start_velocity,
     _is_relevant,
     _readme_quality,
+    collect_candidates,
     find_trending_repos,
     score_candidates,
 )
+from sources.github import GitHubClient
 
 TODAY = date(2026, 7, 30)
 
@@ -510,3 +514,152 @@ def test_a_run_folder_from_an_older_version_has_no_theme(tmp_path):
     sat = ThemeSaturation.from_build_dir(tmp_path, date(2026, 8, 17))
 
     assert sat.penalty(candidate("o/new", topics=["ai-agents"])) == 1.0
+
+
+# --------------------------------------------------------------------------
+# Discovery depth
+# --------------------------------------------------------------------------
+
+
+def _search_item(full_name: str, stars: int = 5_000) -> dict:
+    owner, _, name = full_name.partition("/")
+    return {
+        "full_name": full_name,
+        "name": name,
+        "owner": {"login": owner},
+        "html_url": f"https://github.com/{full_name}",
+        "description": "An LLM agent framework",
+        "stargazers_count": stars,
+        "forks_count": 10,
+        "language": "Python",
+        "license": {"spdx_id": "MIT"},
+        "topics": ["llm"],
+        "created_at": "2026-07-01T00:00:00Z",
+        "pushed_at": "2026-08-17T00:00:00Z",
+    }
+
+
+class _FakeGitHub:
+    """A client whose supply is deep enough to page through."""
+
+    def __init__(self, supply: list[dict]):
+        self.supply = supply
+        self.consumed = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return None
+
+    def iter_repositories(self, query, *, max_results):
+        for item in self.supply[:max_results]:
+            self.consumed += 1
+            yield item
+
+    def fetch_readme(self, full_name, budget):
+        return "# readme"
+
+    @property
+    def rate_limit_remaining(self):
+        return "29"
+
+
+@pytest.fixture
+def _discovery(monkeypatch, tmp_path):
+    """Discovery with the network and the real data/ removed."""
+    monkeypatch.setattr(Settings, "data_dir", property(lambda self: tmp_path))
+    monkeypatch.setattr(scraper.gateway, "fetch_covered", lambda cfg: {})
+    monkeypatch.setattr(scraper.gateway, "fetch_rendered", lambda cfg: set())
+    monkeypatch.setattr(scraper, "HackerNewsClient", lambda: _NoHackerNews())
+
+
+class _NoHackerNews:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return None
+
+    def top_story_for_repo(self, full_name):
+        return None
+
+
+def _run_discovery(monkeypatch, gh: _FakeGitHub, **settings):
+    monkeypatch.setattr(scraper, "GitHubClient", lambda token: gh)
+    cfg = Settings(github_token="x", **settings)
+    return collect_candidates(cfg, on=TODAY)
+
+
+def test_discovery_pages_past_a_slice_that_is_entirely_covered(monkeypatch, tmp_path, _discovery):
+    """The cooldown list eats a stars-sorted result set from the top, so the
+    repos we featured last week sit in front of everything else every night.
+    A fixed window of 50 results was a window of zero candidates on two
+    consecutive nights; the depth has to follow the cooldown list."""
+    covered = [f"o/old{i}" for i in range(60)]
+    used = UsedRepos(tmp_path / "used_repos.json", cooldown_days=30)
+    for name in covered:
+        used.mark_used(name, TODAY)
+    used.save()
+
+    gh = _FakeGitHub([_search_item(n) for n in covered + [f"o/new{i}" for i in range(10)]])
+    ranked = _run_discovery(monkeypatch, gh, candidate_target=5, candidate_search_cap=400)
+
+    assert [c.full_name for c in ranked[:2]] == ["o/new0", "o/new1"]
+    # Five per query, and the second query owes its own five, so the ten fresh
+    # repos behind the covered slice are all reached.
+    assert len(ranked) == 10
+
+
+def test_discovery_stops_at_the_target_rather_than_the_cap(monkeypatch, _discovery):
+    """Paging deep is what a bad night costs, not what every night costs. A
+    page nobody asks for is a search request never spent."""
+    gh = _FakeGitHub([_search_item(f"o/r{i}") for i in range(400)])
+    ranked = _run_discovery(monkeypatch, gh, candidate_target=3, candidate_search_cap=400)
+
+    assert len(ranked) == 6
+    # Three candidates for the first query, then the second query pages over
+    # those same three before finding three of its own. Nine items read out of
+    # a supply of four hundred, because nobody asked for the rest.
+    assert gh.consumed == 9
+
+
+def test_every_repo_paged_over_is_snapshotted_even_when_it_is_dropped(
+    monkeypatch, tmp_path, _discovery
+):
+    """Velocity is 55% of the score and a missing day cannot be backfilled, so
+    the repos we page past on the way to a candidate still have to be recorded.
+    They are tomorrow's pool."""
+    used = UsedRepos(tmp_path / "used_repos.json", cooldown_days=30)
+    used.mark_used("o/old0", TODAY)
+    used.save()
+
+    gh = _FakeGitHub([_search_item("o/old0"), _search_item("o/new0")])
+    _run_discovery(monkeypatch, gh, candidate_target=1, candidate_search_cap=400)
+
+    history = json.loads((tmp_path / "star_history.json").read_text())
+    assert "o/old0" in history
+
+
+def test_the_client_never_fetches_a_page_the_caller_does_not_ask_for(monkeypatch):
+    """`iter_repositories` is a generator for exactly this reason: the caller
+    is the only one who knows when it has enough."""
+    pages = []
+
+    class _Resp:
+        headers = {"x-ratelimit-remaining": "29"}
+
+        def json(self):
+            return {"items": [_search_item(f"o/r{i}") for i in range(100)]}
+
+    def _get(path, **kw):
+        pages.append(kw["params"]["page"])
+        return _Resp()
+
+    gh = GitHubClient()
+    monkeypatch.setattr(gh, "_get", _get)
+
+    first_ten = list(islice(gh.iter_repositories("q", max_results=400), 10))
+
+    assert len(first_ten) == 10
+    assert pages == [1]

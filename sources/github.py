@@ -17,7 +17,9 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +38,10 @@ API_VERSION = "2022-11-28"
 
 # The Search API caps out here regardless of what you ask for.
 MAX_PER_PAGE = 100
+# And it refuses `page * per_page > 1000` outright, whatever total_count says,
+# so this is how deep any single query can ever be read. Getting past it needs
+# a different query, not another page.
+SEARCH_RESULT_CAP = 1000
 
 
 class RateLimited(Exception):
@@ -187,18 +193,28 @@ class GitHubClient:
 
     # -- public ------------------------------------------------------------
 
-    def search_repositories(self, query: str, limit: int = 50) -> list[dict[str, Any]]:
-        """Run one Search API query, paging until `limit` results.
+    def iter_repositories(
+        self, query: str, *, max_results: int = SEARCH_RESULT_CAP
+    ) -> Iterator[dict[str, Any]]:
+        """Yield one Search API query's results best-first, a page at a time.
+
+        A generator rather than a list because the caller is the only one who
+        knows when it has enough. Results are sorted by stars descending and
+        most of them get filtered out client-side, so "how many results" is the
+        wrong unit to ask for: a caller that needs 50 *usable* repos may have
+        to look at 300 to find them on one night and 60 on the next. A page
+        nobody asks for is a search request never spent.
 
         Note the qualifier trap this deliberately avoids: GitHub ANDs repeated
         qualifiers, so `license:mit license:apache-2.0` silently matches
         *nothing*. All license and topic filtering happens client-side in
         pipeline/scraper.py against the response body instead.
         """
-        out: list[dict[str, Any]] = []
+        max_results = min(max_results, SEARCH_RESULT_CAP)
+        fetched = 0
         page = 1
-        while len(out) < limit:
-            per_page = min(MAX_PER_PAGE, limit - len(out))
+        while fetched < max_results:
+            per_page = min(MAX_PER_PAGE, max_results - fetched)
             resp = self._get(
                 "/search/repositories",
                 params={
@@ -212,13 +228,26 @@ class GitHubClient:
             self._last_remaining = resp.headers.get("x-ratelimit-remaining", "?")
             items = resp.json().get("items", [])
             if not items:
-                break
-            out.extend(items)
+                return
+            yield from items
+            fetched += len(items)
             if len(items) < per_page:
-                break
+                return
             page += 1
+        log.debug(
+            "query %r exhausted %d results (quota left: %s)",
+            query, fetched, self._last_remaining,
+        )
+
+    def search_repositories(self, query: str, limit: int = 50) -> list[dict[str, Any]]:
+        """The first `limit` results of one query, as a list.
+
+        The eager form of `iter_repositories`, for callers that want a fixed
+        window rather than a supply they stop drawing from.
+        """
+        out = list(islice(self.iter_repositories(query, max_results=limit), limit))
         log.debug("query %r -> %d repos (quota left: %s)", query, len(out), self._last_remaining)
-        return out[:limit]
+        return out
 
     def fetch_repo(self, full_name: str) -> dict[str, Any]:
         """Fetch one repo by name via the core API.
