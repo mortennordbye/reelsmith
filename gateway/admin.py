@@ -251,6 +251,23 @@ def _back(request: Request, anchor: str = "") -> RedirectResponse:
 # --------------------------------------------------------------------------
 
 
+async def _rendered_at(conn: Any, rows: list[Any]) -> dict[int, datetime | None]:
+    """When each queued post's video was made, keyed by queue id.
+
+    `created_at` answers a different question. It is when a video reached the
+    gateway, and the two dates come apart by days in the ordinary case: a batch
+    renders at 02:00 and the post waits its turn in a line three days deep, and
+    a run moved aside by hand can be queued a week after it was built.
+    `rendered_repos` is the only record of when the video itself was made, so
+    the panel reads it rather than inferring it from the queue row.
+    """
+    stamps = await db.rendered_at_for(conn, [row["repo_full_name"] for row in rows])
+    return {
+        row["id"]: db.parse_iso(stamps.get(row["repo_full_name"] or ""))
+        for row in rows
+    }
+
+
 @router.get("/", response_class=HTMLResponse, name="queue_page")
 async def queue_page(request: Request) -> Any:
     conn, cfg = request.app.state.db, request.app.state.cfg
@@ -275,6 +292,7 @@ async def queue_page(request: Request) -> Any:
                 "tz": _display_tz(cfg, slots),
                 "upcoming": rows,
                 "recent": list(reversed(recent)),
+                "made": await _rendered_at(conn, [row for row, _ in rows] + recent),
                 "has_slots": bool(slots),
             }
         )

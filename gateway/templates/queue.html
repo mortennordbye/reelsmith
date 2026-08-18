@@ -34,6 +34,19 @@
             <div class="row" style="align-items:center;gap:8px">
               <span class="tag {{ row['state'] }}">{{ row['state'] }}</span>
               <strong>{{ row['repo_full_name'] or row['video_name'] }}</strong>
+              {# When the video was made, which is not when it goes out and not
+                 when it arrived. A queue three days deep means the two dates
+                 differ by days, and knowing a post has been sitting since
+                 Monday is the thing that says whether it is still news. #}
+              {% set made = board.made.get(row['id']) %}
+              <span class="small muted"
+                    title="{{ 'When this video was rendered' if made else 'When this video reached the gateway. Nothing records when it was rendered.' }}">
+                {% if made %}
+                  made {{ made | fmt(board.tz) }}
+                {% else %}
+                  queued {{ row['created_at'][:16] | replace('T', ' ') }}
+                {% endif %}
+              </span>
               <span class="grow"></span>
               <span class="small {{ 'muted' if row['state'] == 'draft' }}">
                 {% if row['state'] == 'draft' %}
@@ -134,7 +147,13 @@
         {% for row in board.recent %}
           <tr>
             <td><span class="tag {{ row['state'] }}">{{ row['state'] }}</span></td>
-            <td>{{ row['repo_full_name'] or row['video_name'] }}</td>
+            <td>
+              {{ row['repo_full_name'] or row['video_name'] }}
+              {% set made = board.made.get(row['id']) %}
+              {% if made %}
+                <div class="small muted">made {{ made | fmt(board.tz) }}</div>
+              {% endif %}
+            </td>
             <td class="small muted">
               {{ (row['published_at'] or row['created_at'])[:16] | replace('T', ' ') }}
             </td>
