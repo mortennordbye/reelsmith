@@ -544,10 +544,19 @@ def collect_candidates(
     seen: dict[str, RepoCandidate] = {}
     covered = 0
     already_built = 0
+    scanned = 0
 
     with GitHubClient(token) as gh:
         for query in _build_queries(cfg, today):
-            for item in gh.search_repositories(query, limit=cfg.candidates_per_query):
+            # Counted per query, because the target is what each query owes.
+            # Sharing one counter would let a productive first query satisfy
+            # the whole run and leave the second one unread, which is the
+            # difference between breakouts and established projects.
+            kept = 0
+            looked = 0
+            for item in gh.iter_repositories(query, max_results=cfg.candidate_search_cap):
+                scanned += 1
+                looked += 1
                 # Snapshot every repo we lay eyes on, even ones we drop below.
                 # Tomorrow's velocity is only as good as today's coverage, and
                 # that includes repos we have already featured.
@@ -571,11 +580,26 @@ def collect_candidates(
                     already_built += 1
                     continue
                 seen[item["full_name"]] = _to_candidate(item)
+                kept += 1
+                # Enough from this query. Every page we do not ask for is a
+                # search request we do not spend, which is what makes paging
+                # deep on a bad night free on a good one.
+                if kept >= cfg.candidate_target:
+                    break
+            else:
+                # Ran the query dry, or hit the cap, without filling the target.
+                # Worth saying out loud: this is the state that preceded an
+                # empty ranking, and the cap is the knob that answers it.
+                log.warning(
+                    "Query %r yielded only %d candidate(s) in %d results; "
+                    "raise CANDIDATE_SEARCH_CAP (now %d) if this repeats",
+                    query, kept, looked, cfg.candidate_search_cap,
+                )
 
         log.info(
-            "Found %d candidates after filtering, %d skipped as already covered, "
-            "%d already rendered (GitHub quota left: %s)",
-            len(seen), covered, already_built, gh.rate_limit_remaining,
+            "Found %d candidates after filtering %d search results, %d skipped as "
+            "already covered, %d already rendered (GitHub quota left: %s)",
+            len(seen), scanned, covered, already_built, gh.rate_limit_remaining,
         )
 
         # Velocity for everything -- it's free, it's already in memory.
@@ -608,9 +632,16 @@ def snapshot_stars(cfg: Settings, *, on: date | None = None) -> int:
     Deliberately search-and-record only: no README fetches, no Hacker News, no
     scoring. Velocity is 55% of the candidate score but it is only *measured*
     when a snapshot exists from an earlier day, so this needs to run daily --
-    including on days we never generate a video. Two search requests, a couple
-    of seconds, and from the second day onward every ranking uses real deltas
-    instead of the damped stars/day proxy.
+    including on days we never generate a video. A handful of search requests, a
+    couple of seconds, and from the second day onward every ranking uses real
+    deltas instead of the damped stars/day proxy.
+
+    **It reads to the same ceiling discovery may page to**, not to the target,
+    because discovery's depth varies with the cooldown list and this job cannot
+    know tonight's. Snapshotting the shallower slice would hand a measured
+    velocity to the repos at the top -- the ones most likely to be on cooldown
+    -- and the cold-start proxy to everything discovery had to dig for, which
+    is exactly the set the digging exists to reach.
     """
     today = on or date.today()
     token = require_github_token(cfg)
@@ -619,7 +650,7 @@ def snapshot_stars(cfg: Settings, *, on: date | None = None) -> int:
     seen: set[str] = set()
     with GitHubClient(token) as gh:
         for query in _build_queries(cfg, today):
-            for item in gh.search_repositories(query, limit=cfg.candidates_per_query):
+            for item in gh.iter_repositories(query, max_results=cfg.candidate_search_cap):
                 history.record(item["full_name"], item.get("stargazers_count", 0), today)
                 seen.add(item["full_name"])
         quota = gh.rate_limit_remaining
@@ -675,10 +706,12 @@ def find_trending_repos(
     ranked = collect_candidates(cfg, enrich_top=max(_DEFAULT_ENRICH_TOP, count), on=on)
     if not ranked:
         raise RuntimeError(
-            "No candidate repositories survived filtering. Either everything "
-            "trending is already covered (see `--covered`), or the filters are "
-            "too tight: try lowering MIN_STARS_BREAKOUT or widening "
-            "BREAKOUT_WINDOW_DAYS in .env"
+            "No candidate repositories survived filtering, after paging to "
+            "CANDIDATE_SEARCH_CAP. That is depth, not tightness: the cooldown "
+            "list covers the whole slice we can reach (see `--covered`), so "
+            "raise CANDIDATE_SEARCH_CAP or shorten REPO_COOLDOWN_DAYS in .env. "
+            "MIN_STARS_BREAKOUT and BREAKOUT_WINDOW_DAYS widen the query, "
+            "which is a different problem and rarely this one"
         )
     winners = _spread_themes([c for c in ranked if c.score > 0], count)
     if not winners:

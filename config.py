@@ -102,7 +102,27 @@ class Settings(BaseSettings):
     breakout_window_days: int = 90
     pushed_window_days: int = 7
     repo_cooldown_days: int = 30
-    candidates_per_query: int = 50
+    # How many *usable* candidates a query has to yield, and how deep it may
+    # page to find them. Two numbers rather than one because the cooldown list
+    # eats a stars-sorted result set from the top: the repos we featured last
+    # week are still the highest-starred things the query matches, so they sit
+    # in front of everything else every night until their 30 days expire.
+    #
+    # A fixed window of 50 results is therefore not a fixed window of 50
+    # candidates, and on 2026-08-17 and 2026-08-18 it was a window of zero.
+    # 60 repos were inside their cooldown and 54 of them fell in the top 150 by
+    # stars, so discovery filtered everything it looked at and the batch died at
+    # ranking. The pool was never thin -- the two queries matched about 9,900
+    # repos that morning -- the window into it was.
+    #
+    # So discovery pages until it has `candidate_target` survivors instead. The
+    # window now widens by exactly as much as the cooldown list grows, and costs
+    # nothing on a night when it does not have to: a normal night still stops on
+    # the first page. `candidate_search_cap` is the ceiling on that widening and
+    # the thing to raise if the log ever says a query hit it; GitHub itself
+    # refuses to read one query past 1000 results, which is the real ceiling.
+    candidate_target: int = 50
+    candidate_search_cap: int = 400
 
     # --- Script generation (Claude Code CLI) -------------------------------
     claude_model: str = "opus"
