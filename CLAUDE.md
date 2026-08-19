@@ -326,6 +326,30 @@ go out and the prompt changes underneath them.
   pipeline's `config.py` because the gateway cannot import it; discovery still
   reads its own value, so a drift costs a word on a page rather than a
   decision.
+- **Unsettled posts are held back from the cohorts, not annotated.** The daily
+  `insights` history had never been read by anything, and it answers the
+  question every comparison here was hedging: a Reel reaches about 56 percent of
+  its final views at its first reading, 92 at the second and 99 at the third, so
+  it is finished in roughly two days. `analysis.maturity` recomputes that curve
+  from this account's own rows every time the page is drawn and prints it beside
+  the rule it applies, because a number written into prose goes stale silently.
+  A cohort holding yesterday's post is not reporting a worse slot, it is
+  reporting a post that has not finished arriving, and the old age column made
+  the reader do that correction by eye. The count held back is always shown: a
+  table that quietly dropped four posts reads as one that covered everything.
+- **`/api/results` carries `readings` so the CLI holds back the same posts.**
+  `main.py --cohorts` cannot import `gateway/analysis.py` and duplicates the
+  threshold, which is acceptable; two views of one question disagreeing is not.
+- **The chart keeps every post.** Skip rate settles a reading earlier than views
+  and then drifts about a point, so holding back the newest dots would hide the
+  most recent evidence to avoid an error smaller than the marker.
+- **The Repos page says why the scorer picked each repo.**
+  `score_candidates` splits the score into velocity, stars, Hacker News and
+  README quality and writes it into `repo.json`, where it never left the machine
+  that ranked. It rides on `register_rendered`, because a score is a property of
+  the pick rather than of the post, and a repo can be rendered without ever
+  being queued. Stored as the JSON the pipeline already produces rather than as
+  columns, since the weights are config and have changed twice.
 - **On a phone the cohort tables scroll rather than dropping columns.** The
   panel's global rule hides column four and up under 700px, which on this table
   would have taken the breakout count, the column the page itself says to read

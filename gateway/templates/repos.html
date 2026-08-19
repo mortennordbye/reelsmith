@@ -45,6 +45,7 @@
             <th>Covered</th>
             <th>Rendered</th>
             <th>Posted</th>
+            <th class="num">Score</th>
             <th class="num">Views</th>
             <th class="num">Skip</th>
             <th>Status</th>
@@ -59,6 +60,25 @@
                    and the hook says what was actually claimed about it, which is
                    the part worth remembering before covering the ground again. #}
                 {% if r.hook %}<span class="sub-hook">{{ r.hook }}</span>{% endif %}
+                {# Why the scorer picked it, which is the only answer available
+                   to "why does discovery keep landing on the same corner of
+                   GitHub". Velocity carries 55 percent of the score, so a list
+                   of repos that all won on velocity is the shape of a pool that
+                   is narrower than the queries look. #}
+                {% if r.breakdown %}
+                  <span class="breakdown">
+                    {%- for part, value in r.breakdown | dictsort(by='value', reverse=true) -%}
+                      {%- if not part.endswith('multiplier') and value > 0 -%}
+                        <span class="part">{{ part }} {{ '%.2f' | format(value) }}</span>
+                      {%- endif -%}
+                    {%- endfor -%}
+                    {%- if r.breakdown.get('theme_multiplier', 1) < 1 -%}
+                      <span class="part dim" title="Held down because a video that
+                            day already covered this theme.">theme
+                        &times;{{ '%.2f' | format(r.breakdown['theme_multiplier']) }}</span>
+                    {%- endif -%}
+                  </span>
+                {% endif %}
               </td>
               <td class="mono small">{{ r.covered_at or '' }}</td>
               <td class="mono small">{{ r.rendered_at or '' }}</td>
@@ -66,6 +86,9 @@
                 {% if r.permalink %}
                   <a href="{{ r.permalink }}" rel="noreferrer">{{ r.published_at }}</a>
                 {% else %}{{ r.published_at }}{% endif %}
+              </td>
+              <td class="num muted" title="{{ r.run_folder }}">
+                {{ '%.2f' | format(r.score) if r.score else '' }}
               </td>
               <td class="num">{{ '{:,}'.format(r.views) if r.views else '' }}</td>
               <td class="num">{{ '%.1f' | format(r.skip_rate) ~ '%' if r.skip_rate else '' }}</td>

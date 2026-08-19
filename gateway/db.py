@@ -28,7 +28,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -373,6 +373,28 @@ _MIGRATIONS: tuple[str, ...] = (
     # the loop from anywhere.
     """
     ALTER TABLE queued_posts ADD COLUMN hook TEXT NOT NULL DEFAULT '';
+    """,
+    # v14. Why this repo was chosen, alongside the record that it was rendered.
+    #
+    # `score_candidates` splits the score into velocity, stars, Hacker News and
+    # README quality, then multiplies by the cooldown and theme penalties, and
+    # writes the lot into `repo.json` in the run folder. It has never left the
+    # machine that ranked, so the one question the panel could not answer was
+    # the one asked most often: why does discovery keep landing on the same
+    # corner of GitHub.
+    #
+    # On `rendered_repos` rather than `queued_posts` because a score is a
+    # property of the pick, not of the post. A repo is scored once and may be
+    # rendered without ever being queued, which is exactly the row worth
+    # explaining.
+    #
+    # Stored as the JSON the pipeline already produces rather than as columns.
+    # The weights are config and have changed twice; a column per component
+    # would need a migration each time and would still not say what the weights
+    # were on the day. Nothing here queries inside it.
+    """
+    ALTER TABLE rendered_repos ADD COLUMN score REAL NOT NULL DEFAULT 0;
+    ALTER TABLE rendered_repos ADD COLUMN score_breakdown TEXT NOT NULL DEFAULT '';
     """,
 )
 
@@ -1421,6 +1443,56 @@ async def record_insights(
     await conn.commit()
 
 
+async def reading_counts(
+    conn: aiosqlite.Connection, ig_user_id: str | None = None
+) -> dict[str, int]:
+    """How many daily readings each post has, which is how settled it is.
+
+    Counted rather than aged: the sweep is what produces a reading, and a sweep
+    that did not run leaves a post less settled than the calendar says. Sent to
+    the Mac so `--cohorts` there can hold back the same posts the panel does;
+    two views of one question disagreeing is worse than either being wrong.
+    """
+    where, args = ("WHERE ig_user_id = ?", (ig_user_id,)) if ig_user_id else ("", ())
+    rows = await _all(
+        conn,
+        f"SELECT media_id, COUNT(*) AS readings FROM insights {where} GROUP BY media_id",
+        args,
+    )
+    return {row["media_id"]: int(row["readings"]) for row in rows}
+
+
+async def insights_series(
+    conn: aiosqlite.Connection, ig_user_id: str | None = None
+) -> dict[str, list[Any]]:
+    """Every reading ever taken, grouped by media and in date order.
+
+    The table has kept one row per post per day since it existed and nothing
+    has ever read more than the newest of them. That is the whole time
+    dimension of this account's own numbers, thrown away at every question
+    that was asked of it.
+
+    What it answers is when a reading can be trusted. Every comparison here
+    carries a warning that a post from this morning is not comparable with one
+    from last week, and the warning was written from intuition rather than from
+    this table, which knows exactly how long a Reel takes to stop moving.
+    """
+    where, args = ("WHERE ig_user_id = ?", (ig_user_id,)) if ig_user_id else ("", ())
+    rows = await _all(
+        conn,
+        f"""
+        SELECT media_id, fetched_on, views, reach, skip_rate
+        FROM insights {where}
+        ORDER BY media_id, fetched_on
+        """,
+        args,
+    )
+    series: dict[str, list[Any]] = {}
+    for row in rows:
+        series.setdefault(row["media_id"], []).append(row)
+    return series
+
+
 async def latest_insights(
     conn: aiosqlite.Connection, ig_user_id: str | None = None
 ) -> dict[str, Any]:
@@ -1514,6 +1586,8 @@ async def record_rendered(
     ig_user_id: str = "",
     run_folder: str = "",
     rendered_at: str | None = None,
+    score: float = 0.0,
+    score_breakdown: str = "",
 ) -> None:
     """Remember that a Reel for this repo has been built.
 
@@ -1523,16 +1597,21 @@ async def record_rendered(
     """
     await conn.execute(
         """
-        INSERT INTO rendered_repos (repo_full_name, ig_user_id, run_folder, rendered_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO rendered_repos
+            (repo_full_name, ig_user_id, run_folder, rendered_at, score, score_breakdown)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT (repo_full_name, ig_user_id) DO UPDATE SET
-            run_folder = excluded.run_folder
+            run_folder = excluded.run_folder,
+            score = excluded.score,
+            score_breakdown = excluded.score_breakdown
         """,
         (
             repo_full_name,
             ig_user_id or "",
             run_folder,
             rendered_at or datetime.now(UTC).isoformat(timespec="seconds"),
+            score,
+            score_breakdown,
         ),
     )
     await conn.commit()
@@ -1560,7 +1639,7 @@ async def rendered_repos_list(
     return await _all(
         conn,
         f"""
-        SELECT repo_full_name, run_folder, rendered_at
+        SELECT repo_full_name, run_folder, rendered_at, score, score_breakdown
         FROM rendered_repos
         {clause}
         ORDER BY rendered_at LIMIT ?

@@ -799,12 +799,15 @@ async def test_the_insights_page_groups_published_reels(client):
             approved=True, recipe=recipe, hook=f"hook number {i}",
         )
         await db.mark_queue_published(conn, qid, media_id=f"m{i}", permalink="https://ig/x")
-        await db.record_insights(
-            conn, media_id=f"m{i}", ig_user_id=ACCOUNT, on=f"2026-08-0{i + 1}",
-            metrics={"views": 100 + i, "reach": 90, "likes": 1, "comments": 0,
-                     "saved": 0, "shares": 0, "avg_watch_ms": 4000,
-                     "total_watch_ms": 400000, "skip_rate": 70.0 + i},
-        )
+        # Three readings each, because a post is only counted once its numbers
+        # have stopped moving and one reading is a post still arriving.
+        for day in (1, 2, 3):
+            await db.record_insights(
+                conn, media_id=f"m{i}", ig_user_id=ACCOUNT, on=f"2026-08-0{day}",
+                metrics={"views": 100 + i, "reach": 90, "likes": 1, "comments": 0,
+                         "saved": 0, "shares": 0, "avg_watch_ms": 4000,
+                         "total_watch_ms": 400000, "skip_rate": 70.0 + i},
+            )
     await conn.commit()
 
     page = (await http.get("/admin/insights", headers={"accept": "text/html"})).text
@@ -814,6 +817,44 @@ async def test_the_insights_page_groups_published_reels(client):
     # The hook rides along in the chart tooltip, which is the only place a dot
     # can say which post it is.
     assert "hook number 0" in page
+
+
+async def test_a_post_still_arriving_is_held_back_from_the_cohorts(client):
+    """And the page says so rather than quietly reporting a smaller table. A
+    Reel has about 71 percent of its final views at its first reading, so
+    counting yesterday's post makes its slot look worse than it is."""
+    http, app = client
+    conn = app.state.db
+
+    async def publish(media_id: str, readings: int):
+        qid = await db.enqueue_post(
+            conn, ig_user_id=ACCOUNT, video_name=f"{media_id}.mp4", cover_name=None,
+            caption="c", keyword="UV", link=LINK, repo_full_name=f"a/{media_id}",
+            approved=True, hook="h",
+        )
+        await db.mark_queue_published(
+            conn, qid, media_id=media_id, permalink="https://ig/x"
+        )
+        for day in range(1, readings + 1):
+            await db.record_insights(
+                conn, media_id=media_id, ig_user_id=ACCOUNT, on=f"2026-08-{day:02d}",
+                metrics={"views": 40, "reach": 30, "likes": 0, "comments": 0,
+                         "saved": 0, "shares": 0, "avg_watch_ms": 4000,
+                         "total_watch_ms": 40000, "skip_rate": 70.0},
+            )
+
+    # Two posts that have stopped moving, so there is something to compare, and
+    # one that has not. A page with nothing to compare says so already; the
+    # failure worth catching is a table that silently drops the third.
+    await publish("settled-a", 3)
+    await publish("settled-b", 3)
+    await publish("fresh", 1)
+    await conn.commit()
+
+    page = (await http.get("/admin/insights", headers={"accept": "text/html"})).text
+
+    assert "held back" in page
+    assert "1</strong>" in page, "and it says how many"
 
 
 async def test_the_repos_page_shows_what_blocks_discovery(client):
@@ -827,6 +868,7 @@ async def test_the_repos_page_shows_what_blocks_discovery(client):
     await db.record_rendered(
         conn, repo_full_name="never/committed", ig_user_id=ACCOUNT,
         run_folder="2026-08-18/never-committed",
+        score=0.81, score_breakdown='{"velocity": 0.44, "stars": 0.12}',
     )
     await conn.commit()
 
@@ -837,6 +879,9 @@ async def test_the_repos_page_shows_what_blocks_discovery(client):
     # A finished video nothing committed to, which nothing else in the panel
     # would ever mention.
     assert "not committed" in page
+    # And why the scorer chose it, which is the only answer available to why
+    # discovery keeps landing on the same corner of GitHub.
+    assert "velocity" in page
 
 
 async def test_a_stranger_cannot_read_the_repo_list(anon):

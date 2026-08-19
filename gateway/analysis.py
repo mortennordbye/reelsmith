@@ -25,7 +25,9 @@ wrong.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+import contextlib
+import json
+from collections.abc import Callable, Container, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from statistics import median
 from typing import Any
@@ -45,6 +47,55 @@ BREAKOUT_VIEWS = 500
 # Posts per step of the trend line. Small enough to move inside a fortnight of
 # posting, wide enough that one breakout does not become a trend.
 TREND_WINDOW = 7
+
+
+# How many daily readings a post needs before its numbers can be compared with
+# an older post's. Derived rather than chosen: `maturity` recomputes the curve
+# from this account's own history every time the page is drawn, and on 59 posts
+# it read 71 percent of final views at the first reading, 91 at the second and
+# 99 at the third. Three is where the remaining error drops under the noise in
+# everything else on the page.
+#
+# Not written into prose anywhere, because a fact about the numbers goes stale
+# silently. The page prints the curve it actually measured next to the rule it
+# applied.
+SETTLED_READINGS = 3
+
+
+def maturity(series: Mapping[str, Sequence[Any]]) -> dict:
+    """How much of a Reel's final audience has arrived by reading N.
+
+    Every comparison in this project has been hedged with "a post from this
+    morning is not comparable with one from last week", which is true and far
+    too cautious: the hedge was written from intuition and this is the table
+    that knows. Turning it into a number is what lets the cohorts stop printing
+    an age column and asking the reader to judge.
+
+    Only posts watched from early enough and for long enough are used. A post
+    whose first reading came days after it published has no visible climb, and
+    counting it would report the curve as flatter than it is.
+    """
+    tracked = [rows for rows in series.values() if len(rows) >= SETTLED_READINGS * 3]
+    curve = []
+    for index in range(SETTLED_READINGS + 1):
+        shares = [
+            rows[index]["views"] / rows[-1]["views"]
+            for rows in tracked
+            if len(rows) > index and rows[-1]["views"]
+        ]
+        if shares:
+            curve.append({"reading": index, "share": 100 * median(shares)})
+    return {
+        "curve": curve,
+        "n": len(tracked),
+        "settled_after": SETTLED_READINGS,
+        # A post is settled once it has been read this many times. Counted
+        # rather than aged, because the sweep is what produces a reading and a
+        # sweep that did not run leaves a post younger than the calendar says.
+        "settled": {
+            media for media, rows in series.items() if len(rows) >= SETTLED_READINGS
+        },
+    }
 
 
 def _parse(stamp: str | None) -> datetime | None:
@@ -83,22 +134,42 @@ def recipe_of(row: Any) -> str:
 
 
 def cohorts(
-    rows: Iterable[Any], *, key: Callable[[Any], str], now: datetime | None = None
-) -> list[dict]:
+    rows: Iterable[Any],
+    *,
+    key: Callable[[Any], str],
+    settled: Container[str] | None = None,
+    now: datetime | None = None,
+) -> dict:
     """Group rows and describe each group.
 
-    Ages are carried because a young cohort has had less time to accumulate
-    views, which flatters its skip rate and punishes its views. A comparison
-    across cohorts of very different age is not a comparison, and the only way
-    for a reader to know is for the number to be on the page.
+    `settled` is the set of media that have been read enough times for their
+    numbers to have stopped moving, from `maturity`. Unsettled posts are held
+    back rather than shown with a caveat: a Reel reaches 71 percent of its
+    final views at its first reading, so a cohort holding yesterday's post is
+    not reporting a worse slot, it is reporting a post that has not finished
+    arriving. This page previously printed an age column and left the reader to
+    make that correction by eye, which is arithmetic dressed up as a warning.
+
+    Passing nothing keeps every post, which is what a caller with no reading
+    history should get: fewer posts is better than wrong ones, but no history
+    at all is not evidence that a post is unsettled.
+
+    Returns the groups and the number held back together, because a table of
+    cohorts that quietly dropped four posts is a table that reads as covering
+    everything. The count is one number about the call, not a property of any
+    group, so it does not ride on the rows.
     """
     now = now or datetime.now(UTC)
     grouped: dict[str, list[Any]] = {}
+    held_back = 0
     for row in rows:
         # A zero skip rate is not a perfect opening, it is a post too young to
         # have a reading. The newest post always has one, and counting it would
         # drag every cohort it lands in toward a number nobody earned.
         if not row.get("skip_rate"):
+            continue
+        if settled is not None and row.get("media_id") not in settled:
+            held_back += 1
             continue
         grouped.setdefault(key(row), []).append(row)
 
@@ -123,7 +194,7 @@ def cohorts(
                 "age_days": median(ages) if ages else None,
             }
         )
-    return out
+    return {"groups": out, "held_back": held_back}
 
 
 def trend(values: Sequence[float], window: int = TREND_WINDOW) -> list[float | None]:
@@ -284,7 +355,15 @@ def repo_history(
     def slot(name: str) -> dict:
         return merged.setdefault(
             name,
-            {"repo": name, "covered_at": None, "rendered_at": None, "post": None},
+            {
+                "repo": name,
+                "covered_at": None,
+                "rendered_at": None,
+                "post": None,
+                "run_folder": "",
+                "score": None,
+                "breakdown": {},
+            },
         )
 
     for row in covered:
@@ -298,7 +377,15 @@ def repo_history(
                 entry["covered_at"] = when
     for row in rendered:
         if name := row["repo_full_name"]:
-            slot(name)["rendered_at"] = (row["rendered_at"] or "")[:10]
+            entry = slot(name)
+            entry["rendered_at"] = (row["rendered_at"] or "")[:10]
+            entry["run_folder"] = row["run_folder"] or ""
+            entry["score"] = row["score"] or 0.0
+            # Written by the pipeline and stored as it arrived. A row from
+            # before the score travelled has an empty string here, which is
+            # different from a repo that scored zero.
+            with contextlib.suppress(ValueError, TypeError):
+                entry["breakdown"] = json.loads(row["score_breakdown"] or "{}")
     for row in published:
         name, when = row["repo_full_name"], row["published_at"]
         if not name or not when:

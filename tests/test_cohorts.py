@@ -20,13 +20,17 @@ def cfg() -> Settings:
     return Settings(gateway_url="https://gate.example", gateway_token="t", _env_file=None)
 
 
-def reading(*, published_at: str, skip: float = 70.0, views: int = 100, recipe: str = ""):
+def reading(
+    *, published_at: str, skip: float = 70.0, views: int = 100, recipe: str = "",
+    readings: int = 5,
+):
     return {
         "repo_full_name": f"a/{published_at}",
         "published_at": published_at,
         "skip_rate": skip,
         "views": views,
         "recipe": recipe,
+        "readings": readings,
     }
 
 
@@ -127,6 +131,34 @@ def test_an_unreachable_gateway_says_so_rather_than_printing_an_empty_table(
     main._show_cohorts(cfg, "slot")
 
     assert "No results yet" in rendered(capsys)
+
+
+def test_a_post_still_arriving_is_held_back_and_said_so(cfg, results, capsys):
+    """The panel holds these back too, and the two disagreeing about the same
+    question would be worse than either being wrong. A Reel reaches about 99
+    percent of its final views by its third reading."""
+    results([
+        reading(published_at="2026-08-01T06:00:00+00:00", views=900),
+        reading(published_at="2026-08-19T06:00:00+00:00", views=40, readings=1),
+    ])
+
+    main._show_cohorts(cfg, "slot")
+    out = rendered(capsys)
+
+    assert "(1 posts with readings)" in out.replace("\n", "")
+    assert "1 post(s) held back" in out.replace("\n", " ")
+
+
+def test_a_gateway_too_old_to_count_readings_keeps_every_post(cfg, results, capsys):
+    """No history is not evidence that a post is unsettled, and silently
+    emptying the table would read as an account with no posts."""
+    row = reading(published_at="2026-08-01T06:00:00+00:00")
+    del row["readings"]
+    results([row])
+
+    main._show_cohorts(cfg, "slot")
+
+    assert "held back" not in rendered(capsys)
 
 
 def test_an_unknown_dimension_is_refused_by_name(cfg, results, capsys):

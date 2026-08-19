@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import re
 from collections.abc import Container
@@ -417,6 +418,10 @@ async def record_rendered(request: Request, body: RenderedRepo) -> Registered:
         repo_full_name=body.repo_full_name,
         ig_user_id=body.ig_user_id,
         run_folder=body.run_folder,
+        score=body.score,
+        # Stored as the JSON it arrived as. Nothing here queries inside it, and
+        # the panel is the only reader.
+        score_breakdown=json.dumps(body.score_breakdown) if body.score_breakdown else "",
     )
     log.info("Recorded a render of %s (%s)", body.repo_full_name, body.run_folder or "no folder")
     return Registered(detail=f"{body.repo_full_name} recorded as rendered")
@@ -470,6 +475,7 @@ async def list_results(request: Request, ig_user_id: str | None = None) -> dict:
     conn = request.app.state.db
     rows = await db.published_media(conn, ig_user_id)
     readings = await db.latest_insights(conn, ig_user_id)
+    counts = await db.reading_counts(conn, ig_user_id)
 
     results = []
     for row in rows:
@@ -494,6 +500,10 @@ async def list_results(request: Request, ig_user_id: str | None = None) -> dict:
                 "reach": reading["reach"],
                 "skip_rate": reading["skip_rate"],
                 "avg_watch_ms": reading["avg_watch_ms"],
+                # How many times this post has been read, so a caller can tell
+                # a settled number from one still arriving. A Reel reaches
+                # about 99 percent of its final views by the third reading.
+                "readings": counts.get(row["media_id"], 0),
                 # Already collected and never sent. Skip rate scores the
                 # opening; nothing scored whether the video was worth passing
                 # on, so every analysis this feeds optimised the one metric

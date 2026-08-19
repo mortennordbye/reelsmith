@@ -196,3 +196,13 @@ class RenderedRepo(BaseModel):
     # `2026-08-08/firecrawl-anydoc`, so a person reading the row can find the
     # video it is talking about.
     run_folder: str = ""
+    # What the scorer gave it and why, from `score_candidates`. The ranking has
+    # never left the machine that ran it, so nothing could answer why discovery
+    # keeps landing on the same corner of GitHub.
+    score: float = 0.0
+    # The components as the pipeline already writes them, not columns. The
+    # weights are config and have changed twice, so a fixed set of fields would
+    # need a migration each time and still not say what the weights were on the
+    # day. Capped because it arrives over the network and nothing reads inside
+    # it.
+    score_breakdown: dict[str, float] = Field(default_factory=dict, max_length=20)

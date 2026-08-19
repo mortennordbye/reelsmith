@@ -105,6 +105,54 @@
       </p>
     </div>
 
+    {# Rendered whenever either half has something to say. The held back count
+       has to appear even before there is enough history to draw a curve,
+       because the gating is already in force by then: without it the tables
+       below would quietly be missing posts and read as covering everything,
+       which is the failure this card exists to prevent. #}
+    {% if board.settling.curve or board.held_back %}
+      <div class="card">
+        <h2>When a reading can be trusted</h2>
+
+        {% if board.settling.curve %}
+          <p class="sub">
+            Measured from this account's own daily readings, not asserted, and
+            recomputed every time this page is drawn. A number written into
+            prose goes stale silently and the only symptom is a worse decision
+            weeks later.
+          </p>
+          <div class="stat">
+            {% for point in board.settling.curve %}
+              <div>
+                <span class="n">{{ '%.0f' | format(point.share) }}%</span>
+                <span class="l">by reading {{ point.reading + 1 }}</span>
+              </div>
+            {% endfor %}
+          </div>
+          <p class="small muted" style="margin:10px 0 0">
+            Share of a Reel's final views already counted, median over
+            {{ board.settling.n }} posts with enough history.
+        {% else %}
+          <p class="small muted" style="margin:0">
+            Not enough history yet to measure how long a Reel takes to stop
+            moving, so the rule below is the default rather than something this
+            account has shown.
+        {% endif %}
+            A post counts once it has
+            {{ board.settling.settled_after }} readings, so a cohort is never
+            made to look worse by holding a post that has not finished
+            arriving.
+            {% if board.held_back %}
+              <strong>{{ board.held_back }}</strong>
+              {{ 'post is' if board.held_back == 1 else 'posts are' }} held back
+              right now.
+            {% endif %}
+            The chart above keeps every post, because skip rate settles a
+            reading earlier and then drifts about a point.
+          </p>
+      </div>
+    {% endif %}
+
     {% macro cohort_table(title, blurb, rows) %}
       <div class="card">
         <h2>{{ title }}</h2>
@@ -120,7 +168,6 @@
               <th class="num">Best</th>
               <th class="num">Over {{ board.breakout }}</th>
               <th class="num">Under {{ '%.0f' | format(board.threshold) }}%</th>
-              <th class="num">Age</th>
             </tr>
           </thead>
           <tbody>
@@ -135,7 +182,6 @@
                 <td class="num">{{ '{:,}'.format(c.best) }}</td>
                 <td class="num">{{ c.breakouts }} ({{ '%.0f' | format(c.breakout_share) }}%)</td>
                 <td class="num">{{ c.under_threshold }} ({{ '%.0f' | format(c.under_share) }}%)</td>
-                <td class="num muted">{{ '%.0f' | format(c.age_days) }}d</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -165,8 +211,7 @@
       Read the breakout column before the median. Eight of the first 58 posts
       carried a third of all views, so the median describes the post that failed
       and two cohorts can share one while differing fourfold in what they were
-      worth. Age is there because a young cohort has had less time to gather
-      views, which flatters its skip rate and punishes its views.
+      worth.
     </p>
   {% endif %}
 {% endfor %}

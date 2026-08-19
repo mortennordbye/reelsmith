@@ -716,6 +716,38 @@ def test_enqueue_carries_the_recipe_that_wrote_the_script(cfg):
     assert seen["recipe"] == "abc1234.deadbeef"
 
 
+def test_a_render_reports_why_the_repo_won(cfg):
+    """The score never left the machine that ranked, so the panel could say a
+    repo was picked and never why."""
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, json={"ok": True, "detail": "recorded"})
+
+    gateway.register_rendered(
+        "a/b", cfg, run_folder="2026-08-19/a-b", client=_client(handler),
+        score=0.81, score_breakdown={"velocity": 0.44, "stars": 0.12},
+    )
+
+    assert seen["score"] == 0.81
+    assert seen["score_breakdown"]["velocity"] == 0.44
+
+
+def test_a_render_with_no_score_sends_an_empty_breakdown_not_a_missing_key(cfg):
+    """So an older client and a run with nothing recorded look the same at the
+    other end, which is the truthful reading of both."""
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, json={"ok": True, "detail": "recorded"})
+
+    gateway.register_rendered("a/b", cfg, client=_client(handler))
+
+    assert seen["score_breakdown"] == {}
+
+
 def test_enqueue_carries_the_hook_that_was_on_the_video(cfg):
     """The half the feedback loop reads back into the next prompt."""
     seen = {}

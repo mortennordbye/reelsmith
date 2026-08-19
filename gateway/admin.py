@@ -455,21 +455,33 @@ async def insights_page(request: Request) -> Any:
             if (reading := readings.get(row["media_id"]))
         ]
         measured = [r for r in merged if r["skip_rate"]]
+        # How long a Reel takes to stop moving, recomputed from this account's
+        # own history rather than asserted. It decides which posts the cohorts
+        # may count, so it is measured on the same page that applies it.
+        settling = analysis.maturity(await db.insights_series(conn, ig_user_id))
+        by_slot = analysis.cohorts(
+            merged, key=analysis.slot_of, settled=settling["settled"]
+        )
+        by_recipe = analysis.cohorts(
+            merged, key=analysis.recipe_of, settled=settling["settled"]
+        )
         boards.append(
             {
                 "account": account,
                 "measured": len(measured),
                 "total": len(rows),
+                # The chart keeps every post. Skip rate settles at the second
+                # reading and drifts a median 1.3 points afterwards, so holding
+                # back the newest dots would hide the most recent evidence to
+                # avoid an error smaller than the marker.
                 "chart": analysis.skip_chart(merged),
+                "settling": settling,
+                "held_back": by_slot["held_back"],
                 # Slots read in time order, because the question is the shape of
                 # the day. Recipes have no order, so the biggest cohort leads.
-                "by_slot": sorted(
-                    analysis.cohorts(merged, key=analysis.slot_of),
-                    key=lambda c: c["name"],
-                ),
+                "by_slot": sorted(by_slot["groups"], key=lambda c: c["name"]),
                 "by_recipe": sorted(
-                    analysis.cohorts(merged, key=analysis.recipe_of),
-                    key=lambda c: (-c["n"], c["name"]),
+                    by_recipe["groups"], key=lambda c: (-c["n"], c["name"])
                 ),
                 "threshold": analysis.SKIP_THRESHOLD,
                 "breakout": analysis.BREAKOUT_VIEWS,

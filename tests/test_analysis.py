@@ -55,7 +55,7 @@ def test_a_post_with_no_reading_is_not_counted_as_a_perfect_one():
     post always has one."""
     rows = [post(at=NOW, skip=64.0), post(at=NOW, skip=0.0)]
 
-    (cohort,) = analysis.cohorts(rows, key=analysis.slot_of, now=NOW)
+    (cohort,) = analysis.cohorts(rows, key=analysis.slot_of, now=NOW)["groups"]
 
     assert cohort["n"] == 1
 
@@ -67,7 +67,7 @@ def test_a_cohort_reports_breakouts_separately_from_its_median():
     count."""
     rows = [post(at=NOW, views=100) for _ in range(4)] + [post(at=NOW, views=1400)]
 
-    (cohort,) = analysis.cohorts(rows, key=analysis.slot_of, now=NOW)
+    (cohort,) = analysis.cohorts(rows, key=analysis.slot_of, now=NOW)["groups"]
 
     assert cohort["views"] == 100
     assert cohort["best"] == 1400
@@ -81,7 +81,7 @@ def test_a_cohort_carries_its_age():
     way to know two rows are not comparable."""
     rows = [post(at=NOW - timedelta(days=d)) for d in (8, 10, 12)]
 
-    (cohort,) = analysis.cohorts(rows, key=analysis.slot_of, now=NOW)
+    (cohort,) = analysis.cohorts(rows, key=analysis.slot_of, now=NOW)["groups"]
 
     assert cohort["age_days"] == 10
 
@@ -92,7 +92,7 @@ def test_the_threshold_count_uses_the_accounts_own_number():
     tidy, so it is asserted rather than left to drift."""
     rows = [post(at=NOW, skip=s) for s in (55.0, 59.9, 60.0, 72.0)]
 
-    (cohort,) = analysis.cohorts(rows, key=analysis.slot_of, now=NOW)
+    (cohort,) = analysis.cohorts(rows, key=analysis.slot_of, now=NOW)["groups"]
 
     assert analysis.SKIP_THRESHOLD == 60.0
     assert cohort["under_threshold"] == 2
@@ -201,8 +201,14 @@ def covered_row(name: str, at: str):
     return {"repo_full_name": name, "covered_at": f"{at}T02:00:00+00:00"}
 
 
-def rendered_row(name: str, at: str):
-    return {"repo_full_name": name, "rendered_at": f"{at}T02:00:00+00:00"}
+def rendered_row(name: str, at: str, *, score: float = 0.0, breakdown: str = ""):
+    return {
+        "repo_full_name": name,
+        "rendered_at": f"{at}T02:00:00+00:00",
+        "run_folder": f"{at}/{name.replace('/', '-')}",
+        "score": score,
+        "score_breakdown": breakdown,
+    }
 
 
 def published_row(name: str, at: str, *, media_id: str = "m1", hook: str = ""):
@@ -308,3 +314,132 @@ def test_most_recently_touched_leads():
     )
 
     assert [r["repo"] for r in rows] == ["a/new", "a/old"]
+
+
+# --- When a reading can be trusted ------------------------------------------
+
+
+def reading(media: str, day: int, views: int):
+    return {"media_id": media, "fetched_on": f"2026-08-{day:02d}", "views": views}
+
+
+def series(media: str, views: list[int], *, start: int = 1):
+    return {media: [reading(media, start + i, v) for i, v in enumerate(views)]}
+
+
+def test_the_maturity_curve_is_measured_not_asserted():
+    """Every comparison here was hedged with "a post from this morning is not
+    comparable with one from last week", written from intuition. The table knew
+    the answer all along and nothing had ever read it: a Reel arrives at about
+    71 percent of its final views on the first reading and 99 by the third.
+    """
+    # Nine readings, so it clears the window `maturity` needs, climbing to 100
+    # and then flat, which is the real shape.
+    got = analysis.maturity(series("m", [50, 90, 99, 100, 100, 100, 100, 100, 100]))
+
+    assert [p["reading"] for p in got["curve"]] == [0, 1, 2, 3]
+    assert [round(p["share"]) for p in got["curve"]] == [50, 90, 99, 100]
+    assert got["n"] == 1
+
+
+def test_a_post_read_enough_times_is_settled():
+    """Counted in readings rather than days, because the sweep is what produces
+    a reading and a sweep that did not run leaves a post younger than the
+    calendar says it is."""
+    got = analysis.maturity(
+        {**series("old", [10, 20, 30]), **series("new", [10, 20])}
+    )
+
+    assert "old" in got["settled"]
+    assert "new" not in got["settled"], "two readings is not enough"
+
+
+def test_a_post_still_arriving_is_held_back_rather_than_averaged_in():
+    """A Reel has 71 percent of its final views at its first reading, so a
+    cohort holding yesterday's post is not reporting a worse slot, it is
+    reporting a post that has not finished arriving."""
+    rows = [
+        {"media_id": "settled", "published_at": "2026-08-10T06:00:00+00:00",
+         "skip_rate": 60.0, "views": 900},
+        {"media_id": "fresh", "published_at": "2026-08-19T06:00:00+00:00",
+         "skip_rate": 60.0, "views": 40},
+    ]
+
+    got = analysis.cohorts(rows, key=analysis.slot_of, settled={"settled"}, now=NOW)
+
+    assert got["held_back"] == 1
+    assert [c["n"] for c in got["groups"]] == [1]
+    assert got["groups"][0]["views"] == 900, "the unsettled post did not drag it down"
+
+
+def test_no_reading_history_at_all_keeps_every_post():
+    """A caller with no history is not evidence that a post is unsettled, and
+    silently emptying the table would read as an account with no posts."""
+    rows = [
+        {"media_id": "a", "published_at": "2026-08-10T06:00:00+00:00",
+         "skip_rate": 60.0, "views": 100},
+    ]
+
+    got = analysis.cohorts(rows, key=analysis.slot_of, now=NOW)
+
+    assert got["held_back"] == 0
+    assert got["groups"][0]["n"] == 1
+
+
+def test_a_post_measured_too_late_does_not_flatten_the_curve():
+    """A post first read days after it published shows no climb, because the
+    climb already happened. Counting it would report the curve as flatter than
+    it is and settle posts sooner than the evidence allows."""
+    late = series("late", [100] * 9)
+    early = series("early", [50, 90, 99, 100, 100, 100, 100, 100, 100])
+
+    both = analysis.maturity({**late, **early})
+
+    # Both are tracked, so the median at the first reading sits between the two
+    # rather than being dragged to 100 by the late one alone.
+    assert both["n"] == 2
+    assert 50 <= both["curve"][0]["share"] <= 100
+
+
+def test_a_post_with_no_views_cannot_divide_the_curve():
+    """A Reel that never got a view has no final total to be a share of, and it
+    is the newest post that most often looks like that."""
+    got = analysis.maturity(series("dead", [0] * 9))
+
+    assert got["curve"] == []
+
+
+def test_why_a_repo_was_picked_travels_with_the_render():
+    """The only answer available to "why does discovery keep landing on the same
+    corner of GitHub". `score_candidates` splits the score four ways and writes
+    it into `repo.json`, where it never left the machine that ranked."""
+    (row,) = history(
+        rendered=[
+            rendered_row(
+                "a/b", "2026-08-18", score=0.81,
+                breakdown='{"velocity": 0.44, "stars": 0.12, "readme": 0.09}',
+            )
+        ]
+    )
+
+    assert row["score"] == 0.81
+    assert row["breakdown"]["velocity"] == 0.44
+    assert row["run_folder"] == "2026-08-18/a-b"
+
+
+def test_a_render_from_before_the_score_travelled_has_no_breakdown():
+    """Empty rather than zero. A repo that scored nothing and a repo nobody
+    recorded a score for are different claims, and only one of them is about
+    the repo."""
+    (row,) = history(rendered=[rendered_row("a/b", "2026-08-18")])
+
+    assert row["breakdown"] == {}
+    assert not row["score"]
+
+
+def test_a_corrupt_breakdown_costs_the_chips_and_not_the_page():
+    """It arrives over the network and is stored as it came. A row nobody can
+    parse must not take out the list that decides what gets made tonight."""
+    (row,) = history(rendered=[rendered_row("a/b", "2026-08-18", breakdown="{oh no")])
+
+    assert row["breakdown"] == {}

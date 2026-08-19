@@ -555,7 +555,14 @@ def _render_one(
     # starts no cooldown; this only stops tomorrow's discovery spending a
     # script, a voiceover and a render rebuilding it. `--unmark` takes it back.
     gateway.register_rendered(
-        repo.full_name, cfg, run_folder=f"{run_dir.parent.name}/{run_dir.name}"
+        repo.full_name,
+        cfg,
+        run_folder=f"{run_dir.parent.name}/{run_dir.name}",
+        # From the candidate that was ranked, so the panel can say why this repo
+        # won rather than only that it did. Empty on a run started from a
+        # `repo.json` written before the scorer recorded a breakdown.
+        score=repo.score,
+        score_breakdown=repo.score_breakdown,
     )
 
     with console.status("Rendering cover stills..."):
@@ -994,21 +1001,39 @@ def _show_cohorts(cfg: Settings, dimension: str) -> None:
     and the tail is where everything actually is. Two cohorts can have identical
     medians and completely different value.
 
-    Ages are printed because a young cohort has had less time to accumulate
-    views, which flatters skip rate and punishes views. A comparison across
-    cohorts of very different age is not one.
+    Posts that have not finished arriving are held back rather than shown with
+    an age column and a warning. A Reel reaches about 99 percent of its final
+    views by its third daily reading, so a cohort holding yesterday's post is
+    not reporting a worse slot, it is reporting a younger post. The count that
+    was dropped is printed, because a table that silently lost four posts reads
+    as one that covered everything.
     """
     from rich.table import Table
 
-    rows = [r for r in gateway.fetch_results(cfg) if r.get("skip_rate")]
+    # A post reaches about 99 percent of its final views by its third daily
+    # reading and 56 percent by its first, measured on this account's own
+    # history and shown on the panel's Insights page. Counting one that has not
+    # finished arriving does not report a worse slot, it reports a younger post.
+    #
+    # The number is duplicated from `gateway/analysis.py` rather than imported,
+    # because the pipeline holds no gateway code and the gateway holds no
+    # pipeline code. Both read it from the same `readings` field, so the two
+    # views hold back the same posts, which is the property worth having.
+    settled_after = 3
+    everything = [r for r in gateway.fetch_results(cfg) if r.get("skip_rate")]
+    # A gateway too old to send `readings` sends nothing rather than zero, and
+    # no history is not evidence that a post is unsettled.
+    rows = [
+        r for r in everything
+        if r.get("readings") is None or int(r["readings"]) >= settled_after
+    ]
+    held_back = len(everything) - len(rows)
     if not rows:
         console.print(
             "[dim]No results yet. Either the gateway is unreachable, or no post has a "
             "retention reading, which takes a few hours after publishing.[/]"
         )
         return
-
-    today = datetime.now(UTC)
 
     def _slot(row: dict) -> str:
         """The hour a post went out, not the minute.
@@ -1050,7 +1075,6 @@ def _show_cohorts(cfg: Settings, dimension: str) -> None:
     table.add_column("Best", justify="right")
     table.add_column("Over 500", justify="right")
     table.add_column("Under 60%", justify="right")
-    table.add_column("Age", justify="right")
 
     # Slots read in time order, because the question is about the shape of the
     # day. Recipes have no meaningful order, so the biggest cohort leads.
@@ -1060,11 +1084,6 @@ def _show_cohorts(cfg: Settings, dimension: str) -> None:
     for name, group in sorted(cohorts.items(), key=order):
         skips = [float(r["skip_rate"]) for r in group]
         views = [int(r.get("views") or 0) for r in group]
-        ages = []
-        for row in group:
-            with contextlib.suppress(ValueError):
-                published = datetime.fromisoformat(row.get("published_at") or "")
-                ages.append((today - published).days)
         # The threshold the whole file is judged against: under it, median views
         # jumped several fold. Counted rather than averaged, because it is a
         # question about how often a post clears a bar.
@@ -1078,7 +1097,6 @@ def _show_cohorts(cfg: Settings, dimension: str) -> None:
             f"{max(views):,}",
             f"{big} ({100 * big / len(group):.0f}%)",
             f"{good} ({100 * good / len(group):.0f}%)",
-            f"{median(ages):.0f}d" if ages else "",
         )
 
     console.print(table)
@@ -1086,8 +1104,13 @@ def _show_cohorts(cfg: Settings, dimension: str) -> None:
         "[dim]Skip is the share who scrolled past inside the first three seconds. "
         "Under 60% is the threshold below which median views jumped several fold, "
         "and Over 500 is how often a post actually reached anybody.\n"
-        "n is small here. Treat a gap of a few points as noise, and a cohort younger "
-        "than the ones it is next to as not yet comparable on views.[/]"
+        + (
+            f"{held_back} post(s) held back, having fewer than {settled_after} readings "
+            "and so not finished arriving.\n"
+            if held_back
+            else ""
+        )
+        + "n is small here, so treat a gap of a few points as noise.[/]"
     )
 
 

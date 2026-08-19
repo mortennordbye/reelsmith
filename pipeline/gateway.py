@@ -598,6 +598,8 @@ def register_rendered(
     cfg: Settings,
     *,
     run_folder: str = "",
+    score: float = 0.0,
+    score_breakdown: dict[str, float] | None = None,
     client: httpx.Client | None = None,
 ) -> bool:
     """Tell the gateway a Reel for this repo now exists. True if it took.
@@ -605,6 +607,12 @@ def register_rendered(
     Sent when a render finishes, which is the earliest and weakest thing this
     module reports. It starts no cooldown and takes no slot; it only stops the
     next discovery pass ranking a repo whose video is already on disk.
+
+    The score rides along because this is the only message sent about the pick
+    itself. `score_candidates` splits it into velocity, stars, Hacker News and
+    README quality and writes the lot into `repo.json`, where it has never left
+    the machine that ranked, so nothing anywhere could answer why discovery
+    keeps landing on the same corner of GitHub.
 
     Best effort, like everything else here. A gateway that is down means the
     duplicate guard falls back to the local store, which is exactly how
@@ -618,6 +626,8 @@ def register_rendered(
         "repo_full_name": repo_full_name,
         "ig_user_id": cfg.ig_user_id or "",
         "run_folder": run_folder,
+        "score": score,
+        "score_breakdown": score_breakdown or {},
     }
     try:
         with _borrow(client) as http:
