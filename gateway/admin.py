@@ -483,6 +483,48 @@ async def insights_page(request: Request) -> Any:
     )
 
 
+@router.get("/repos", response_class=HTMLResponse, name="repos_page")
+async def repos_page(request: Request) -> Any:
+    """Which repos are spent, which are half spent, and which cost a render for
+    nothing.
+
+    This is the list that decides whether a video gets made tonight. Discovery
+    reads `data/used_repos.json` on the machine that renders, which is a single
+    JSON file on one laptop, outside git and outside every backup this project
+    has; these tables are the durable copy on a volume that gets `VACUUM INTO`
+    every six hours, and the Mac merges them back in before its first Search
+    call. Until now nothing displayed either, so "have we already done this one"
+    was a question you answered by running a command on the right machine.
+    """
+    conn, cfg = request.app.state.db, request.app.state.cfg
+    scope = await _scope(request)
+
+    boards = []
+    for account in scope["visible"]:
+        ig_user_id = account["ig_user_id"]
+        repos = analysis.repo_history(
+            covered=await db.covered_repos(conn, ig_user_id),
+            rendered=await db.rendered_repos_list(conn, ig_user_id),
+            published=await db.published_media(conn, ig_user_id),
+            readings=await db.latest_insights(conn, ig_user_id),
+        )
+        boards.append(
+            {
+                "account": account,
+                "repos": repos,
+                "blocked": sum(1 for r in repos if (r["days_left"] or 0) > 0),
+                "stranded": sum(1 for r in repos if r["stranded"]),
+                "cooldown": analysis.REPO_COOLDOWN_DAYS,
+            }
+        )
+
+    return templates.TemplateResponse(
+        request,
+        "repos.html",
+        {"boards": boards, "cfg": cfg, "page": "repos", "scope": scope},
+    )
+
+
 @router.get("/health", response_class=HTMLResponse, name="health_page")
 async def health_page(request: Request) -> Any:
     conn, cfg = request.app.state.db, request.app.state.cfg

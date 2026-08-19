@@ -816,6 +816,34 @@ async def test_the_insights_page_groups_published_reels(client):
     assert "hook number 0" in page
 
 
+async def test_the_repos_page_shows_what_blocks_discovery(client):
+    """The list that decides whether tonight's batch may pick a repo. It lived
+    in a JSON file on one laptop and two tables nothing displayed, so "have we
+    already done this one" was a question you answered by running a command on
+    the right machine."""
+    http, app = client
+    conn = app.state.db
+    await queue(http, repo_full_name="astral-sh/uv")
+    await db.record_rendered(
+        conn, repo_full_name="never/committed", ig_user_id=ACCOUNT,
+        run_folder="2026-08-18/never-committed",
+    )
+    await conn.commit()
+
+    page = (await http.get("/admin/repos", headers={"accept": "text/html"})).text
+
+    assert "astral-sh/uv" in page
+    assert "never/committed" in page
+    # A finished video nothing committed to, which nothing else in the panel
+    # would ever mention.
+    assert "not committed" in page
+
+
+async def test_a_stranger_cannot_read_the_repo_list(anon):
+    anon_http, _ = anon
+    assert (await anon_http.get("/admin/repos")).status_code == 401
+
+
 async def test_a_stranger_cannot_read_the_insights(anon):
     """Same as every other panel page. The numbers are not secret, but the
     panel that publishes to a real account has to be reachable from the

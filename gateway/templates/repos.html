@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Repos{% endblock %}
+
+{% block body %}
+<h1>Repos</h1>
+<p class="sub">
+  Every repository this account has touched, and how far each one got. This is
+  what decides whether tonight's batch may pick a repo, so it is the list to
+  check before wondering why discovery keeps choosing the same corner of GitHub.
+</p>
+
+{% for board in boards %}
+  {% set account = board.account %}
+  {% include "_account_heading.html" %}
+
+  {% if not board.repos %}
+    <div class="card empty">Nothing touched yet.</div>
+  {% else %}
+    <div class="card">
+      <div class="stat">
+        <div><span class="n">{{ board.repos | length }}</span><span class="l">touched</span></div>
+        <div><span class="n">{{ board.blocked }}</span><span class="l">on cooldown</span></div>
+        <div><span class="n">{{ board.stranded }}</span><span class="l">rendered, not committed</span></div>
+      </div>
+      <p class="small muted" style="margin:10px 0 0">
+        {# The three records mean different things and the difference is the
+           whole point of the page. Flattening them into one date would merge a
+           30 day block with something that is free to throw away. #}
+        <strong>Covered</strong> is a commitment and starts the
+        {{ board.cooldown }} day cooldown, so discovery drops the repo before it
+        fetches a README.
+        <strong>Rendered</strong> only means a video exists, which stops a
+        rebuild for one run and blocks nothing, so a repo can sit there having
+        cost a script, a voiceover and a render and never have gone out.
+        <strong>Posted</strong> is the last time a Reel about it published.
+      </p>
+    </div>
+
+    <div class="card">
+      <div class="scroll-x">
+      <table class="cohorts">
+        <thead>
+          <tr>
+            <th>Repository</th>
+            <th>Covered</th>
+            <th>Rendered</th>
+            <th>Posted</th>
+            <th class="num">Views</th>
+            <th class="num">Skip</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in board.repos %}
+            <tr>
+              <td>
+                <a class="mono" href="https://github.com/{{ r.repo }}" rel="noreferrer">{{ r.repo }}</a>
+                {# The hook underneath, because the repo name says which project
+                   and the hook says what was actually claimed about it, which is
+                   the part worth remembering before covering the ground again. #}
+                {% if r.hook %}<span class="sub-hook">{{ r.hook }}</span>{% endif %}
+              </td>
+              <td class="mono small">{{ r.covered_at or '' }}</td>
+              <td class="mono small">{{ r.rendered_at or '' }}</td>
+              <td class="mono small">
+                {% if r.permalink %}
+                  <a href="{{ r.permalink }}" rel="noreferrer">{{ r.published_at }}</a>
+                {% else %}{{ r.published_at }}{% endif %}
+              </td>
+              <td class="num">{{ '{:,}'.format(r.views) if r.views else '' }}</td>
+              <td class="num">{{ '%.1f' | format(r.skip_rate) ~ '%' if r.skip_rate else '' }}</td>
+              <td class="small">
+                {% if r.days_left is not none and r.days_left > 0 %}
+                  <span class="tag draft">{{ r.days_left }}d left</span>
+                {% elif r.days_left is not none %}
+                  <span class="tag published">free again</span>
+                {% elif r.stranded %}
+                  {# A finished video nothing committed to. Either it is waiting
+                     to be watched or it was forgotten, and both are worth
+                     seeing, because the render has already been paid for. #}
+                  <span class="tag claimed">not committed</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </div>
+
+    <p class="small muted">
+      Discovery reads the copy on the machine that renders, not this one. These
+      tables are the durable half and are merged back into it before the first
+      Search call, so a repo recovered this way costs no query and no README
+      fetch on its way to being dropped. A repo marked by hand with
+      <span class="mono">--posted</span> may be missing here, which is why the
+      Mac merges rather than replaces.
+    </p>
+  {% endif %}
+{% endfor %}
+{% endblock %}

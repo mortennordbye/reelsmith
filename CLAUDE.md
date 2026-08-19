@@ -313,6 +313,19 @@ go out and the prompt changes underneath them.
 - **Server rendered SVG, no chart library and no measurement step.** The
   viewBox is fixed and scales to its container, so the page has content before
   any script runs.
+- **The Repos page is the cooldown list, made visible.** It is what decides
+  whether tonight's batch may pick a repo, and it existed as
+  `data/used_repos.json` on the machine that renders plus two gateway tables
+  nothing displayed, so "have we already done this one" was a question you
+  answered by running a command on the right machine. It joins `covered_repos`,
+  `rendered_repos` and the queue's publish dates, keeps the three
+  distinguishable rather than flattening them, and flags the row nothing else
+  in the panel would mention: a repo with a render and no commitment, which is
+  a finished video that cost a script, a voiceover and a render and that
+  nothing will bring up again. `analysis.REPO_COOLDOWN_DAYS` mirrors the
+  pipeline's `config.py` because the gateway cannot import it; discovery still
+  reads its own value, so a drift costs a word on a page rather than a
+  decision.
 - **On a phone the cohort tables scroll rather than dropping columns.** The
   panel's global rule hides column four and up under 700px, which on this table
   would have taken the breakout count, the column the page itself says to read

@@ -192,3 +192,119 @@ def test_dots_are_ordered_by_time_whatever_order_they_arrive_in():
     dots = analysis.skip_chart(rows)["dots"]
 
     assert [d["skip"] for d in dots] == [40.0, 80.0]
+
+
+# --- The repo list ----------------------------------------------------------
+
+
+def covered_row(name: str, at: str):
+    return {"repo_full_name": name, "covered_at": f"{at}T02:00:00+00:00"}
+
+
+def rendered_row(name: str, at: str):
+    return {"repo_full_name": name, "rendered_at": f"{at}T02:00:00+00:00"}
+
+
+def published_row(name: str, at: str, *, media_id: str = "m1", hook: str = ""):
+    return {
+        "repo_full_name": name,
+        "published_at": f"{at}T06:00:00+00:00",
+        "media_id": media_id,
+        "hook": hook,
+        "permalink": "https://ig/x",
+    }
+
+
+def history(**kw):
+    kw.setdefault("covered", [])
+    kw.setdefault("rendered", [])
+    kw.setdefault("published", [])
+    kw.setdefault("readings", {})
+    return analysis.repo_history(now=NOW, **kw)
+
+
+def test_the_three_records_stay_distinguishable():
+    """Covered is a commitment and blocks discovery for a month; rendered only
+    means a video exists and blocks nothing. Flattening them into one date would
+    turn "I built this and have not watched it" into a 30 day block, which is
+    the opposite of rendering being free to throw away."""
+    (row,) = history(
+        covered=[covered_row("a/b", "2026-08-10")],
+        rendered=[rendered_row("a/b", "2026-08-09")],
+        published=[published_row("a/b", "2026-08-11")],
+    )
+
+    assert row["covered_at"] == "2026-08-10"
+    assert row["rendered_at"] == "2026-08-09"
+    assert row["published_at"] == "2026-08-11"
+
+
+def test_a_render_nobody_committed_to_is_flagged():
+    """The row the page exists to surface: a finished video that cost a script,
+    a voiceover and a render, which nothing will bring up again."""
+    (row,) = history(rendered=[rendered_row("a/b", "2026-08-18")])
+
+    assert row["stranded"] is True
+    assert row["days_left"] is None, "nothing is blocking it"
+
+
+def test_a_covered_repo_is_never_stranded():
+    """It has a commitment, so the render is accounted for."""
+    (row,) = history(
+        covered=[covered_row("a/b", "2026-08-18")],
+        rendered=[rendered_row("a/b", "2026-08-18")],
+    )
+
+    assert row["stranded"] is False
+
+
+def test_the_cooldown_counts_down_and_then_frees_the_repo():
+    """30 days from the commitment, mirroring `REPO_COOLDOWN_DAYS` on the Mac.
+    Discovery reads its own copy of that number, so this one only decides a word
+    on a page, but a page that said "free again" a week early would be read as
+    permission."""
+    rows = {
+        r["repo"]: r
+        for r in history(
+            covered=[
+                covered_row("a/old", "2026-07-01"),
+                covered_row("a/recent", "2026-08-18"),
+            ]
+        )
+    }
+
+    assert rows["a/recent"]["days_left"] == 29
+    assert rows["a/old"]["days_left"] < 0, "past the window, so free again"
+
+
+def test_the_earlier_commitment_wins_on_a_conflict():
+    """Matching the Mac's own merge. Taking the later date would extend the
+    cooldown by however long the two records disagree."""
+    (row,) = history(
+        covered=[covered_row("a/b", "2026-08-14"), covered_row("a/b", "2026-08-10")]
+    )
+
+    assert row["covered_at"] == "2026-08-10"
+
+
+def test_the_last_publish_wins_when_a_repo_has_two():
+    """The cooldown stops two inside its window, but `--unmark` and a re-post
+    can put one either side of it, and the question is when it last went out."""
+    (row,) = history(
+        published=[
+            published_row("a/b", "2026-07-20", media_id="old"),
+            published_row("a/b", "2026-08-12", media_id="new"),
+        ],
+        readings={"new": {"views": 900, "skip_rate": 55.0}},
+    )
+
+    assert row["published_at"] == "2026-08-12"
+    assert row["views"] == 900
+
+
+def test_most_recently_touched_leads():
+    rows = history(
+        covered=[covered_row("a/old", "2026-08-01"), covered_row("a/new", "2026-08-18")]
+    )
+
+    assert [r["repo"] for r in rows] == ["a/new", "a/old"]

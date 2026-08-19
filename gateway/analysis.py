@@ -238,3 +238,103 @@ def skip_chart(rows: Sequence[Any], *, window: int = TREND_WINDOW) -> dict | Non
             )
         ],
     }
+
+
+# Mirrors `REPO_COOLDOWN_DAYS` in the pipeline's `config.py`, which this service
+# deliberately cannot import: the gateway holds no pipeline code, which is what
+# keeps its image free of the models and the voice. Duplicated rather than
+# guessed at, and the consequence of the two drifting is bounded, because
+# discovery reads its own value and this one only decides a word on a page.
+REPO_COOLDOWN_DAYS = 30
+
+
+def repo_history(
+    *,
+    covered: Iterable[Any],
+    rendered: Iterable[Any],
+    published: Iterable[Any],
+    readings: Any,
+    now: datetime | None = None,
+) -> list[dict]:
+    """Every repo this account has touched, and how far each one got.
+
+    The list that decides whether a video gets made tonight, which until now
+    existed as `data/used_repos.json` on one laptop and two tables nothing
+    displayed. Discovery reads the laptop copy; this is the durable side of it,
+    and being able to see it is the difference between "have we done this one"
+    being a question and being a lookup.
+
+    Three records of deliberately different strength, kept distinguishable
+    rather than flattened into one date:
+
+    - **Covered** is a commitment. It starts the cooldown and is the only one
+      of the three that blocks discovery.
+    - **Rendered** is only "a video exists". It stops a rebuild for one run and
+      starts nothing, so a repo can sit there having cost a script, a voiceover
+      and a render and never have gone out.
+    - **Posted** is the last time a Reel about it actually published.
+
+    A repo that is rendered and not covered is the row worth looking at: a
+    finished video nothing has committed to, which is either waiting to be
+    watched or was forgotten.
+    """
+    now = now or datetime.now(UTC)
+    merged: dict[str, dict] = {}
+
+    def slot(name: str) -> dict:
+        return merged.setdefault(
+            name,
+            {"repo": name, "covered_at": None, "rendered_at": None, "post": None},
+        )
+
+    for row in covered:
+        if name := row["repo_full_name"]:
+            # Earliest wins, matching the Mac's own merge. Taking the later one
+            # would extend the cooldown by however long the two records
+            # disagree, which is the wrong direction to be wrong in.
+            entry = slot(name)
+            when = (row["covered_at"] or "")[:10]
+            if when and (not entry["covered_at"] or when < entry["covered_at"]):
+                entry["covered_at"] = when
+    for row in rendered:
+        if name := row["repo_full_name"]:
+            slot(name)["rendered_at"] = (row["rendered_at"] or "")[:10]
+    for row in published:
+        name, when = row["repo_full_name"], row["published_at"]
+        if not name or not when:
+            continue
+        entry = slot(name)
+        prior = entry["post"]
+        if not prior or when > prior["published_at"]:
+            entry["post"] = {**dict(row), **(readings.get(row["media_id"]) or {})}
+
+    out = []
+    for entry in merged.values():
+        post = entry["post"] or {}
+        published_on = (post.get("published_at") or "")[:10]
+        left = None
+        if entry["covered_at"]:
+            age = (now.date() - datetime.fromisoformat(entry["covered_at"]).date()).days
+            left = REPO_COOLDOWN_DAYS - age
+        out.append(
+            {
+                **entry,
+                "published_at": published_on,
+                "hook": post.get("hook") or "",
+                "views": post.get("views"),
+                "skip_rate": post.get("skip_rate"),
+                "permalink": post.get("permalink"),
+                "days_left": left,
+                # A video that exists and was never committed to. Nothing blocks
+                # the repo and nothing on this machine will bring it up again.
+                "stranded": bool(entry["rendered_at"] and not entry["covered_at"]),
+                "latest": max(
+                    entry["covered_at"] or "", entry["rendered_at"] or "", published_on
+                ),
+            }
+        )
+    # Most recently touched first, and the last publish breaks a tie. A day of
+    # commitments all share a covered date, so without the second key the order
+    # inside that day is whatever the first query happened to return.
+    out.sort(key=lambda r: (r["latest"], r["published_at"], r["repo"]), reverse=True)
+    return out

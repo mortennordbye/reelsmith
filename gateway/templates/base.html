@@ -192,6 +192,12 @@
     table.cohorts .num { text-align: right; font-variant-numeric: tabular-nums; }
     table.cohorts td.good { color: var(--accent-soft); }
     table.cohorts th.num { padding-right: 10px; }
+    /* The hook under a repo name. Small and dim, because the row is about the
+       repo and this is what was said about it, not a second heading. */
+    .sub-hook {
+      display: block; color: var(--dim); font-size: 12px; margin-top: 3px;
+      max-width: 44ch;
+    }
     /* Something the panel still stores and no longer acts on. Dimmer than
        muted, so it reads as a footnote rather than as a current instruction. */
     .dormant {
@@ -241,6 +247,7 @@
         <a href="{{ url_for('queue_page') }}{{ q }}" class="{{ 'on' if page == 'queue' }}">Queue</a>
         <a href="{{ url_for('posts_page') }}{{ q }}" class="{{ 'on' if page == 'posts' }}">Posts</a>
         <a href="{{ url_for('insights_page') }}{{ q }}" class="{{ 'on' if page == 'insights' }}">Insights</a>
+        <a href="{{ url_for('repos_page') }}{{ q }}" class="{{ 'on' if page == 'repos' }}">Repos</a>
         <a href="{{ url_for('slots_page') }}{{ q }}" class="{{ 'on' if page == 'slots' }}">Slots</a>
         <a href="{{ url_for('health_page') }}{{ q }}" class="{{ 'on' if page == 'health' }}">Health</a>
       </nav>
