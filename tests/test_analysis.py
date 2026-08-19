@@ -1,0 +1,194 @@
+"""The arithmetic behind the Insights page.
+
+Pure functions on plain rows, tested apart from the route, because the numbers
+are the part that can be quietly wrong. A page that renders is not a page that
+is right, and a cohort table is exactly the kind of thing nobody re-derives by
+hand once it looks plausible.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from gateway import analysis
+
+NOW = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
+
+
+def post(*, at: datetime, skip: float = 70.0, views: int = 100, recipe: str = "", hook: str = ""):
+    return {
+        "published_at": at.isoformat(),
+        "skip_rate": skip,
+        "views": views,
+        "recipe": recipe,
+        "hook": hook,
+        "repo_full_name": "a/b",
+    }
+
+
+# --- Grouping ---------------------------------------------------------------
+
+
+def test_a_slot_is_the_hour_not_the_minute():
+    """The scheduler jitters every slot by an offset derived from its id and the
+    date, precisely so a restart cannot fire one twice. The side effect is that
+    no two posts share a publish time, and grouping on the stamp gave 43 cohorts
+    of one out of 58 posts."""
+    early = post(at=NOW.replace(hour=5, minute=58))
+    late = post(at=NOW.replace(hour=5, minute=59))
+
+    assert analysis.slot_of(early) == analysis.slot_of(late) == "05:00 UTC"
+
+
+def test_a_post_with_no_recipe_is_named_rather_than_grouped_with_the_rest():
+    """Empty is a claim, that nothing recorded what made this video, and it is
+    comparable to nothing. Folding it in with a real recipe would put posts from
+    an unknown checkout inside a cohort measuring a known one."""
+    assert analysis.recipe_of({"recipe": ""}) == "before recipes"
+    assert analysis.recipe_of({"recipe": "abc1234.deadbeef"}) == "abc1234.deadbeef"
+
+
+def test_a_post_with_no_reading_is_not_counted_as_a_perfect_one():
+    """A zero skip rate reads as an opening nobody scrolled past, and the newest
+    post always has one."""
+    rows = [post(at=NOW, skip=64.0), post(at=NOW, skip=0.0)]
+
+    (cohort,) = analysis.cohorts(rows, key=analysis.slot_of, now=NOW)
+
+    assert cohort["n"] == 1
+
+
+def test_a_cohort_reports_breakouts_separately_from_its_median():
+    """Eight of the first 58 posts carried a third of all views, so the median
+    describes the post that failed. Two cohorts can share a median and differ
+    fourfold in what they were actually worth, which is only visible as a
+    count."""
+    rows = [post(at=NOW, views=100) for _ in range(4)] + [post(at=NOW, views=1400)]
+
+    (cohort,) = analysis.cohorts(rows, key=analysis.slot_of, now=NOW)
+
+    assert cohort["views"] == 100
+    assert cohort["best"] == 1400
+    assert cohort["breakouts"] == 1
+    assert cohort["breakout_share"] == pytest.approx(20.0)
+
+
+def test_a_cohort_carries_its_age():
+    """A young cohort has had less time to gather views, which flatters its skip
+    rate and punishes its views. Without the number on the page a reader has no
+    way to know two rows are not comparable."""
+    rows = [post(at=NOW - timedelta(days=d)) for d in (8, 10, 12)]
+
+    (cohort,) = analysis.cohorts(rows, key=analysis.slot_of, now=NOW)
+
+    assert cohort["age_days"] == 10
+
+
+def test_the_threshold_count_uses_the_accounts_own_number():
+    """60 percent is where this account's median views jumped several fold. It
+    is not a benchmark from elsewhere and not a round number chosen for looking
+    tidy, so it is asserted rather than left to drift."""
+    rows = [post(at=NOW, skip=s) for s in (55.0, 59.9, 60.0, 72.0)]
+
+    (cohort,) = analysis.cohorts(rows, key=analysis.slot_of, now=NOW)
+
+    assert analysis.SKIP_THRESHOLD == 60.0
+    assert cohort["under_threshold"] == 2
+
+
+# --- The trend line ---------------------------------------------------------
+
+
+def test_the_trend_is_the_median_of_the_last_n():
+    got = analysis.trend([10, 20, 30, 40, 50], window=3)
+
+    assert got == [None, None, 20, 30, 40]
+
+
+def test_the_trend_stays_empty_until_the_window_is_full():
+    """A median of two posts drawn on the same line as a median of seven reads
+    as the same kind of evidence, and it is not."""
+    assert analysis.trend([10, 20], window=7) == [None, None]
+
+
+def test_the_trend_resists_one_breakout():
+    """A median rather than a mean, because this account's distribution is a
+    long flat run with occasional outliers, and a mean turns one of those into a
+    trend that was never there."""
+    assert analysis.trend([70, 70, 70, 70, 20], window=5) == [None, None, None, None, 70]
+
+
+# --- Chart geometry ---------------------------------------------------------
+
+
+def test_the_chart_needs_two_points_to_be_a_chart():
+    assert analysis.skip_chart([post(at=NOW)]) is None
+    assert analysis.skip_chart([]) is None
+
+
+def test_a_worse_skip_rate_sits_higher_on_the_plot():
+    """SVG y grows downward, so this is the one place the arithmetic can be
+    upside down and still look like a chart.
+
+    The axis is not inverted. Skip rate reads like every other percentage, with
+    100 at the top, which means better is *down* and the good band sits along
+    the bottom. Inverting so that better is up reads correctly for one second
+    and wrongly for every second after, because the number would then not mean
+    what the axis says it means.
+    """
+    rows = [post(at=NOW - timedelta(days=1), skip=40.0), post(at=NOW, skip=80.0)]
+
+    chart = analysis.skip_chart(rows)
+
+    good, bad = chart["dots"]
+    assert bad["y"] < good["y"], "80% skip is worse, and sits higher up"
+    # And the shaded band runs from the threshold down to the baseline, so the
+    # good region is the one under the line rather than over it.
+    assert chart["threshold_y"] < chart["baseline_y"]
+
+
+def test_the_axis_runs_the_full_range_rather_than_the_data():
+    """Skip rate is a percentage where both ends mean something. Cropping to the
+    range the data happens to occupy would make a two point drift look like a
+    collapse."""
+    chart = analysis.skip_chart(
+        [post(at=NOW - timedelta(days=1), skip=70.0), post(at=NOW, skip=72.0)]
+    )
+
+    assert [g["label"] for g in chart["grid"]] == ["0%", "20%", "40%", "60%", "80%", "100%"]
+
+
+def test_the_end_labels_are_anchored_inward():
+    """Centred, half of the first and last date sits outside the viewBox and is
+    clipped by the container. Caught by looking at it, not by a test that only
+    checked the numbers."""
+    chart = analysis.skip_chart([post(at=NOW - timedelta(days=1)), post(at=NOW)])
+
+    assert [t["anchor"] for t in chart["x_ticks"]] == ["start", "middle", "end"]
+
+
+def test_a_dot_carries_what_its_tooltip_needs():
+    """Including the hook, which is the whole reason a dot on this chart is
+    worth hovering: the point of the page is to connect an opening to what it
+    scored."""
+    rows = [
+        post(at=NOW - timedelta(days=1), skip=55.0, hook="It reads 40 pages in one pass"),
+        post(at=NOW, skip=80.0),
+    ]
+
+    dot = analysis.skip_chart(rows)["dots"][0]
+
+    assert dot["hook"] == "It reads 40 pages in one pass"
+    assert dot["good"] is True, "under the threshold, so it gets the ring"
+
+
+def test_dots_are_ordered_by_time_whatever_order_they_arrive_in():
+    """`published_media` returns newest first, and a trend line drawn through
+    that is the same data read backwards."""
+    rows = [post(at=NOW, skip=80.0), post(at=NOW - timedelta(days=2), skip=40.0)]
+
+    dots = analysis.skip_chart(rows)["dots"]
+
+    assert [d["skip"] for d in dots] == [40.0, 80.0]

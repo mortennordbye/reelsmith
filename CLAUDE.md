@@ -281,6 +281,44 @@ Two things about the queue are load bearing and easy to undo by accident:
   evening's slot fire twice. This is also why the config sync keeps the id of
   an unchanged slot rather than recreating the row.
 
+### The panel answers two different questions
+
+Queue and Posts list things. Insights compares them, and the split is
+deliberate: a list cannot answer "did that change work" while three posts a day
+go out and the prompt changes underneath them.
+
+- **The hook is on the queue card, and it is not decoration.** Cancelling
+  before the slot fires is the only review this account has, and until the hook
+  travelled with the video, reviewing meant pressing play on every queued Reel
+  to see the one line `skip_rate` actually scores. On the Posts page it sits
+  directly above the percentage it earned, which is the only pair on that page
+  where one plainly caused the other.
+- **`gateway/analysis.py` holds the arithmetic and no FastAPI.** Cohorts, the
+  trailing median and the chart geometry are pure functions on plain rows,
+  because a page that renders is not a page that is right and nobody
+  re-derives a cohort table by hand once it looks plausible.
+- **The chart carries one measure on one axis.** Views deliberately does not
+  share it: two scales on one plot is the most common way a chart lies, and
+  views here run from 86 to 1614, so a linear axis holding both would be a flat
+  line with one spike. Views lives in the cohort tables as a median plus a
+  count of how many cleared 500, which is what that distribution can support.
+- **The axis is not inverted and the good band is at the bottom.** Skip rate
+  reads like every other percentage, with 100 at the top, so better is down.
+  Inverting it reads correctly for one second and wrongly afterwards.
+- **Dots and the trend line are one series, not two.** They share the hue and
+  differ by weight. `--accent` and `--accent-soft` used as two series fail a
+  colour separation check, being two steps of one hue, and a post under the
+  threshold is marked with a ring rather than a second colour so the
+  distinction survives being read without colour.
+- **Server rendered SVG, no chart library and no measurement step.** The
+  viewBox is fixed and scales to its container, so the page has content before
+  any script runs.
+- **On a phone the cohort tables scroll rather than dropping columns.** The
+  panel's global rule hides column four and up under 700px, which on this table
+  would have taken the breakout count, the column the page itself says to read
+  before the median. They opt out and scroll instead, and the chart does the
+  same, since 58 dots inside 120 pixels of height stop being separable.
+
 ## Alerting
 
 **Alerting lives in homelab, not in this process.** Prometheus scrapes the

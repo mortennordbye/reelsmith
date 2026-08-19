@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}Insights{% endblock %}
+
+{% block body %}
+<h1>Insights</h1>
+<p class="sub">
+  Groups rather than posts. The Posts page says what each Reel did; this says
+  which kinds of them did better, which is the only form the answer can take
+  while three go out a day and the prompt changes underneath them.
+</p>
+
+{% for board in boards %}
+  {% set account = board.account %}
+  {% include "_account_heading.html" %}
+
+  {% if not board.chart %}
+    <div class="card empty">
+      Nothing to compare yet. {{ board.total }} published,
+      {{ board.measured }} with a retention reading, and a reading takes a few
+      hours to arrive.
+    </div>
+  {% else %}
+    {% set c = board.chart %}
+    <div class="card">
+      <h2>Skip rate over time</h2>
+      <p class="sub">
+        The share who scrolled past inside the first three seconds, so it scores
+        the opening and nothing after it. Lower is better, and the shaded band
+        is under {{ '%.0f' | format(board.threshold) }} percent, where this
+        account's own median views jumped several fold. One dot per post; the
+        line is the median of the last {{ c.window }}.
+      </p>
+
+      {# Server rendered SVG. No chart library, no measurement step, and the
+         viewBox scales to the container, so it survives a phone without
+         JavaScript being involved in whether the page has content.
+
+         Everything wears the panel's own tokens through currentColor and
+         explicit var() fills, so it follows the theme rather than carrying a
+         second palette that would drift from it. #}
+      <div class="scroll-x">
+      <svg class="chart" viewBox="0 0 {{ c.w }} {{ c.h }}" role="img"
+           aria-label="Skip rate per published Reel over time, with a
+                       {{ c.window }} post trailing median.">
+        {# The good region, drawn first so every mark sits above it. A band
+           rather than an inverted axis: inverting so that better is up reads
+           correctly for one second and wrongly for every second after. #}
+        <rect x="{{ c.left }}" y="{{ c.threshold_y }}"
+              width="{{ c.w - c.left - c.right }}"
+              height="{{ c.baseline_y - c.threshold_y }}"
+              fill="var(--accent)" opacity="0.06"></rect>
+
+        {% for line in c.grid %}
+          <line x1="{{ c.left }}" y1="{{ line.y }}" x2="{{ c.w - c.right }}" y2="{{ line.y }}"
+                stroke="var(--line)" stroke-width="1"></line>
+          <text x="{{ c.left - 6 }}" y="{{ line.y + 3.5 }}" text-anchor="end"
+                class="axis">{{ line.label }}</text>
+        {% endfor %}
+
+        {# The threshold, labelled on the plot rather than in a legend. A
+           reference line nobody can name is a line nobody can use. #}
+        <line x1="{{ c.left }}" y1="{{ c.threshold_y }}" x2="{{ c.w - c.right }}"
+              y2="{{ c.threshold_y }}" stroke="var(--accent-soft)" stroke-width="1"
+              stroke-dasharray="4 4" opacity="0.7"></line>
+
+        {% for tick in c.x_ticks %}
+          <text x="{{ tick.x }}" y="{{ c.h - 7 }}" text-anchor="{{ tick.anchor }}"
+                class="axis">{{ tick.label }}</text>
+        {% endfor %}
+
+        {% for dot in c.dots %}
+          {# The hit target is larger than the mark, so a dot can be reached on
+             a touch screen and in a dense stretch of the axis. The title is the
+             whole tooltip: native, keyboard reachable, and nothing to load. #}
+          <circle cx="{{ dot.x }}" cy="{{ dot.y }}" r="11" fill="transparent">
+            <title>{{ '%.1f' | format(dot.skip) }}% skipped · {{ dot.views }} views
+{{ dot.repo }} · {{ dot.on }}{% if dot.hook %}
+"{{ dot.hook }}"{% endif %}</title>
+          </circle>
+          <circle cx="{{ dot.x }}" cy="{{ dot.y }}" r="3.5"
+                  fill="var(--accent)" opacity="{{ '0.95' if dot.good else '0.45' }}"
+                  {% if dot.good %}stroke="var(--panel)" stroke-width="2"{% endif %}
+                  pointer-events="none"></circle>
+        {% endfor %}
+
+        {% if c.trend %}
+          <polyline points="{{ c.trend }}" fill="none" stroke="var(--accent)"
+                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                    pointer-events="none"></polyline>
+        {% endif %}
+
+        {# Last, so it sits above the marks. Drawn before them it was legible
+           until the trend line happened to pass through it, which is most of
+           the time given the line hovers around this exact value. #}
+        <rect x="{{ c.left + 4 }}" y="{{ c.threshold_y - 16 }}"
+              width="{{ c.threshold_label_w }}" height="13" rx="3"
+              fill="var(--panel)" opacity="0.92" pointer-events="none"></rect>
+        <text x="{{ c.left + 9 }}" y="{{ c.threshold_y - 6 }}" text-anchor="start"
+              class="axis accent" pointer-events="none">{{ c.threshold_label }}</text>
+      </svg>
+      </div>
+      <p class="small muted">
+        Hover a dot for the post and its hook. Dots under the threshold carry a
+        ring, so the distinction survives being read without colour.
+      </p>
+    </div>
+
+    {% macro cohort_table(title, blurb, rows) %}
+      <div class="card">
+        <h2>{{ title }}</h2>
+        <p class="sub">{{ blurb }}</p>
+        <div class="scroll-x">
+        <table class="cohorts">
+          <thead>
+            <tr>
+              <th>{{ title.split(' ')[-1] | capitalize }}</th>
+              <th class="num">n</th>
+              <th class="num">Skip</th>
+              <th class="num">Views</th>
+              <th class="num">Best</th>
+              <th class="num">Over {{ board.breakout }}</th>
+              <th class="num">Under {{ '%.0f' | format(board.threshold) }}%</th>
+              <th class="num">Age</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for c in rows %}
+              <tr>
+                <td class="mono">{{ c.name }}</td>
+                <td class="num">{{ c.n }}</td>
+                <td class="num {{ 'good' if c.skip < board.threshold }}">
+                  {{ '%.1f' | format(c.skip) }}%
+                </td>
+                <td class="num">{{ '{:,}'.format(c.views | int) }}</td>
+                <td class="num">{{ '{:,}'.format(c.best) }}</td>
+                <td class="num">{{ c.breakouts }} ({{ '%.0f' | format(c.breakout_share) }}%)</td>
+                <td class="num">{{ c.under_threshold }} ({{ '%.0f' | format(c.under_share) }}%)</td>
+                <td class="num muted">{{ '%.0f' | format(c.age_days) }}d</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+      </div>
+    {% endmacro %}
+
+    {{ cohort_table(
+        "Cohorts by slot",
+        "Which slot a post lands in comes from its queue position rather than
+         from anything about the video, so these groups are close to randomly
+         assigned with respect to content. That is rare enough here to be worth
+         using. The hour, not the minute: the scheduler jitters every slot, so
+         no two posts share a publish time.",
+        board.by_slot) }}
+
+    {{ cohort_table(
+        "Cohorts by recipe",
+        "The checkout and the settings that wrote the script. Two rows are
+         comparable when their recipes match and not when they do not, which is
+         the only way to tell a change that worked from a queue that was already
+         full when it landed.",
+        board.by_recipe) }}
+
+    <p class="small muted">
+      Read the breakout column before the median. Eight of the first 58 posts
+      carried a third of all views, so the median describes the post that failed
+      and two cohorts can share one while differing fourfold in what they were
+      worth. Age is there because a young cohort has had less time to gather
+      views, which flatters its skip rate and punishes its views.
+    </p>
+  {% endif %}
+{% endfor %}
+{% endblock %}

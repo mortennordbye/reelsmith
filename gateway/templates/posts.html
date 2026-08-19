@@ -78,6 +78,15 @@
               {% endif %}
             </div>
 
+            {# The opening, directly above the number it earned. `skip_rate` is
+               the share who scrolled past inside three seconds, so this line
+               and that percentage are the only pair on the page where one
+               plainly caused the other. Reading them apart is how a hook that
+               never shipped got believed for a fortnight. #}
+            {% if row['hook'] %}
+              <p class="hook">{{ row['hook'] }}</p>
+            {% endif %}
+
             {% if post.insights %}
               <div class="metrics">
                 <div><span class="n">{{ post.insights['views'] }}</span><span class="l">views</span></div>

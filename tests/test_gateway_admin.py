@@ -724,6 +724,106 @@ async def test_a_stranger_cannot_touch_any_control(anon, path, data):
     assert (await db.get_account(app.state.db, ACCOUNT))["active"] == 1
 
 
+# --- The hook, where the decisions are made ---------------------------------
+
+
+async def test_the_queue_shows_the_hook_being_reviewed(client):
+    """Cancelling before the slot fires is the only review this account has.
+    Nothing reads a script before it goes live, and the validators catch dashes
+    and hype vocabulary but cannot catch a claim that is wrong about the
+    project. Without the hook on the card, reviewing meant pressing play on
+    every queued video to see the one line that decides whether anybody
+    watches."""
+    http, _ = client
+    await queue(http, hook="It reads 40 pages of a PDF in a single pass")
+
+    page = (await http.get("/admin/", headers={"accept": "text/html"})).text
+
+    assert "It reads 40 pages of a PDF in a single pass" in page
+
+
+async def test_a_row_queued_before_the_hook_travelled_shows_no_hook(client):
+    """Rather than an empty pair of quotation marks, which reads as a video
+    whose opening is blank."""
+    http, _ = client
+    await queue(http)
+
+    page = (await http.get("/admin/", headers={"accept": "text/html"})).text
+
+    assert 'class="hook"' not in page
+
+
+async def test_the_posts_page_puts_the_hook_next_to_what_it_scored(client):
+    """The one pair on the page where one plainly caused the other: `skip_rate`
+    is the share who left inside three seconds, and this is what was on screen
+    for them. Reading them apart is how a hook that never shipped was believed
+    for a fortnight."""
+    http, app = client
+    conn = app.state.db
+    qid = await db.enqueue_post(
+        conn, ig_user_id=ACCOUNT, video_name="v.mp4", cover_name=None, caption="c",
+        keyword="UV", link=LINK, repo_full_name="a/b", approved=True,
+        hook="Your coding agent dies when you close the terminal",
+    )
+    await db.mark_queue_published(conn, qid, media_id="m1", permalink="https://ig/x")
+    await conn.commit()
+
+    page = (await http.get("/admin/posts", headers={"accept": "text/html"})).text
+
+    assert "Your coding agent dies when you close the terminal" in page
+
+
+# --- Insights ---------------------------------------------------------------
+
+
+async def test_the_insights_page_opens_with_nothing_to_compare(client):
+    """A fresh account has no readings, and an empty chart is worse than a
+    sentence saying why there is nothing to draw."""
+    http, _ = client
+
+    response = await http.get("/admin/insights", headers={"accept": "text/html"})
+
+    assert response.status_code == 200
+    assert "Nothing to compare yet" in response.text
+
+
+async def test_the_insights_page_groups_published_reels(client):
+    """Two posts on the same recipe and one on another, so a cohort table has
+    something to be wrong about."""
+    http, app = client
+    conn = app.state.db
+    for i, recipe in enumerate(("old1234.aaaaaaaa", "old1234.aaaaaaaa", "new5678.bbbbbbbb")):
+        qid = await db.enqueue_post(
+            conn, ig_user_id=ACCOUNT, video_name=f"v{i}.mp4", cover_name=None,
+            caption="c", keyword="UV", link=LINK, repo_full_name=f"a/b{i}",
+            approved=True, recipe=recipe, hook=f"hook number {i}",
+        )
+        await db.mark_queue_published(conn, qid, media_id=f"m{i}", permalink="https://ig/x")
+        await db.record_insights(
+            conn, media_id=f"m{i}", ig_user_id=ACCOUNT, on=f"2026-08-0{i + 1}",
+            metrics={"views": 100 + i, "reach": 90, "likes": 1, "comments": 0,
+                     "saved": 0, "shares": 0, "avg_watch_ms": 4000,
+                     "total_watch_ms": 400000, "skip_rate": 70.0 + i},
+        )
+    await conn.commit()
+
+    page = (await http.get("/admin/insights", headers={"accept": "text/html"})).text
+
+    assert "old1234.aaaaaaaa" in page
+    assert "new5678.bbbbbbbb" in page
+    # The hook rides along in the chart tooltip, which is the only place a dot
+    # can say which post it is.
+    assert "hook number 0" in page
+
+
+async def test_a_stranger_cannot_read_the_insights(anon):
+    """Same as every other panel page. The numbers are not secret, but the
+    panel that publishes to a real account has to be reachable from the
+    internet for Meta to fetch media from it."""
+    anon_http, _ = anon
+    assert (await anon_http.get("/admin/insights")).status_code == 401
+
+
 async def test_the_wrong_token_does_not_sign_you_in(anon):
     http, _ = anon
     response = await http.post("/admin/login", data={"token": "not-it"})

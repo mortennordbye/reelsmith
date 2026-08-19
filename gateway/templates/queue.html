@@ -57,6 +57,23 @@
               </span>
             </div>
 
+            {# The hook, above everything else about the row.
+
+               Cancelling before the slot fires is the only review this account
+               has: nothing reads a script before it goes live, and the
+               validators catch dashes and hype vocabulary but cannot catch a
+               claim that is wrong about the project. Reviewing meant pressing
+               play on every queued video, because the one line that decides
+               whether anybody watches was the only thing the page did not say.
+
+               `skip_rate` scores the first three seconds and this is what is on
+               screen for them, so it is the whole of what can be judged without
+               watching. Empty on a row queued before the hook travelled, and on
+               anything published straight from the Mac. #}
+            {% if row['hook'] %}
+              <p class="hook">{{ row['hook'] }}</p>
+            {% endif %}
+
             {# The link leads, because it is the part that is still used: it goes
                into the YouTube description and is what a DM would carry.
 

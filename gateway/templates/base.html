@@ -156,7 +156,42 @@
       letter-spacing: .04em;
     }
     .metrics .none { color: var(--dim); font-weight: 400; }
+    /* The hook. Set in the serif at the size of a heading, because on the queue
+       page it is the thing being reviewed and everything else on the row is
+       metadata about it. Quoted rather than styled as a title, so it reads as
+       words that will be on screen rather than as a label for the card. */
+    .hook {
+      font-family: var(--serif); font-size: 17px; line-height: 1.35;
+      color: var(--ink); margin: 8px 0 2px; max-width: 46ch;
+    }
+    .hook::before, .hook::after { content: '"'; color: var(--faint); }
     .empty { color: var(--dim); padding: 18px 0; text-align: center; }
+    /* The chart scales to its card rather than being measured, so there is no
+       JavaScript between the page loading and the page having content. */
+    .chart { width: 100%; height: auto; display: block; margin: 4px 0 2px; }
+    .chart .axis {
+      font-size: 10px; fill: var(--faint); font-family: "JetBrains Mono",
+      ui-monospace, "SF Mono", Menlo, monospace;
+    }
+    /* Text wears text tokens. The one exception is the threshold label, which
+       names the line beside it and would otherwise be a caption floating free
+       of the thing it captions. */
+    .chart .accent { fill: var(--accent-soft); }
+    .chart circle[r="11"] { cursor: default; }
+    /* Cohort tables. A real table here, unlike the per-post metrics, because
+       every row holds the same eight numbers and comparing down a column is the
+       entire reason the page exists. */
+    table.cohorts { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.cohorts th {
+      text-align: left; font-weight: 500; color: var(--dim); font-size: 11px;
+      text-transform: uppercase; letter-spacing: .04em;
+      padding: 0 10px 7px 0; border-bottom: 1px solid var(--line);
+    }
+    table.cohorts td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--line); }
+    table.cohorts tr:last-child td { border-bottom: 0; }
+    table.cohorts .num { text-align: right; font-variant-numeric: tabular-nums; }
+    table.cohorts td.good { color: var(--accent-soft); }
+    table.cohorts th.num { padding-right: 10px; }
     /* Something the panel still stores and no longer acts on. Dimmer than
        muted, so it reads as a footnote rather than as a current instruction. */
     .dormant {
@@ -173,10 +208,25 @@
     /* The queue is the reason to open this, so it stays readable on a phone:
        the kill switch and the cancel button are the two things most likely to
        be wanted from somewhere other than a desk. */
+    /* Anything that cannot shrink without losing meaning scrolls sideways
+       inside its card rather than being cropped by it. */
+    .scroll-x { overflow-x: auto; }
     @media (max-width: 700px) {
       .row { flex-direction: column; }
       video { width: 100%; }
       th:nth-child(n+4), td:nth-child(n+4) { display: none; }
+      /* The cohort tables opt out of that. Dropping columns four and up takes
+         the breakout count, which is the column the page tells you to read
+         before the median, so on a phone the table would have hidden the
+         answer and shown the thing it warns against reading alone. They scroll
+         instead. */
+      table.cohorts th:nth-child(n+4), table.cohorts td:nth-child(n+4) {
+        display: table-cell;
+      }
+      table.cohorts { min-width: 560px; }
+      /* A chart squashed to a phone's width keeps its aspect ratio, so 58 dots
+         land inside 120 pixels of height and stop being separable. */
+      .chart { min-width: 520px; }
     }
   </style>
 </head>
@@ -190,6 +240,7 @@
       <nav>
         <a href="{{ url_for('queue_page') }}{{ q }}" class="{{ 'on' if page == 'queue' }}">Queue</a>
         <a href="{{ url_for('posts_page') }}{{ q }}" class="{{ 'on' if page == 'posts' }}">Posts</a>
+        <a href="{{ url_for('insights_page') }}{{ q }}" class="{{ 'on' if page == 'insights' }}">Insights</a>
         <a href="{{ url_for('slots_page') }}{{ q }}" class="{{ 'on' if page == 'slots' }}">Slots</a>
         <a href="{{ url_for('health_page') }}{{ q }}" class="{{ 'on' if page == 'health' }}">Health</a>
       </nav>

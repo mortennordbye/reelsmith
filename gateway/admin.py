@@ -44,7 +44,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from gateway import db, schedule, scheduler
+from gateway import analysis, db, schedule, scheduler
 
 log = logging.getLogger(__name__)
 
@@ -421,6 +421,65 @@ async def posts_page(request: Request) -> Any:
         request,
         "posts.html",
         {"boards": boards, "cfg": cfg, "page": "posts", "scope": scope},
+    )
+
+
+@router.get("/insights", response_class=HTMLResponse, name="insights_page")
+async def insights_page(request: Request) -> Any:
+    """The comparisons, as against the list of posts on the Posts page.
+
+    Listing is not comparing. Every number the account has acted on was worked
+    out by hand in a session and pasted into a notes file, which goes stale
+    silently, and the only place any of it could be recomputed was a terminal on
+    one laptop. This is the panel, which is what can be opened from a phone at
+    seven in the morning after the nightly did something at two.
+
+    Two cohort tables and one chart. The chart is skip rate because that is the
+    metric the whole pipeline is tuned on; the tables carry views, because views
+    are too skewed to plot honestly on the same axis and a median plus a count
+    of breakouts is what that distribution can support.
+    """
+    conn, cfg = request.app.state.db, request.app.state.cfg
+    scope = await _scope(request)
+
+    boards = []
+    for account in scope["visible"]:
+        ig_user_id = account["ig_user_id"]
+        rows = await db.published_media(conn, ig_user_id)
+        readings = await db.latest_insights(conn, ig_user_id)
+        # One flat row per post, so the analysis never has to know that the
+        # numbers and the hook arrive from two different tables.
+        merged = [
+            {**dict(row), **{k: reading[k] for k in ("views", "reach", "skip_rate")}}
+            for row in rows
+            if (reading := readings.get(row["media_id"]))
+        ]
+        measured = [r for r in merged if r["skip_rate"]]
+        boards.append(
+            {
+                "account": account,
+                "measured": len(measured),
+                "total": len(rows),
+                "chart": analysis.skip_chart(merged),
+                # Slots read in time order, because the question is the shape of
+                # the day. Recipes have no order, so the biggest cohort leads.
+                "by_slot": sorted(
+                    analysis.cohorts(merged, key=analysis.slot_of),
+                    key=lambda c: c["name"],
+                ),
+                "by_recipe": sorted(
+                    analysis.cohorts(merged, key=analysis.recipe_of),
+                    key=lambda c: (-c["n"], c["name"]),
+                ),
+                "threshold": analysis.SKIP_THRESHOLD,
+                "breakout": analysis.BREAKOUT_VIEWS,
+            }
+        )
+
+    return templates.TemplateResponse(
+        request,
+        "insights.html",
+        {"boards": boards, "cfg": cfg, "page": "insights", "scope": scope},
     )
 
 
