@@ -694,6 +694,59 @@ def test_enqueue_defaults_to_the_instagram_account(cfg):
     assert seen["title"] == ""
 
 
+def test_enqueue_carries_the_recipe_that_wrote_the_script(cfg):
+    """It cannot be reconstructed later, so it has to travel with the video.
+
+    The fingerprint is written into the run folder on the machine that
+    rendered; the numbers land on the gateway. Without sending it the only join
+    is the repo name against a local build folder, which on a machine that did
+    not render this video answers with a checkout that never made it.
+    """
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, json={"id": 1, "state": "draft"})
+
+    gateway.enqueue(
+        "v.mp4", "https://github.com/a/b", cfg,
+        client=_client(handler), recipe="abc1234.deadbeef",
+    )
+
+    assert seen["recipe"] == "abc1234.deadbeef"
+
+
+def test_enqueue_carries_the_hook_that_was_on_the_video(cfg):
+    """The half the feedback loop reads back into the next prompt."""
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, json={"id": 1, "state": "draft"})
+
+    gateway.enqueue(
+        "v.mp4", "https://github.com/a/b", cfg,
+        client=_client(handler), hook="It reads 40 pages in one pass",
+    )
+
+    assert seen["hook"] == "It reads 40 pages in one pass"
+
+
+def test_enqueue_without_a_recipe_says_so_rather_than_omitting_the_field(cfg):
+    """Empty is a claim: nothing recorded what made this video. Leaving the key
+    out would make an older client and a run folder with no `recipe.json`
+    indistinguishable at the other end."""
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, json={"id": 1, "state": "draft"})
+
+    gateway.enqueue("v.mp4", "https://github.com/a/b", cfg, client=_client(handler))
+
+    assert seen["recipe"] == ""
+
+
 def test_enqueue_can_target_a_channel_instead(cfg):
     """The same video going to both is two calls, because the two rows are
     approved, held and cancelled independently."""

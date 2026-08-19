@@ -28,7 +28,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 13
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -327,6 +327,52 @@ _MIGRATIONS: tuple[str, ...] = (
     # Instagram row, where nothing reads it.
     """
     ALTER TABLE queued_posts ADD COLUMN title TEXT NOT NULL DEFAULT '';
+    """,
+    # v12. Which version of the rules wrote the script that is in this video.
+    #
+    # `pipeline/results.py` has fingerprinted every run since it was written,
+    # as a git commit plus a digest of the prompt and the knobs, and wrote it
+    # into `recipe.json` in the run folder. The numbers are here and the recipe
+    # was over there, and the only join between them was the repo name against
+    # a build folder on whichever machine happened to be asking. That is wrong
+    # rather than merely absent once more than one machine renders: the Mac
+    # holds an old local run for a repo the pod rebuilt and queued, so the join
+    # answers with a recipe from a checkout that never made this video.
+    #
+    # Dates cannot stand in for it. The queue runs three days deep by design,
+    # so a post published today was made from whatever the code said up to a
+    # week ago, and eight changes landing in one evening are indistinguishable
+    # from the four videos already queued when they landed.
+    #
+    # Empty on every row written before this, and on a post published straight
+    # from the Mac with `--publish`, which leaves no queue row at all. Empty
+    # means "before recipes" and is not comparable to anything, which is the
+    # honest answer rather than a guess.
+    """
+    ALTER TABLE queued_posts ADD COLUMN recipe TEXT NOT NULL DEFAULT '';
+    """,
+    # v13. The hook that was on the video, for the same reason as v12 and with
+    # a sharper failure than v12 had.
+    #
+    # The feedback loop shows the scriptwriter what this account's own openings
+    # scored, and it found the hook by looking up the repo name in a local
+    # build folder. On a machine that did not render the video that answers
+    # confidently and wrongly: the Mac holds
+    # `build/2026-08-08/ultraworkers-claw-code/`, a script that was never
+    # rendered, while the pod built and queued that repo on 2026-08-17, so the
+    # loop was told "Anthropic shipped its coding agent's source by mistake"
+    # scored 63.6 percent when that hook has never been on a video.
+    #
+    # A wrong recipe misleads somebody reading a table. A wrong hook is fed
+    # into the prompt that writes tomorrow's script, so the loop argues from
+    # evidence that does not exist. That is worse than having no loop.
+    #
+    # It also decides whether a post counts at all. The join needed a local run
+    # folder to produce a hook, so the thirteen Reels rendered on the pod were
+    # missing from the loop entirely on the Mac. Carried here, a post reaches
+    # the loop from anywhere.
+    """
+    ALTER TABLE queued_posts ADD COLUMN hook TEXT NOT NULL DEFAULT '';
     """,
 )
 
@@ -918,11 +964,22 @@ async def enqueue_post(
     approved: bool = False,
     slot_override: datetime | None = None,
     title: str = "",
+    recipe: str = "",
+    hook: str = "",
 ) -> int:
     """Put a rendered video in the line. Returns its queue id.
 
     `title` is required by YouTube and meaningless on Instagram, so it defaults
     to empty and only the YouTube publish path reads it.
+
+    `recipe` is the fingerprint of the checkout and the settings that wrote the
+    script, carried here so the numbers can be grouped by it later. It defaults
+    to empty because a caller that does not send one is telling the truth: the
+    video exists and nothing recorded what made it.
+
+    `hook` is the text that was on screen for the first three seconds, which is
+    what `skip_rate` scores. Carried for the same reason and with more at stake:
+    it is read back into the prompt that writes the next script.
     """
     row = await _one(
         conn, "SELECT COALESCE(MAX(position), 0) + 1 FROM queued_posts WHERE ig_user_id = ?",
@@ -933,8 +990,9 @@ async def enqueue_post(
         """
         INSERT INTO queued_posts
             (ig_user_id, state, video_name, cover_name, caption, repo_full_name,
-             keyword, link, slot_override, position, created_at, title)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             keyword, link, slot_override, position, created_at, title, recipe,
+             hook)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             ig_user_id,
@@ -949,6 +1007,8 @@ async def enqueue_post(
             position,
             iso(now()),
             title,
+            recipe,
+            hook,
         ),
     ) as cur:
         queued_id = int(cur.lastrowid or 0)
@@ -1665,7 +1725,8 @@ async def published_media(
         conn,
         f"""
         SELECT q.media_id, q.repo_full_name, q.video_name, q.cover_name,
-               q.keyword, q.link, q.permalink, q.published_at, 'queue' AS source
+               q.keyword, q.link, q.permalink, q.published_at, q.recipe,
+               q.hook, q.created_at, 'queue' AS source
         FROM queued_posts q
         WHERE {' AND '.join(queue_where)} AND q.media_id IS NOT NULL
 
@@ -1673,7 +1734,8 @@ async def published_media(
 
         SELECT p.media_id, NULL, NULL, NULL,
                p.keyword, p.link, NULL,
-               COALESCE(p.published_at, p.registered_at), 'direct' AS source
+               COALESCE(p.published_at, p.registered_at), '', '', NULL,
+               'direct' AS source
         FROM posts p
         WHERE p.media_id NOT IN (
             SELECT media_id FROM queued_posts WHERE media_id IS NOT NULL

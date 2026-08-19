@@ -434,6 +434,50 @@ does the join and `_results_block` in `pipeline/scriptwriter.py` renders it.
 - Failure is an empty list everywhere. A gateway that is down costs a run its
   hindsight, which is what every run had before this existed.
 
+### The recipe is what makes a change answerable
+
+Every run is fingerprinted by `recipe()` in `pipeline/results.py` as the git
+commit plus a digest of `SYSTEM_PROMPT` and the knobs, written to `recipe.json`
+in the run folder. Two runs with the same fingerprint are comparable and two
+with different ones are not, which is the whole claim.
+
+- **It travels with the video, because it cannot be reconstructed later.** The
+  recipe is written on whichever machine rendered and the numbers land on the
+  gateway, so the only join was the repo name against a local build folder.
+  That is wrong rather than merely absent once two machines render: the Mac
+  holds `build/2026-08-08/ultraworkers-claw-code/`, a script that was never
+  rendered, and the pod built and queued that repo on 2026-08-17, so the local
+  join hands the loop an 11 day old hook and calls it the one that scored. It
+  is sent at `--enqueue`, stored on `queued_posts`, and returned by
+  `/api/results`, which wins over the local guess in `past_posts`.
+- **Read from the folder at enqueue, never recomputed.** `--enqueue` can run
+  days after the render and `--recover` sweeps two days of folders, so
+  recomputing would stamp the video with the checkout that queued it.
+- **Dates cannot stand in for it.** The queue is meant to sit three days deep,
+  so a Reel published this morning was written from whatever the code said
+  earlier in the week. Eight changes landing in one evening on 2026-08-17 were
+  indistinguishable from the four videos already queued when they landed, and
+  reading publish dates said five posts had run through them when one had.
+- Empty means "before recipes" and is comparable to nothing, which is the
+  honest answer. A Reel put out with `--publish` leaves no queue row at all.
+
+**The hook travels for the same reason, and it mattered more.** The loop looked
+the hook up by repo name in a local build folder, so on a machine that did not
+render the video it read an opening that was never on one: the Mac's stale
+`claw-code` script had the loop reporting "Anthropic shipped its coding agent's
+source by mistake" as the hook that scored 63.6 percent. A wrong recipe misleads
+somebody reading a table; a wrong hook is fed into the prompt that writes
+tomorrow. It also decides whether a post counts at all, since a row with no hook
+is skipped, and that silently dropped the thirteen Reels rendered on the pod.
+
+**Saves and shares reach `/api/results` too.** They have been collected since the
+insights sweep existed and were never sent, so every analysis in `IDEAS.md`
+optimised the metric that happened to be exposed. They are carried on `PastPost`
+as `None` when absent rather than 0, because a zero share count reads as a video
+nobody passed on and "not measured" is a different claim. Deliberately **not**
+wired into `SYSTEM_PROMPT` yet: that would change what scripts get written while
+eight earlier changes are still unattributed.
+
 `skip_rate` is the metric the loop turns on: the share who scrolled past inside
 the first three seconds, so it scores the opening alone. It arrives from
 `REELS_METRICS` in `gateway/graph.py`, which are Reels-only and therefore
@@ -535,6 +579,36 @@ and for every security update, and holds routine majors back for a human.
   symptom pointed nowhere near the cause: `pod-setup.sh` installs the browser
   as a step of its own, and `--check` asks playwright which path it wants
   rather than whether some chromium exists.
+- **`--history` is the view across all three records.** `--covered` answers
+  "may discovery pick this", which is the scorer's question. `--history` joins
+  the cooldown store, `GET /api/rendered` and the queue's publish dates, so it
+  answers "have we talked about this and when did it go out". It merges the
+  gateway's covered list in memory rather than writing it back, since a listing
+  command has no business editing `data/used_repos.json`, and it takes publish
+  dates from the queue rather than `/api/results`, which omits a post until it
+  has a retention reading and would report this afternoon's Reel as never
+  posted. Made and Posted are separate columns because the gap between them is
+  the queue depth.
+- **`--cohorts recipe|slot` compares groups instead of listing posts.** It is
+  the payoff of the recipe: rows are comparable when their recipes match. The
+  `slot` dimension buckets by the hour, because the scheduler jitters each slot
+  by an offset derived from its id and the date, so grouping on the exact stamp
+  gave 43 cohorts of one out of 58 posts. **Read the breakouts column, not the
+  median**, since eight of the first 58 posts carried a third of all views, so
+  the median describes the post that failed.
+- **The evening slot underperforms and this is the strongest signal in the
+  numbers so far.** Measured 2026-08-19, n=58, and the three main slots have the
+  same median age so nothing is confounded by time. 06:00 UTC takes 63.6 percent
+  median skip with 27 percent of posts over 500 views, 10:00 UTC takes 65.5 and
+  22 percent, and 17:00 UTC takes 76.3 percent with 6 percent over 500. Paired
+  within the same day, the evening post is worse on 13 of 19 days by a median
+  6.3 points, which is a sign test p of 0.08 and therefore suggestive rather
+  than settled. The medians hide it: all three sit near 150 views, and the whole
+  difference is in the tail. Slot assignment comes from queue position rather
+  than from anything about the video, so the groups are close to randomly
+  assigned with respect to content, which is rare enough here to be worth using.
+  Re-run `--cohorts slot` rather than trusting these numbers; they are here to
+  say what to look at, not to be the answer.
 - **`--check` reporting DRIFT is not cosmetic.** The venv it names is the one
   that renders tonight, and the failure above is what drift actually looked
   like from the outside: a warning in a log nobody reads, on a run that exits

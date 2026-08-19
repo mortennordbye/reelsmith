@@ -138,6 +138,38 @@ async def test_the_keyword_must_be_one_word(client):
     assert response.status_code == 422
 
 
+async def test_the_recipe_travels_from_the_render_host_to_the_queue(client):
+    """The field exists so the numbers can be grouped by what wrote the script.
+
+    Asserted at the API boundary rather than only in the database, because
+    every other way of knowing which code made a video has already been tried
+    and failed: `recipe.json` sits on whichever machine rendered, and the
+    publish date is days off from the render date once the queue is a few deep.
+    """
+    http, app = client
+    await queue(http, recipe="abc1234.deadbeef")
+
+    body = (await http.get("/api/queue", headers=AUTH)).json()
+
+    assert body["queue"][0]["recipe"] == "abc1234.deadbeef"
+
+
+async def test_a_client_that_sends_no_recipe_is_taken_anyway(client):
+    """An older Mac, or `--recover` on a folder made before recipes existed.
+
+    Refusing would strand a video that is already rendered and uploaded, and
+    trading a Reel for a metadata label is the wrong way round. Empty says
+    "nothing recorded what made this", which is different from claiming the
+    current checkout did.
+    """
+    http, _ = client
+    await queue(http)
+
+    body = (await http.get("/api/queue", headers=AUTH)).json()
+
+    assert body["queue"][0]["recipe"] == ""
+
+
 async def test_listing_the_queue(client):
     http, _ = client
     await queue(http)

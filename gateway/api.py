@@ -331,6 +331,8 @@ async def enqueue(request: Request, body: QueueSubmission) -> Queued:
         approved=body.approved,
         slot_override=body.slot_override,
         title=body.title,
+        recipe=body.recipe,
+        hook=body.hook,
     )
     state = db.QUEUE_APPROVED if body.approved else db.QUEUE_DRAFT
     detail = (
@@ -358,6 +360,7 @@ async def list_queue(request: Request, ig_user_id: str | None = None) -> dict:
                 "permalink": row["permalink"],
                 "created_at": row["created_at"],
                 "published_at": row["published_at"],
+                "recipe": row["recipe"],
                 "failure": row["failure"],
             }
             for row in rows
@@ -478,10 +481,27 @@ async def list_results(request: Request, ig_user_id: str | None = None) -> dict:
                 "media_id": row["media_id"],
                 "repo_full_name": row["repo_full_name"],
                 "published_at": row["published_at"],
+                # When the video was made, as against when it went out. The
+                # queue runs days deep, so these are different questions and
+                # only the first one can be grouped by a code change.
+                "created_at": row["created_at"],
+                "recipe": row["recipe"],
+                # The opening that earned or lost the audience. Sent from here
+                # rather than looked up on the asking machine, which is how a
+                # hook that never shipped got reported as the one that scored.
+                "hook": row["hook"],
                 "views": reading["views"],
                 "reach": reading["reach"],
                 "skip_rate": reading["skip_rate"],
                 "avg_watch_ms": reading["avg_watch_ms"],
+                # Already collected and never sent. Skip rate scores the
+                # opening; nothing scored whether the video was worth passing
+                # on, so every analysis this feeds optimised the one metric
+                # that happened to be exposed.
+                "likes": reading["likes"],
+                "comments": reading["comments"],
+                "saved": reading["saved"],
+                "shares": reading["shares"],
             }
         )
     return {"results": results}

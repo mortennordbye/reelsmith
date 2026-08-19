@@ -13,6 +13,8 @@
 
     python main.py --candidates         rank today's repos, generate nothing
     python main.py --covered            list every repo already made into a Reel
+    python main.py --history            every repo we have touched, and when it went out
+    python main.py --cohorts slot       compare the published Reels by slot, or by recipe
     python main.py --results            how the published Reels did, worst hook last
     python main.py --backfill           find Reels posted by hand; --yes measures them
     python main.py --snapshot           record star counts only (run daily)
@@ -27,11 +29,13 @@ one starts, so a failure late in the pipeline never costs you the earlier work.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
+from statistics import median
 from typing import Annotated
 
 import typer
@@ -115,6 +119,14 @@ def run(
         bool,
         typer.Option("--covered", help="List every repo already made into a Reel"),
     ] = False,
+    history: Annotated[
+        bool,
+        typer.Option("--history", help="Every repo we have touched, and when it last went out"),
+    ] = False,
+    cohorts: Annotated[
+        str | None,
+        typer.Option("--cohorts", help="Compare the published Reels by 'recipe' or 'slot'"),
+    ] = None,
     show_results: Annotated[
         bool,
         typer.Option("--results", help="How the published Reels did, worst hook last"),
@@ -230,6 +242,14 @@ def run(
 
     if covered:
         _show_covered(cfg)
+        return
+
+    if history:
+        _show_history(cfg)
+        return
+
+    if cohorts:
+        _show_cohorts(cfg, cohorts)
         return
 
     if show_results:
@@ -805,6 +825,272 @@ def _show_covered(cfg: Settings) -> None:
     )
 
 
+def _show_history(cfg: Settings) -> None:
+    """Every repo this account has touched, and how far it got.
+
+    `--covered` answers "may discovery pick this", which is the scorer's
+    question rather than the one a person asks. This answers "have we talked
+    about this, and when did it go out", which needs three records that live in
+    three places and have never been read together.
+
+    The three are deliberately different strengths and stay distinguishable
+    rather than being flattened into one date. Covered is a commitment and is
+    the only one that blocks discovery, for `repo_cooldown_days`. Rendered is
+    only "a video exists", so a repo can sit there having cost a script, a
+    voiceover and a render and never have gone out. Posted is the last time a
+    Reel about it actually published.
+
+    **Made and Posted are separate columns because they are days apart.** The
+    queue is meant to sit about three days deep, so a Reel published this
+    morning was written from whatever the code said earlier in the week. Read
+    together with Recipe, that is what makes "did the change work" answerable:
+    rows are comparable when their recipes match and not when they do not, and
+    the publish date says nothing about either.
+
+    Publish dates come from the queue rather than from `/api/results`, which
+    omits a post until it has a retention reading. A Reel that went out this
+    afternoon has none, and reporting it as never posted would be wrong in
+    exactly the window someone is most likely to be looking.
+
+    Degrades the way everything else that reads the gateway does. With it
+    unreachable this still prints the local store, which is the half that
+    decides what happens tomorrow morning.
+    """
+    from rich.table import Table
+
+    # Merged in memory, not written back. `data/used_repos.json` is one file on
+    # one laptop and the nightly marks its repos on the render host, so reading
+    # the local store alone reports a repo this account committed to days ago as
+    # never covered. Discovery already folds the two together with
+    # `_sync_covered`; a listing command has no business writing the store as a
+    # side effect of being run, so it does the same merge and keeps it.
+    #
+    # The earlier date wins on a conflict, matching `UsedRepos.merge`: taking the
+    # later one would extend the cooldown by however long the two disagree.
+    covered = dict(scraper.covered_repos(cfg))
+    for name, when in gateway.fetch_covered(cfg).items():
+        day = when[:10]
+        if day and (name not in covered or day < covered[name]):
+            covered[name] = day
+    rendered = gateway.fetch_rendered(cfg)
+    readings = {
+        row["repo_full_name"]: row
+        for row in gateway.fetch_results(cfg)
+        if row.get("repo_full_name")
+    }
+
+    # Last publish wins per repo. The cooldown stops two inside its window, but
+    # `--unmark` and a re-post can put one either side of it.
+    posts: dict[str, dict] = {}
+    for row in gateway.fetch_queue(cfg) or []:
+        name, when = row.get("repo_full_name"), row.get("published_at")
+        if not name or not when:
+            continue
+        if when > (posts.get(name, {}).get("published_at") or ""):
+            posts[name] = row
+    # A Reel put out with `--publish` never made a queue row, so the readings
+    # are the only trace it left. Fewer columns is worth far more than absence.
+    for name, row in readings.items():
+        if name not in posts:
+            posts[name] = row
+
+    names = sorted(set(covered) | set(rendered) | set(posts))
+    if not names:
+        console.print("[dim]Nothing touched yet.[/]")
+        return
+
+    def _day(value: str | None) -> str:
+        return (value or "")[:10]
+
+    def _latest(name: str) -> str:
+        return max(
+            _day(covered.get(name)),
+            _day(rendered.get(name)),
+            _day((posts.get(name) or {}).get("published_at")),
+        )
+
+    names.sort(key=_latest, reverse=True)
+
+    today = datetime.now(UTC).date()
+    table = Table(title=f"Repositories touched ({len(names)})", header_style="bold")
+    table.add_column("Repository", style="cyan", no_wrap=True, overflow="ellipsis")
+    table.add_column("Made")
+    table.add_column("Posted")
+    table.add_column("Views", justify="right")
+    table.add_column("Skip", justify="right")
+    table.add_column("Recipe", style="dim")
+    table.add_column("Status")
+
+    posted_count = 0
+    for name in names:
+        post = posts.get(name) or {}
+        reading = readings.get(name) or {}
+        published = _day(post.get("published_at"))
+        if published:
+            posted_count += 1
+
+        used_on = covered.get(name)
+        if used_on:
+            left = cfg.repo_cooldown_days - (today - date.fromisoformat(used_on)).days
+            status = f"[yellow]{left}d left[/]" if left > 0 else "[green]free again[/]"
+        elif name in rendered:
+            # Rendered and never committed to, so nothing blocks it and a video
+            # may be sitting on a disk having cost a full run.
+            status = "[dim]not committed[/]"
+        else:
+            status = ""
+
+        # The commit half only. The digest after it separates two runs from one
+        # checkout with a prompt edited in between, which matters to `--results`
+        # and is more than a column this wide can carry.
+        recipe = str(post.get("recipe") or reading.get("recipe") or "").split(".")[0]
+        skip, views = reading.get("skip_rate"), reading.get("views")
+        table.add_row(
+            name,
+            _day(post.get("created_at") or rendered.get(name)),
+            published,
+            f"{int(views):,}" if views else "",
+            f"{float(skip):.1f}%" if skip else "",
+            recipe or ("[dim]before[/]" if published else ""),
+            status,
+        )
+
+    console.print(table)
+
+    stranded = sum(1 for n in names if n in rendered and n not in posts)
+    console.print(
+        f"[dim]{posted_count} of {len(names)} have published. {stranded} have a render "
+        f"and no post, which is a draft, a queued post waiting for its slot, or one "
+        f"that failed quietly.\n"
+        f"Made is when the video reached the queue, Posted is when its slot fired, and "
+        f"the gap between them is how deep the queue was. Two rows are only comparable "
+        f"when their recipes match.[/]"
+    )
+
+
+def _show_cohorts(cfg: Settings, dimension: str) -> None:
+    """Group the published Reels by something and compare the groups.
+
+    Every number in `IDEAS.md` was computed by hand in a session and pasted in,
+    and `CLAUDE.md` already names what that costs: a fact about the numbers goes
+    stale silently and the only symptom is worse decisions. This recomputes.
+
+    Two dimensions, because they are the two questions the account keeps asking
+    and neither could be answered from anything the pipeline printed.
+
+    `recipe` is "did the change work". Rows are comparable when their recipes
+    match and not when they do not, and until the recipe travelled with the
+    video there was no way to group by it. Publish dates cannot stand in: the
+    queue runs days deep, so eight changes landing in one evening are
+    indistinguishable from the four videos already queued when they landed.
+
+    `slot` is "does it matter when it goes out". The slot a post lands in is
+    decided by queue position rather than by anything about the video, so the
+    groups are close to randomly assigned with respect to content, which is
+    rare enough here to be worth using.
+
+    **Read the breakouts column, not the median.** Eight of the first 58 posts
+    carried a third of all views, so the median describes the post that failed
+    and the tail is where everything actually is. Two cohorts can have identical
+    medians and completely different value.
+
+    Ages are printed because a young cohort has had less time to accumulate
+    views, which flatters skip rate and punishes views. A comparison across
+    cohorts of very different age is not one.
+    """
+    from rich.table import Table
+
+    rows = [r for r in gateway.fetch_results(cfg) if r.get("skip_rate")]
+    if not rows:
+        console.print(
+            "[dim]No results yet. Either the gateway is unreachable, or no post has a "
+            "retention reading, which takes a few hours after publishing.[/]"
+        )
+        return
+
+    today = datetime.now(UTC)
+
+    def _slot(row: dict) -> str:
+        """The hour a post went out, not the minute.
+
+        The scheduler jitters each slot by an offset derived from the slot id
+        and the date, so no two posts share a publish time and grouping on the
+        exact stamp gives 43 cohorts of one. The hour is the slot. A slot that
+        straddles an hour boundary splits into two rows, which is visible and
+        honest; clustering nearby times would be guessing at the schedule from
+        its output.
+        """
+        stamp = row.get("published_at") or ""
+        with contextlib.suppress(ValueError):
+            return f"{datetime.fromisoformat(stamp).astimezone(UTC):%H}:00 UTC"
+        return "unknown"
+
+    def _recipe(row: dict) -> str:
+        return str(row.get("recipe") or "") or "before recipes"
+
+    key = {"slot": _slot, "recipe": _recipe}.get(dimension)
+    if key is None:
+        console.print(
+            f"[bold red]No such dimension:[/] {dimension} [dim](recipe or slot)[/]"
+        )
+        raise typer.Exit(1)
+
+    cohorts: dict[str, list[dict]] = {}
+    for row in rows:
+        cohorts.setdefault(key(row), []).append(row)
+
+    table = Table(
+        title=f"Cohorts by {dimension} ({len(rows)} posts with readings)",
+        header_style="bold",
+    )
+    table.add_column(dimension.title(), style="cyan", no_wrap=True)
+    table.add_column("n", justify="right")
+    table.add_column("Skip", justify="right")
+    table.add_column("Views", justify="right")
+    table.add_column("Best", justify="right")
+    table.add_column("Over 500", justify="right")
+    table.add_column("Under 60%", justify="right")
+    table.add_column("Age", justify="right")
+
+    # Slots read in time order, because the question is about the shape of the
+    # day. Recipes have no meaningful order, so the biggest cohort leads.
+    order = (
+        (lambda kv: kv[0]) if dimension == "slot" else (lambda kv: (-len(kv[1]), kv[0]))
+    )
+    for name, group in sorted(cohorts.items(), key=order):
+        skips = [float(r["skip_rate"]) for r in group]
+        views = [int(r.get("views") or 0) for r in group]
+        ages = []
+        for row in group:
+            with contextlib.suppress(ValueError):
+                published = datetime.fromisoformat(row.get("published_at") or "")
+                ages.append((today - published).days)
+        # The threshold the whole file is judged against: under it, median views
+        # jumped several fold. Counted rather than averaged, because it is a
+        # question about how often a post clears a bar.
+        good = sum(1 for s in skips if s < 60)
+        big = sum(1 for v in views if v > 500)
+        table.add_row(
+            name,
+            str(len(group)),
+            f"{median(skips):.1f}%",
+            f"{median(views):,.0f}",
+            f"{max(views):,}",
+            f"{big} ({100 * big / len(group):.0f}%)",
+            f"{good} ({100 * good / len(group):.0f}%)",
+            f"{median(ages):.0f}d" if ages else "",
+        )
+
+    console.print(table)
+    console.print(
+        "[dim]Skip is the share who scrolled past inside the first three seconds. "
+        "Under 60% is the threshold below which median views jumped several fold, "
+        "and Over 500 is how often a post actually reached anybody.\n"
+        "n is small here. Treat a gap of a few points as noise, and a cohort younger "
+        "than the ones it is next to as not yet comparable on views.[/]"
+    )
+
+
 def _show_results(cfg: Settings) -> None:
     """What the published Reels did, worst opening last.
 
@@ -1076,6 +1362,19 @@ def _enqueue_run(cfg: Settings, run_dir: Path, *, approved: bool) -> None:
     with console.status("Uploading the cover..."):
         cover_url = gateway.upload_media(run_dir / "cover.png", run_dir.name, cfg)
 
+    # Read from the folder rather than recomputed, because this can run days
+    # after the render and `--recover` runs later still.
+    recipe = results_mod.read_recipe(run_dir)
+    # The hook goes with it, so the feedback loop reads the opening that was on
+    # this video rather than looking one up in a build folder that may belong to
+    # a different render on a different machine.
+    hook_path = run_dir / "script.json"
+    hook = (
+        VideoScript.model_validate_json(hook_path.read_text()).hook
+        if hook_path.exists()
+        else ""
+    )
+
     keyword = gateway.keyword_for(repo.full_name, cfg) if repo else cfg.gateway_keyword
     result = gateway.enqueue(
         video_url.rsplit("/", 1)[-1],
@@ -1086,6 +1385,8 @@ def _enqueue_run(cfg: Settings, run_dir: Path, *, approved: bool) -> None:
         cover_name=cover_url.rsplit("/", 1)[-1] if cover_url else None,
         repo_full_name=repo.full_name if repo else None,
         approved=approved,
+        recipe=recipe,
+        hook=hook,
     )
     if result is None:
         console.print(
@@ -1102,6 +1403,8 @@ def _enqueue_run(cfg: Settings, run_dir: Path, *, approved: bool) -> None:
         caption=caption,
         repo_full_name=repo.full_name if repo else None,
         approved=approved,
+        recipe=recipe,
+        hook=hook,
     )
 
     queue_receipt.write_text(
@@ -1178,6 +1481,8 @@ def _enqueue_youtube(
     caption: str,
     repo_full_name: str | None,
     approved: bool,
+    recipe: str = "",
+    hook: str = "",
 ) -> dict | None:
     """Queue the same render on the YouTube channel, if one is configured.
 
@@ -1215,6 +1520,8 @@ def _enqueue_youtube(
         approved=approved,
         account=cfg.youtube_channel_id,
         title=title,
+        recipe=recipe,
+        hook=hook,
     )
     if result is None:
         console.print(

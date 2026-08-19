@@ -117,6 +117,16 @@ class QueueSubmission(BaseModel):
     keyword: str = "send"
     link: str = Field(min_length=1)
     repo_full_name: str | None = None
+    # The checkout and settings that wrote this script, from
+    # `pipeline/results.py`. Optional, because a client that does not send one
+    # is saying the video exists and nothing recorded what made it, which is
+    # different from claiming it was made by the current code.
+    recipe: str = Field(default="", max_length=120)
+    # What was on screen for the first three seconds, which is the thing
+    # `skip_rate` scores. Capped well above the scriptwriter's own 60 character
+    # limit, because a cap that rejects is a queue refusing a rendered video
+    # over a label.
+    hook: str = Field(default="", max_length=300)
     # Off by default. See db.QUEUE_DRAFT for why arming is a separate act.
     approved: bool = False
     # Pins this post to a wall-clock time instead of the next free slot.

@@ -385,6 +385,8 @@ def enqueue(
     client: httpx.Client | None = None,
     account: str | None = None,
     title: str = "",
+    recipe: str = "",
+    hook: str = "",
 ) -> dict | None:
     """Hand a rendered video to the gateway's schedule. None means it did not take.
 
@@ -395,6 +397,17 @@ def enqueue(
     independently, and one failing must not take the other with it.
 
     `title` is required by YouTube and meaningless on Instagram.
+
+    `recipe` travels with the video because it cannot be reconstructed later.
+    It fingerprints the checkout and the settings that wrote the script, and it
+    is written into the run folder on whichever machine rendered. The numbers
+    live on the gateway, so without sending it the only join is the repo name
+    against a build folder on the machine that happens to be asking, which is
+    wrong rather than missing once two machines render.
+
+    `hook` travels for the same reason and matters more. It is what the feedback
+    loop reads back into the next prompt, so looking it up on the asking machine
+    means the loop can argue from an opening that was never on a video.
 
     The odd one out in this module: everything else here shrugs on failure
     because a publish has already happened and the video exists either way.
@@ -420,6 +433,8 @@ def enqueue(
         "repo_full_name": repo_full_name,
         "approved": approved,
         "title": title,
+        "recipe": recipe,
+        "hook": hook,
     }
     try:
         with client or httpx.Client(timeout=_TIMEOUT) as http:

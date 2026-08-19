@@ -32,7 +32,10 @@ async def conn(cfg):
     await connection.close()
 
 
-async def publish_one(conn, *, media_id: str, repo: str = "astral-sh/uv", account=ACCOUNT) -> int:
+async def publish_one(
+    conn, *, media_id: str, repo: str = "astral-sh/uv", account=ACCOUNT,
+    recipe: str = "", hook: str = "",
+) -> int:
     queued_id = await db.enqueue_post(
         conn,
         ig_user_id=account,
@@ -43,6 +46,8 @@ async def publish_one(conn, *, media_id: str, repo: str = "astral-sh/uv", accoun
         link="https://github.com/astral-sh/uv",
         repo_full_name=repo,
         approved=True,
+        recipe=recipe,
+        hook=hook,
     )
     await db.mark_queue_published(
         conn, queued_id, media_id=media_id, permalink=f"https://ig/{media_id}"
@@ -358,6 +363,62 @@ async def test_a_hand_published_reel_is_swept_for_insights_too(conn, cfg):
 
     assert await insights.refresh_once(conn, graph, cfg, metrics) == 1
     assert (await db.latest_insights(conn, ACCOUNT))["by-hand"]["views"] == 1500
+
+
+async def test_the_recipe_that_wrote_a_video_survives_to_the_numbers(conn, cfg):
+    """The join that makes "did the change work" answerable at all.
+
+    The fingerprint is recorded on the machine that renders and the numbers land
+    here, so without carrying it the only join is the repo name against a build
+    folder on whichever machine is asking. Dates cannot stand in: the queue runs
+    days deep by design, so a Reel published this morning was written from
+    whatever the code said last week.
+    """
+    await publish_one(conn, media_id="stamped", recipe="abc1234.deadbeef")
+
+    listed = await db.published_media(conn, ACCOUNT)
+
+    assert listed[0]["recipe"] == "abc1234.deadbeef"
+    # The queue row is also the only record of when the video was made, as
+    # against when its slot fired.
+    assert listed[0]["created_at"]
+
+
+async def test_the_hook_that_ran_survives_to_the_numbers(conn, cfg):
+    """The half with the most at stake.
+
+    The loop looked the hook up by repo name in a local build folder, so on a
+    machine that did not render the video it read an opening that was never on
+    one and fed it into the prompt that writes the next script.
+    """
+    await publish_one(conn, media_id="stamped", hook="It reads 40 pages in one pass")
+
+    listed = await db.published_media(conn, ACCOUNT)
+
+    assert listed[0]["hook"] == "It reads 40 pages in one pass"
+
+
+async def test_a_video_queued_before_recipes_reports_no_recipe_rather_than_a_guess(
+    conn, cfg
+):
+    """Empty means "before recipes" and is comparable to nothing, which is
+    honest. A hand-published Reel has no queue row at all and lands the same
+    way."""
+    await publish_one(conn, media_id="from-queue")
+    await db.register_post(
+        conn, media_id="by-hand", ig_user_id=ACCOUNT,
+        keyword="SKILLS", link="https://github.com/mattpocock/skills",
+    )
+
+    listed = {r["media_id"]: r for r in await db.published_media(conn, ACCOUNT)}
+
+    assert listed["from-queue"]["recipe"] == ""
+    assert listed["by-hand"]["recipe"] == ""
+    assert listed["from-queue"]["hook"] == ""
+    assert listed["by-hand"]["hook"] == ""
+    # Nothing here knows when a hand-published Reel was made, and saying so is
+    # better than reporting the moment somebody registered it.
+    assert listed["by-hand"]["created_at"] is None
 
 
 async def test_a_reel_in_both_tables_is_listed_once(conn, cfg):

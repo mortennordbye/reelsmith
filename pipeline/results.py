@@ -50,6 +50,14 @@ class PastPost:
     avg_watch_s: float
     views: int
     recipe: str = ""
+    # Already collected by the insights sweep and never sent until now. Skip
+    # rate scores the opening; nothing scored whether the video was worth
+    # passing on, which is the input a third party claims outweighs a like
+    # several times over. None rather than 0 for a gateway too old to send
+    # them, because a zero share count reads as a video nobody passed on and
+    # "not measured" is a different claim.
+    saved: int | None = None
+    shares: int | None = None
 
     @property
     def line(self) -> str:
@@ -129,6 +137,23 @@ def write_recipe(run_dir: Path, cfg: Settings) -> str:
         + "\n"
     )
     return value
+
+
+def read_recipe(run_dir: Path) -> str:
+    """The recipe recorded when this run was made, or empty if none was.
+
+    Read rather than recomputed. `--enqueue` can run days after the render and
+    `--recover` sweeps two days of folders, so calling `recipe()` here would
+    stamp the video with the checkout that queued it instead of the one that
+    wrote it, which is the exact confusion this whole fingerprint exists to
+    remove. A folder made before recipes existed has no file and gets "".
+    """
+    path = run_dir / "recipe.json"
+    if not path.exists():
+        return ""
+    with contextlib.suppress(OSError, json.JSONDecodeError):
+        return str(json.loads(path.read_text()).get("recipe") or "")
+    return ""
 
 
 def _runs_by_repo(build_dir: Path) -> dict[str, tuple[str, str]]:
@@ -217,9 +242,22 @@ def past_posts(
     for row in readings:
         run = runs.get(row.get("repo_full_name") or "")
         skip = row.get("skip_rate")
-        if not run or not skip:
+        if not skip:
             continue
-        hook, made_with = run
+        # What the gateway sends was recorded by the machine that rendered, so
+        # it wins over anything found here. The local lookup is by repo name
+        # against a build folder, which on a machine that did not render this
+        # video answers with a run that was never on it, confidently: the hook
+        # it returned for `ultraworkers/claw-code` came from a script written
+        # eleven days earlier that was never rendered at all.
+        #
+        # It is also what lets a post reach the loop from anywhere. Requiring a
+        # local folder to produce a hook silently dropped every Reel rendered on
+        # the pod, which on this laptop was thirteen of them.
+        hook = str(row.get("hook") or "") or (run[0] if run else "")
+        made_with = str(row.get("recipe") or "") or (run[1] if run else "")
+        if not hook:
+            continue
         out.append(
             PastPost(
                 repo_full_name=row["repo_full_name"],
@@ -228,6 +266,8 @@ def past_posts(
                 avg_watch_s=float(row.get("avg_watch_ms") or 0) / 1000,
                 views=int(row.get("views") or 0),
                 recipe=made_with,
+                saved=None if row.get("saved") is None else int(row["saved"]),
+                shares=None if row.get("shares") is None else int(row["shares"]),
             )
         )
 

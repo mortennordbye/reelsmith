@@ -219,6 +219,139 @@ def test_a_post_carries_the_recipe_that_wrote_it(cfg, build, monkeypatch):
     assert results.past_posts(cfg, build_dir=build)[0].recipe == "abc1234.deadbeef"
 
 
+def test_the_gateway_hook_beats_the_one_found_on_this_disk(cfg, build, monkeypatch):
+    """The hook that was on the video wins over the one lying next to its name.
+
+    The local lookup is by repo name against a build folder, and a repo usually
+    has more than one. On the machine that did not render it that answers with
+    a run which was never on a video: the Mac holds a `claw-code` script written
+    eleven days before the pod built and queued that repo, and the loop was told
+    its hook scored 63.6 percent.
+
+    Worse than the same mistake on the recipe, which only misleads somebody
+    reading a table. This one is fed into the prompt that writes tomorrow, so
+    the loop argues from evidence that does not exist.
+    """
+    run_folder(build, "2026-08-01", "a-one", repo="a/one", hook="never shipped")
+    row = result("a/one", 64.2) | {"hook": "the one that actually ran"}
+    monkeypatch.setattr(results.gateway, "fetch_results", lambda _cfg: [row])
+
+    assert results.past_posts(cfg, build_dir=build)[0].hook == "the one that actually ran"
+
+
+def test_a_post_with_no_run_folder_here_still_reaches_the_loop(cfg, build, monkeypatch):
+    """Rendered on the pod, measured on the gateway, invisible on the laptop.
+
+    Requiring a local folder to produce a hook dropped every Reel this machine
+    did not render, which was thirteen of fifty eight. They were the most recent
+    thirteen, so the loop was blind to exactly the posts worth learning from.
+    """
+    build.mkdir(parents=True)
+    row = result("a/one", 64.2) | {"hook": "made somewhere else"}
+    monkeypatch.setattr(results.gateway, "fetch_results", lambda _cfg: [row])
+
+    got = results.past_posts(cfg, build_dir=build)
+
+    assert [p.hook for p in got] == ["made somewhere else"]
+
+
+def test_a_post_nobody_can_name_a_hook_for_is_left_out(cfg, build, monkeypatch):
+    """A row with no hook on either side carries no evidence. Counting it would
+    put an empty opening in the block as though it were one that scored."""
+    build.mkdir(parents=True)
+    monkeypatch.setattr(results.gateway, "fetch_results", lambda _cfg: [result("a/one", 64.2)])
+
+    assert results.past_posts(cfg, build_dir=build) == []
+
+
+def test_saves_and_shares_come_through_when_the_gateway_sends_them(
+    cfg, build, monkeypatch
+):
+    """Collected since the insights sweep existed and never sent, so every
+    analysis here optimised the one metric that happened to be exposed."""
+    run_folder(build, "2026-08-01", "a-one", repo="a/one", hook="h")
+    row = result("a/one", 64.2) | {"saved": 20, "shares": 9}
+    monkeypatch.setattr(results.gateway, "fetch_results", lambda _cfg: [row])
+
+    post = results.past_posts(cfg, build_dir=build)[0]
+
+    assert (post.saved, post.shares) == (20, 9)
+
+
+def test_an_older_gateway_leaves_saves_and_shares_unmeasured_not_zero(
+    cfg, build, monkeypatch
+):
+    """Zero shares reads as a video nobody passed on. "Not measured" is a
+    different claim and the only true one against a gateway that cannot send
+    the field."""
+    run_folder(build, "2026-08-01", "a-one", repo="a/one", hook="h")
+    monkeypatch.setattr(results.gateway, "fetch_results", lambda _cfg: [result("a/one", 64.2)])
+
+    post = results.past_posts(cfg, build_dir=build)[0]
+
+    assert post.saved is None
+    assert post.shares is None
+
+
+def test_the_gateway_recipe_beats_the_one_found_on_this_disk(cfg, build, monkeypatch):
+    """The recorded recipe wins over the guessed one, because it was recorded by
+    the machine that rendered.
+
+    The local join is by repo name against a build folder. On a machine that did
+    not make this video that answers with a checkout which never wrote it, and
+    it answers confidently: the Mac holds an old run for a repo the render host
+    rebuilt and queued days later. Wrong is worse than missing here, since the
+    whole point of the fingerprint is deciding which rows are comparable.
+    """
+    run_folder(build, "2026-08-01", "a-one", repo="a/one", hook="h")
+    (build / "2026-08-01" / "a-one" / "recipe.json").write_text(
+        json.dumps({"recipe": "staleaa.11111111"})
+    )
+    row = result("a/one", 64.2) | {"recipe": "fresh99.22222222"}
+    monkeypatch.setattr(results.gateway, "fetch_results", lambda _cfg: [row])
+
+    assert results.past_posts(cfg, build_dir=build)[0].recipe == "fresh99.22222222"
+
+
+def test_a_gateway_too_old_to_send_a_recipe_falls_back_to_this_disk(
+    cfg, build, monkeypatch
+):
+    """An older gateway sends no `recipe` key at all, which must cost the local
+    answer nothing. Same defensiveness as `PastPost` reading a missing metric as
+    absent rather than as zero."""
+    run_folder(build, "2026-08-01", "a-one", repo="a/one", hook="h")
+    (build / "2026-08-01" / "a-one" / "recipe.json").write_text(
+        json.dumps({"recipe": "local11.33333333"})
+    )
+    monkeypatch.setattr(results.gateway, "fetch_results", lambda _cfg: [result("a/one", 64.2)])
+
+    assert results.past_posts(cfg, build_dir=build)[0].recipe == "local11.33333333"
+
+
+def test_the_recipe_sent_at_enqueue_is_the_one_the_render_recorded(cfg, tmp_path):
+    """Read from the folder, never recomputed.
+
+    `--enqueue` can run days after the render and `--recover` sweeps two days of
+    folders, so recomputing here would stamp the video with the checkout that
+    queued it rather than the one that wrote it. That is precisely the confusion
+    the fingerprint exists to remove, so it would be the worst possible place to
+    reintroduce it.
+    """
+    (tmp_path / "recipe.json").write_text(json.dumps({"recipe": "older11.44444444"}))
+
+    assert results.read_recipe(tmp_path) == "older11.44444444"
+    assert results.read_recipe(tmp_path / "nothing-here") == ""
+
+
+def test_an_unreadable_recipe_file_is_no_recipe_rather_than_a_crash(tmp_path):
+    """A truncated write must cost the stamp and not the enqueue. The video is
+    already rendered and uploaded by then, and refusing to queue it over a
+    metadata file would trade a Reel for a label."""
+    (tmp_path / "recipe.json").write_text("{not json")
+
+    assert results.read_recipe(tmp_path) == ""
+
+
 def test_a_run_made_before_recipes_existed_says_nothing_rather_than_guessing(
     cfg, build, monkeypatch
 ):
