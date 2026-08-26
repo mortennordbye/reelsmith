@@ -112,6 +112,11 @@ class Metrics:
             "reelsmith_queue_depth", "Posts in the queue, by state and account",
             ["state", "account"], registry=reg,
         )
+        self.stale_claims = Gauge(
+            "reelsmith_stale_claims",
+            "Rows still claimed long after any publish attempt would have ended",
+            ["account"], registry=reg,
+        )
         self.insights_fetched = Counter(
             "reelsmith_insights_fetched_total",
             "Per-media insight readings stored",

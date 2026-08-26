@@ -7,6 +7,7 @@ be impossible to steer.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import httpx
@@ -395,6 +396,47 @@ async def test_an_account_that_has_never_queued_anything_still_gets_a_series(cli
     body = (await http.get("/metrics")).text
 
     assert f'reelsmith_queue_depth{{account="{CHANNEL}",state="approved"}} 0.0' in body
+
+
+async def test_an_abandoned_claim_reaches_a_gauge(client):
+    """The one queue state that used to say nothing about itself.
+
+    A process dying between the container and `media_publish` leaves the row
+    `claimed` with no failure, so no counter moved and nothing alerted. Row 55
+    sat there nine days.
+    """
+    http, app = client
+    queued_id = await db.enqueue_post(
+        app.state.db, account_id=ACCOUNT, video_name="a.mp4", cover_name=None,
+        caption="", keyword="UV", link=LINK, repo_full_name="astral-sh/uv",
+        approved=True,
+    )
+    await db.claim_queued(app.state.db, queued_id)
+    stale = db.iso(db.now() - db.CLAIM_STALE_AFTER - timedelta(minutes=1))
+    await app.state.db.execute(
+        "UPDATE queued_posts SET claimed_at = ? WHERE id = ?", (stale, queued_id)
+    )
+    await app.state.db.commit()
+
+    body = (await http.get("/metrics")).text
+
+    assert f'reelsmith_stale_claims{{account="{ACCOUNT}"}} 1.0' in body
+
+
+async def test_a_claim_still_in_flight_is_not_reported_as_stale(client):
+    """An hour is generous for one upload and a poll, but a fresh claim is a
+    publish in progress and reporting it would cry wolf on every tick."""
+    http, app = client
+    queued_id = await db.enqueue_post(
+        app.state.db, account_id=ACCOUNT, video_name="a.mp4", cover_name=None,
+        caption="", keyword="UV", link=LINK, repo_full_name="astral-sh/uv",
+        approved=True,
+    )
+    await db.claim_queued(app.state.db, queued_id)
+
+    body = (await http.get("/metrics")).text
+
+    assert f'reelsmith_stale_claims{{account="{ACCOUNT}"}} 0.0' in body
 
 
 async def test_a_row_leaving_failed_takes_the_gauge_back_down(client):
