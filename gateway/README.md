@@ -189,12 +189,28 @@ GATEWAY_SLOTS: |
 `account` names the destination, and is how one config holds more than one.
 A line without it belongs to `GATEWAY_SLOTS_ACCOUNT`, or to the single
 registered Instagram account when that is unambiguous; when it is not, those
-lines are dropped with a warning and the ones naming an account still apply,
+lines are dropped with an error and the ones naming an account still apply,
 because applying the unambiguous half beats applying nothing.
+
+**Put `account=` on every line before a second account of any platform
+exists.** The resolve-by-count above is what a second Instagram account
+breaks, and until 2026-08-26 breaking it deleted the first account's schedule
+at boot. See "Removing an account's lines" below and F0 in
+`docs/multi-destination-audit.md`.
 
 Removing an account's lines removes its slots. That is deliberate rather than
 incidental: config is the truth for these, and a channel deleted from it that
 kept publishing on a schedule nobody can read any more is the worse failure.
+
+**Except while a line is unresolved, when nothing is removed from anywhere.**
+The sweep reads an account's absence from the config as an instruction to
+delete its rows, and an unresolved line is an account this code could not
+name rather than an account nobody named. Those want opposite actions and the
+sweep cannot tell them apart, so it stops: an account whose lines really were
+deleted goes on posting until the config is fixed, which is recoverable and
+visible on the Queue page, where deleting a working schedule at boot is
+neither. The log says which happened, and a removal now says how many rows it
+took rather than reporting itself as `Applied 0 slot(s)`.
 
 Applied at startup and owned by config from then on: these rows are replaced on
 every boot, so the admin UI shows them as `config` and does not offer a delete
