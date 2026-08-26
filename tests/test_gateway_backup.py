@@ -108,8 +108,20 @@ async def test_it_works_while_the_service_connection_is_mid_transaction(conn, cf
     assert path is not None and path.exists()
 
 
-async def test_a_second_copy_in_the_same_second_is_not_an_error(conn, cfg, metrics):
-    """What a restart loop looks like. VACUUM INTO refuses an existing file."""
+async def test_a_second_copy_in_the_same_second_is_not_an_error(
+    conn, cfg, metrics, monkeypatch
+):
+    """What a restart loop looks like. VACUUM INTO refuses an existing file.
+
+    The clock is frozen because the test is about two copies landing in the
+    same second, and left to the real one it depended on both calls happening
+    before the second ticked over. That held while the suite was fast and
+    started failing as it grew, which is the worst kind of red: unrelated to
+    the change in front of it and reproducible only sometimes.
+    """
+    moment = db.now()
+    monkeypatch.setattr(db, "now", lambda: moment)
+
     first = await backup.backup_once(cfg, metrics)
 
     assert first is not None
