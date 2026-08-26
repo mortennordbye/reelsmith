@@ -53,6 +53,8 @@ CREATOR_INFO_URL = f"{BASE}/v2/post/publish/creator_info/query/"
 DIRECT_INIT_URL = f"{BASE}/v2/post/publish/video/init/"
 INBOX_INIT_URL = f"{BASE}/v2/post/publish/inbox/video/init/"
 STATUS_URL = f"{BASE}/v2/post/publish/status/fetch/"
+VIDEO_LIST_URL = f"{BASE}/v2/video/list/"
+VIDEO_QUERY_URL = f"{BASE}/v2/video/query/"
 
 # One `title` field carrying the ask, the link and the hashtags together. Not
 # Instagram's caption and not YouTube's title plus description, which is why
@@ -425,3 +427,115 @@ async def await_publish(
         f"{last or 'unknown'}",
         publish_started=True,
     )
+
+
+# --- What came back, which is less than either other platform gives ----------
+#
+# There is no retention metric and no substitute for one. `/v2/video/query/`
+# returns view, like, comment and share counts and nothing about watch time,
+# completion or anything a three second skip could be computed from. So the
+# rule `PLAN.md` H6 set for YouTube holds here without argument: these numbers
+# are worth storing and showing, and are never fed to the prompt that writes
+# tomorrow's script.
+#
+# One shape TikTok adds that Meta never needed: **the `publish_id` returned at
+# post time is not a video id.** Getting from one to the other means listing
+# the account's recent videos and matching, which is what `list_videos` is for.
+
+VIDEO_FIELDS = "id,create_time,title,share_url,view_count,like_count,comment_count,share_count"
+
+
+@dataclass(frozen=True)
+class Video:
+    """One of the account's own posts, as `/v2/video/list/` describes it."""
+
+    video_id: str
+    title: str = ""
+    share_url: str = ""
+    create_time: int = 0
+    views: int = 0
+    likes: int = 0
+    comments: int = 0
+    shares: int = 0
+
+    @classmethod
+    def parse(cls, row: dict) -> Video:
+        return cls(
+            video_id=str(row.get("id") or ""),
+            title=str(row.get("title") or ""),
+            share_url=str(row.get("share_url") or ""),
+            create_time=int(row.get("create_time") or 0),
+            views=int(row.get("view_count") or 0),
+            likes=int(row.get("like_count") or 0),
+            comments=int(row.get("comment_count") or 0),
+            shares=int(row.get("share_count") or 0),
+        )
+
+
+async def list_videos(
+    http: httpx.AsyncClient, *, token: str, limit: int = 20
+) -> list[Video]:
+    """The account's own recent videos, newest first.
+
+    Twenty at a time, which is the API's page size and comfortably more than a
+    queue that publishes a few a day produces between sweeps. Not paged: a post
+    that has fallen off the first page has been live long enough that its
+    numbers have settled, and asking for more would spend calls to re-read
+    videos nothing is going to look at again.
+    """
+    try:
+        response = await http.post(
+            VIDEO_LIST_URL,
+            params={"fields": VIDEO_FIELDS},
+            headers={
+                "authorization": f"Bearer {token}",
+                "content-type": "application/json; charset=UTF-8",
+            },
+            json={"max_count": limit},
+            timeout=30,
+        )
+    except httpx.HTTPError as exc:
+        raise PublishError(f"Could not list the account's videos: {exc}") from exc
+
+    payload = response.json() if response.content else {}
+    code, message = _error(payload)
+    if code:
+        raise PublishError(f"Video list refused: {code} {message}".strip(), code=code)
+
+    rows = (payload.get("data") or {}).get("videos") or []
+    return [Video.parse(row) for row in rows]
+
+
+async def query_videos(
+    http: httpx.AsyncClient, *, token: str, video_ids: list[str]
+) -> dict[str, Video]:
+    """Counts for videos already known by id, keyed by id.
+
+    Twenty ids per request, which is the documented ceiling. Separate from
+    `list_videos` because the two answer different questions: that one finds
+    a video, this one re-reads a video already found, and a sweep that only
+    listed would lose a post the moment it fell off the first page.
+    """
+    if not video_ids:
+        return {}
+    try:
+        response = await http.post(
+            VIDEO_QUERY_URL,
+            params={"fields": VIDEO_FIELDS},
+            headers={
+                "authorization": f"Bearer {token}",
+                "content-type": "application/json; charset=UTF-8",
+            },
+            json={"filters": {"video_ids": video_ids[:20]}},
+            timeout=30,
+        )
+    except httpx.HTTPError as exc:
+        raise PublishError(f"Could not query videos: {exc}") from exc
+
+    payload = response.json() if response.content else {}
+    code, message = _error(payload)
+    if code:
+        raise PublishError(f"Video query refused: {code} {message}".strip(), code=code)
+
+    rows = (payload.get("data") or {}).get("videos") or []
+    return {video.video_id: video for video in map(Video.parse, rows) if video.video_id}

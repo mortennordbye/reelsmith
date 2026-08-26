@@ -22,8 +22,12 @@
         <div><span class="n">{{ board.posts | length }}</span><span class="l">posts</span></div>
         <div><span class="n">{{ board.totals.views }}</span><span class="l">views</span></div>
         <div><span class="n">{{ board.avg_views }}</span><span class="l">avg views</span></div>
-        <div><span class="n">{{ board.totals.reach }}</span><span class="l">reach</span></div>
-        <div><span class="n">{{ board.totals.saved }}</span><span class="l">saves</span></div>
+        {% if 'reach' in board.columns %}
+          <div><span class="n">{{ board.totals.reach }}</span><span class="l">reach</span></div>
+        {% endif %}
+        {% if 'saved' in board.columns %}
+          <div><span class="n">{{ board.totals.saved }}</span><span class="l">saves</span></div>
+        {% endif %}
         <div><span class="n">{{ board.totals.shares }}</span><span class="l">shares</span></div>
         <div>
           <span class="n">{{ board.totals.links_sent }}</span>
@@ -88,13 +92,18 @@
             {% endif %}
 
             {% if post.insights %}
+              {# Driven by the board's column set rather than written out, so a
+                 platform that does not report reach or saves shows neither
+                 instead of showing them as zero. A zero and an absence are
+                 different claims and this page has room for only one of
+                 them. #}
               <div class="metrics">
-                <div><span class="n">{{ post.insights['views'] }}</span><span class="l">views</span></div>
-                <div><span class="n">{{ post.insights['reach'] }}</span><span class="l">reach</span></div>
-                <div><span class="n">{{ post.insights['likes'] }}</span><span class="l">likes</span></div>
-                <div><span class="n">{{ post.insights['comments'] }}</span><span class="l">comments</span></div>
-                <div><span class="n">{{ post.insights['saved'] }}</span><span class="l">saves</span></div>
-                <div><span class="n">{{ post.insights['shares'] }}</span><span class="l">shares</span></div>
+                {% for key in board.columns %}
+                  <div>
+                    <span class="n">{{ post.insights[key] }}</span>
+                    <span class="l">{{ {'saved': 'saves'}.get(key, key) }}</span>
+                  </div>
+                {% endfor %}
                 {% if post.insights['skip_rate'] %}
                   <div>
                     <span class="n">{{ '%.1f' | format(post.insights['skip_rate']) }}%</span>

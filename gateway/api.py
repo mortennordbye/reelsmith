@@ -549,12 +549,24 @@ async def list_results(
 
     Posts with no reading yet are omitted rather than sent as zeroes. A zero
     skip rate reads as a perfect hook, and the newest post always has one.
+
+    **Instagram only, structurally and on purpose.** `skip_rate` is the share
+    who scrolled past inside three seconds, and it is the one number the loop
+    turns on. YouTube's `averageViewPercentage` scores a whole video and TikTok
+    exposes no retention metric at all, so there is nothing to substitute.
+    Other platforms' numbers belong in the insights table and on the Posts
+    page; feeding them here would corrupt the single measurement everything
+    else is argued from. F5.
+
+    The `skip_rate` filter below already excluded them, because nothing else
+    can produce one. The platform filter says so rather than relying on that,
+    which would be a rule holding by accident.
     """
     conn = request.app.state.db
     account_id = _account(account_id, ig_user_id)
     rows = await db.published_media(conn, account_id)
-    readings = await db.latest_insights(conn, account_id)
-    counts = await db.reading_counts(conn, account_id)
+    readings = await db.latest_insights(conn, account_id, platform=db.PLATFORM_INSTAGRAM)
+    counts = await db.reading_counts(conn, account_id, platform=db.PLATFORM_INSTAGRAM)
 
     results = []
     for row in rows:
