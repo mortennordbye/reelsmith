@@ -221,13 +221,13 @@ async def _scope(request: Request) -> dict[str, Any]:
     """
     accounts = await db.all_accounts(request.app.state.db, platform=None)
     wanted = request.query_params.get("account") or ""
-    selected = next((a for a in accounts if a["ig_user_id"] == wanted), None)
+    selected = next((a for a in accounts if a["account_id"] == wanted), None)
     return {
         "accounts": accounts,
         "selected": selected,
         "visible": [selected] if selected else accounts,
         # Appended to every in-panel link so the choice survives navigation.
-        "query": f"?account={selected['ig_user_id']}" if selected else "",
+        "query": f"?account={selected['account_id']}" if selected else "",
     }
 
 
@@ -276,13 +276,13 @@ async def queue_page(request: Request) -> Any:
 
     boards = []
     for account in scope["visible"]:
-        slots = await db.active_slots(conn, account["ig_user_id"])
+        slots = await db.active_slots(conn, account["account_id"])
         rows = await scheduler.upcoming(
-            conn, cfg, account["ig_user_id"], moment=moment
+            conn, cfg, account["account_id"], moment=moment
         )
         recent = await db.queued_posts(
             conn,
-            ig_user_id=account["ig_user_id"],
+            account_id=account["account_id"],
             states=(db.QUEUE_PUBLISHED, db.QUEUE_FAILED, db.QUEUE_CLAIMED, db.QUEUE_CANCELLED),
             limit=15,
         )
@@ -317,7 +317,7 @@ async def slots_page(request: Request) -> Any:
     moment = db.now()
     boards = []
     for account in scope["visible"]:
-        rows = await db.all_slots(conn, account["ig_user_id"])
+        rows = await db.all_slots(conn, account["account_id"])
         boards.append(
             {
                 "account": account,
@@ -354,10 +354,10 @@ async def posts_page(request: Request) -> Any:
 
     boards = []
     for account in scope["visible"]:
-        ig_user_id = account["ig_user_id"]
-        rows = await db.published_media(conn, ig_user_id)
-        readings = await db.latest_insights(conn, ig_user_id)
-        funnels = await db.per_post_funnel(conn, ig_user_id)
+        account_id = account["account_id"]
+        rows = await db.published_media(conn, account_id)
+        readings = await db.latest_insights(conn, account_id)
+        funnels = await db.per_post_funnel(conn, account_id)
 
         posts, totals = [], dict.fromkeys(
             ("views", "reach", "likes", "comments", "saved", "shares",
@@ -444,9 +444,9 @@ async def insights_page(request: Request) -> Any:
 
     boards = []
     for account in scope["visible"]:
-        ig_user_id = account["ig_user_id"]
-        rows = await db.published_media(conn, ig_user_id)
-        readings = await db.latest_insights(conn, ig_user_id)
+        account_id = account["account_id"]
+        rows = await db.published_media(conn, account_id)
+        readings = await db.latest_insights(conn, account_id)
         # One flat row per post, so the analysis never has to know that the
         # numbers and the hook arrive from two different tables.
         merged = [
@@ -458,7 +458,7 @@ async def insights_page(request: Request) -> Any:
         # How long a Reel takes to stop moving, recomputed from this account's
         # own history rather than asserted. It decides which posts the cohorts
         # may count, so it is measured on the same page that applies it.
-        settling = analysis.maturity(await db.insights_series(conn, ig_user_id))
+        settling = analysis.maturity(await db.insights_series(conn, account_id))
         by_slot = analysis.cohorts(
             merged, key=analysis.slot_of, settled=settling["settled"]
         )
@@ -513,12 +513,12 @@ async def repos_page(request: Request) -> Any:
 
     boards = []
     for account in scope["visible"]:
-        ig_user_id = account["ig_user_id"]
+        account_id = account["account_id"]
         repos = analysis.repo_history(
-            covered=await db.covered_repos(conn, ig_user_id),
-            rendered=await db.rendered_repos_list(conn, ig_user_id),
-            published=await db.published_media(conn, ig_user_id),
-            readings=await db.latest_insights(conn, ig_user_id),
+            covered=await db.covered_repos(conn, account_id),
+            rendered=await db.rendered_repos_list(conn, account_id),
+            published=await db.published_media(conn, account_id),
+            readings=await db.latest_insights(conn, account_id),
         )
         boards.append(
             {
@@ -545,11 +545,11 @@ async def health_page(request: Request) -> Any:
 
     accounts = []
     for account in scope["visible"]:
-        ig_user_id = account["ig_user_id"]
+        account_id = account["account_id"]
         expires = db.parse_iso(account["token_expires_at"])
-        published = await db.published_media(conn, ig_user_id, limit=1)
-        slots = await db.active_slots(conn, ig_user_id)
-        depth = await db.queue_depth(conn, ig_user_id)
+        published = await db.published_media(conn, account_id, limit=1)
+        slots = await db.active_slots(conn, account_id)
+        depth = await db.queue_depth(conn, account_id)
         # Days of posting the queue can still cover. The number that says
         # whether to go and render, and the one a stacked board buried.
         approved = depth.get(db.QUEUE_APPROVED, 0)
@@ -559,11 +559,11 @@ async def health_page(request: Request) -> Any:
                 "expires": expires,
                 "days_left": (expires - moment).total_seconds() / 86_400 if expires else None,
                 "depth": depth,
-                "funnel": await db.funnel(conn, ig_user_id),
+                "funnel": await db.funnel(conn, account_id),
                 "last_published": published[0] if published else None,
                 "slots_per_day": len(slots),
                 "runway_days": (approved / len(slots)) if slots else None,
-                "insights_last": db.parse_iso(await db.last_insight_fetch(conn, ig_user_id)),
+                "insights_last": db.parse_iso(await db.last_insight_fetch(conn, account_id)),
             }
         )
 
@@ -668,7 +668,7 @@ async def move(request: Request, queued_id: int, direction: Annotated[str, Form(
     conn = request.app.state.db
     row = await _require_row(request, queued_id)
     siblings = await db.queued_posts(
-        conn, ig_user_id=row["ig_user_id"], states=(db.QUEUE_DRAFT, db.QUEUE_APPROVED)
+        conn, account_id=row["account_id"], states=(db.QUEUE_DRAFT, db.QUEUE_APPROVED)
     )
     ids = [int(r["id"]) for r in siblings]
     if queued_id not in ids:
@@ -731,7 +731,7 @@ async def edit(
 @router.post("/slots/add")
 async def add_slot(
     request: Request,
-    ig_user_id: Annotated[str, Form()],
+    account_id: Annotated[str, Form()],
     hour: Annotated[int, Form()],
     minute: Annotated[int, Form()] = 0,
     tz: Annotated[str, Form()] = "UTC",
@@ -742,7 +742,7 @@ async def add_slot(
         raise HTTPException(status_code=400, detail="hour or minute out of range")
     await db.add_slot(
         request.app.state.db,
-        ig_user_id=ig_user_id,
+        account_id=account_id,
         hour=hour,
         minute=minute,
         tz=tz.strip() or "UTC",
@@ -766,10 +766,10 @@ async def remove_slot(request: Request, slot_id: int) -> Any:
     return _back(request)
 
 
-@router.post("/accounts/{ig_user_id}/flags")
+@router.post("/accounts/{account_id}/flags")
 async def set_flags(
     request: Request,
-    ig_user_id: str,
+    account_id: str,
     field: Annotated[str, Form()],
     value: Annotated[str, Form()] = "0",
 ) -> Any:
@@ -782,7 +782,7 @@ async def set_flags(
     if field not in ("active", "dm_enabled"):
         raise HTTPException(status_code=400, detail="unknown flag")
     await db.set_account_flags(
-        request.app.state.db, ig_user_id, **{field: value == "1"}
+        request.app.state.db, account_id, **{field: value == "1"}
     )
-    log.warning("Account %s: %s set to %s from the admin UI", ig_user_id, field, value)
+    log.warning("Account %s: %s set to %s from the admin UI", account_id, field, value)
     return _back(request)

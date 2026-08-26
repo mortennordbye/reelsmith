@@ -285,6 +285,11 @@ def _headers(cfg: Settings) -> dict[str, str]:
 def _scope(cfg: Settings) -> dict[str, str]:
     """Which account is asking, for every read that can answer for one.
 
+    Sent as `account_id`, which is what the gateway calls it since F10. A
+    gateway older than that reads `ig_user_id` and ignores this, and answers
+    for every account, which is the F8 behaviour this replaced. That window
+    closes when the image deploys, and the image deploys itself.
+
     Left off, the gateway answers for all of them, and until a second account
     existed that was harmless: the Instagram row and the YouTube row are the
     same video for the same repo. With two accounts it is wrong in the
@@ -298,7 +303,7 @@ def _scope(cfg: Settings) -> dict[str, str]:
     same question this code asked before, so a checkout mid migration is not a
     third behaviour to reason about.
     """
-    return {"ig_user_id": cfg.ig_user_id} if cfg.ig_user_id else {}
+    return {"account_id": cfg.ig_user_id} if cfg.ig_user_id else {}
 
 
 def _borrow(existing: httpx.Client | None) -> AbstractContextManager[httpx.Client]:
@@ -443,7 +448,7 @@ def enqueue(
 
     url = f"{cfg.gateway_url.rstrip('/')}/api/queue"
     payload = {
-        "ig_user_id": account or cfg.ig_user_id,
+        "account_id": account or cfg.ig_user_id,
         "video_name": video_name,
         "cover_name": cover_name,
         "caption": caption,
@@ -641,7 +646,7 @@ def register_rendered(
     url = f"{cfg.gateway_url.rstrip('/')}/api/rendered"
     payload = {
         "repo_full_name": repo_full_name,
-        "ig_user_id": cfg.ig_user_id or "",
+        "account_id": cfg.ig_user_id or "",
         "run_folder": run_folder,
         "score": score,
         "score_breakdown": score_breakdown or {},
@@ -715,7 +720,7 @@ def register_post(
     url = f"{cfg.gateway_url.rstrip('/')}/api/posts"
     payload: dict[str, object] = {
         "media_id": media_id,
-        "ig_user_id": cfg.ig_user_id,
+        "account_id": cfg.ig_user_id,
         "link": link,
         "keyword": keyword or cfg.gateway_keyword,
         "poll_comments": poll_comments,

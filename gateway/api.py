@@ -42,6 +42,22 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
+def _account(account_id: str | None, ig_user_id: str | None) -> str | None:
+    """The account a read is scoped to, under either name.
+
+    `ig_user_id` was the account key everywhere until 2026-08-26, and it is
+    still what a render host sends until it is pulled. The gateway image
+    deploys itself and the render host is pulled by hand, so the side that lags
+    is always the one sending the old name; refusing it would turn a rename
+    with no behaviour into discovery reading every account's commitments as its
+    own, which is exactly the failure F8 was fixed to prevent. F10.
+
+    Delete the second parameter once every render host reports the new name,
+    and not before.
+    """
+    return account_id or ig_user_id
+
 # Anything outside this cannot become part of a path on disk.
 _SAFE_NAME = re.compile(r"[^a-z0-9-]+")
 _MAX_COVER_BYTES = 8 * 1024 * 1024
@@ -123,7 +139,7 @@ async def register_post(request: Request, body: PostRegistration) -> Registered:
     await db.register_post(
         request.app.state.db,
         media_id=body.media_id,
-        ig_user_id=body.ig_user_id,
+        account_id=body.account_id,
         keyword=body.keyword,
         link=body.link,
         published_at=body.published_at.isoformat() if body.published_at else None,
@@ -142,7 +158,7 @@ async def register_account(request: Request, body: AccountRegistration) -> Regis
     expires_at = db.now() + timedelta(seconds=body.expires_in) if body.expires_in else None
     await db.upsert_account(
         app.state.db,
-        ig_user_id=body.ig_user_id,
+        account_id=body.account_id,
         access_token=body.access_token,
         username=body.username,
         expires_at=expires_at,
@@ -156,7 +172,7 @@ async def register_account(request: Request, body: AccountRegistration) -> Regis
             await app.state.graph.subscribe_messages(token=body.access_token)
             detail = "stored and subscribed to messages"
         except GraphError as exc:
-            log.warning("subscribed_apps failed for %s: %s", body.ig_user_id, exc)
+            log.warning("subscribed_apps failed for %s: %s", body.account_id, exc)
             detail = f"stored, but the messages subscription failed ({exc})"
     return Registered(detail=detail)
 
@@ -184,7 +200,7 @@ async def register_youtube_account(
     )
     await db.upsert_account(
         conn,
-        ig_user_id=body.channel_id,
+        account_id=body.channel_id,
         # No Meta token exists for a channel. See the v10 migration for why the
         # column stays NOT NULL rather than being rebuilt to allow a null.
         access_token="",
@@ -322,7 +338,7 @@ async def enqueue(request: Request, body: QueueSubmission) -> Queued:
 
     queued_id = await db.enqueue_post(
         request.app.state.db,
-        ig_user_id=body.ig_user_id,
+        account_id=body.account_id,
         video_name=body.video_name,
         cover_name=body.cover_name,
         caption=body.caption,
@@ -346,9 +362,11 @@ async def enqueue(request: Request, body: QueueSubmission) -> Queued:
 
 
 @router.get("/api/queue", dependencies=[Depends(require_token)])
-async def list_queue(request: Request, ig_user_id: str | None = None) -> dict:
+async def list_queue(
+    request: Request, account_id: str | None = None, ig_user_id: str | None = None
+) -> dict:
     """The queue as the Mac sees it, so `--enqueue` can refuse a duplicate."""
-    rows = await db.queued_posts(request.app.state.db, ig_user_id=ig_user_id)
+    rows = await db.queued_posts(request.app.state.db, account_id=_account(account_id, ig_user_id))
     return {
         "queue": [
             {
@@ -370,7 +388,9 @@ async def list_queue(request: Request, ig_user_id: str | None = None) -> dict:
 
 
 @router.get("/api/covered", dependencies=[Depends(require_token)])
-async def list_covered(request: Request, ig_user_id: str | None = None) -> dict:
+async def list_covered(
+    request: Request, account_id: str | None = None, ig_user_id: str | None = None
+) -> dict:
     """Every repo already committed to, so the Mac can skip it before scraping.
 
     Discovery drops a covered repo before enrichment, so this arriving first
@@ -379,12 +399,14 @@ async def list_covered(request: Request, ig_user_id: str | None = None) -> dict:
     `--posted` marks repos this service never hears about, and a merge that
     replaced would quietly un-cover them.
     """
-    rows = await db.covered_repos(request.app.state.db, ig_user_id)
+    rows = await db.covered_repos(request.app.state.db, _account(account_id, ig_user_id))
     return {"covered": rows}
 
 
 @router.get("/api/rendered", dependencies=[Depends(require_token)])
-async def list_rendered(request: Request, ig_user_id: str | None = None) -> dict:
+async def list_rendered(
+    request: Request, account_id: str | None = None, ig_user_id: str | None = None
+) -> dict:
     """Every repo a Reel has already been built for, so the Mac skips rebuilding.
 
     Separate from `/api/covered` because the two are not the same promise. That
@@ -392,7 +414,7 @@ async def list_rendered(request: Request, ig_user_id: str | None = None) -> dict
     counted from. This is reversible, costs no cooldown, and exists only to
     stop a batch spending a script and a render on a video already on disk.
     """
-    rows = await db.rendered_repos_list(request.app.state.db, ig_user_id)
+    rows = await db.rendered_repos_list(request.app.state.db, _account(account_id, ig_user_id))
     return {
         "rendered": [
             {
@@ -416,7 +438,7 @@ async def record_rendered(request: Request, body: RenderedRepo) -> Registered:
     await db.record_rendered(
         request.app.state.db,
         repo_full_name=body.repo_full_name,
-        ig_user_id=body.ig_user_id,
+        account_id=body.account_id,
         run_folder=body.run_folder,
         score=body.score,
         # Stored as the JSON it arrived as. Nothing here queries inside it, and
@@ -433,7 +455,11 @@ async def record_rendered(request: Request, body: RenderedRepo) -> Registered:
     dependencies=[Depends(require_token)],
 )
 async def forget_rendered(
-    request: Request, owner: str, repo: str, ig_user_id: str | None = None
+    request: Request,
+    owner: str,
+    repo: str,
+    account_id: str | None = None,
+    ig_user_id: str | None = None,
 ) -> Registered:
     """Forget a render, so a rejected video stops blocking its repo.
 
@@ -442,7 +468,9 @@ async def forget_rendered(
     repo that was marked by hand and never rendered here.
     """
     full_name = f"{owner}/{repo}"
-    removed = await db.forget_rendered(request.app.state.db, full_name, ig_user_id)
+    removed = await db.forget_rendered(
+        request.app.state.db, full_name, _account(account_id, ig_user_id)
+    )
     log.info("Forgot %d render record(s) for %s", removed, full_name)
     return Registered(
         detail=(
@@ -454,7 +482,9 @@ async def forget_rendered(
 
 
 @router.get("/api/results", dependencies=[Depends(require_token)])
-async def list_results(request: Request, ig_user_id: str | None = None) -> dict:
+async def list_results(
+    request: Request, account_id: str | None = None, ig_user_id: str | None = None
+) -> dict:
     """How the published Reels did, for the machine that writes the next one.
 
     The Posts page answers this for a person. This answers it for the
@@ -473,9 +503,10 @@ async def list_results(request: Request, ig_user_id: str | None = None) -> dict:
     skip rate reads as a perfect hook, and the newest post always has one.
     """
     conn = request.app.state.db
-    rows = await db.published_media(conn, ig_user_id)
-    readings = await db.latest_insights(conn, ig_user_id)
-    counts = await db.reading_counts(conn, ig_user_id)
+    account_id = _account(account_id, ig_user_id)
+    rows = await db.published_media(conn, account_id)
+    readings = await db.latest_insights(conn, account_id)
+    counts = await db.reading_counts(conn, account_id)
 
     results = []
     for row in rows:

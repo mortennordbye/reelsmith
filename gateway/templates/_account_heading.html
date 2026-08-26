@@ -18,6 +18,6 @@
     {{ platform_icon(_platform) }}
     {{ 'YouTube' if _platform == 'youtube' else 'Instagram' }}
   </span>
-  {{ account['username'] or account['ig_user_id'] }}
+  {{ account['username'] or account['account_id'] }}
   {% if not account['active'] %}<span class="tag failed">paused</span>{% endif %}
 </h2>

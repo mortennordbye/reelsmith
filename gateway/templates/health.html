@@ -113,7 +113,7 @@
         </span>
       </div>
       <form class="inline" method="post"
-            action="{{ url_for('set_flags', ig_user_id=account['ig_user_id']) }}">
+            action="{{ url_for('set_flags', account_id=account['account_id']) }}">
         <input type="hidden" name="field" value="dm_enabled">
         <input type="hidden" name="value" value="{{ '0' if account['dm_enabled'] else '1' }}">
         <button class="{{ 'danger' if account['dm_enabled'] else 'primary' }}">
@@ -129,7 +129,7 @@
         </span>
       </div>
       <form class="inline" method="post"
-            action="{{ url_for('set_flags', ig_user_id=account['ig_user_id']) }}">
+            action="{{ url_for('set_flags', account_id=account['account_id']) }}">
         <input type="hidden" name="field" value="active">
         <input type="hidden" name="value" value="{{ '0' if account['active'] else '1' }}">
         <button class="{{ 'danger' if account['active'] else 'primary' }}">

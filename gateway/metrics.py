@@ -70,6 +70,11 @@ class Metrics:
         self.token_days_left = Gauge(
             "reelsmith_token_days_left",
             "Days before an account token expires, the thing that silently ends everything",
+            # Deliberately still `ig_user_id`, where everything else is now
+            # `account_id`. A Prometheus label is part of a series' identity and
+            # the alert rules that read it are in the homelab repo, so renaming
+            # it here would break them from a change with no behaviour in it.
+            # It moves in a homelab PR or not at all. F10, F7.
             ["ig_user_id"],
             registry=reg,
         )

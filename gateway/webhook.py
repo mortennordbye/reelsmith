@@ -109,7 +109,7 @@ async def receive(request: Request) -> Response:
         log.warning("Webhook POST carried no JSON")
         return Response(status_code=200)
 
-    for ig_user_id, igsid, _text in inbound_messages(payload):
+    for account_id, igsid, _text in inbound_messages(payload):
         try:
             await conversations.handle_inbound_message(
                 app.state.db,
@@ -117,7 +117,7 @@ async def receive(request: Request) -> Response:
                 cfg,
                 app.state.metrics,
                 igsid=igsid,
-                ig_user_id=ig_user_id,
+                account_id=account_id,
             )
         except Exception:
             log.exception("Handling a message from %s failed", igsid)

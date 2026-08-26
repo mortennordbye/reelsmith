@@ -63,7 +63,7 @@
 
   <div class="card">
     <form method="post" action="{{ url_for('add_slot') }}">
-      <input type="hidden" name="ig_user_id" value="{{ account['ig_user_id'] }}">
+      <input type="hidden" name="account_id" value="{{ account['account_id'] }}">
       <label class="small muted">at
         <input name="hour" type="number" min="0" max="23" value="18" size="2" required>
         :

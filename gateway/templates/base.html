@@ -272,11 +272,11 @@
                YouTube channel share a username here, so a switcher listing only
                usernames offered the same word twice and no way to tell which
                was which. #}
-            <a href="?account={{ a['ig_user_id'] }}"
-               class="{{ 'on' if scope.selected and scope.selected['ig_user_id'] == a['ig_user_id'] }}">
+            <a href="?account={{ a['account_id'] }}"
+               class="{{ 'on' if scope.selected and scope.selected['account_id'] == a['account_id'] }}">
               <span class="mark {{ a['platform'] or 'instagram' }}">{{
                 platform_icon(a['platform'] or 'instagram', 12) }}</span>{{
-                a['username'] or a['ig_user_id'][:8] }}
+                a['username'] or a['account_id'][:8] }}
               {% if not a['active'] %}&#9679;{% endif %}
             </a>
           {% endfor %}

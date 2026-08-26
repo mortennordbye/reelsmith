@@ -68,7 +68,7 @@ def cfg(tmp_path) -> GatewaySettings:
 @pytest.fixture
 async def conn(cfg):
     connection = await db.connect(cfg.db_path)
-    await db.upsert_account(connection, ig_user_id=ACCOUNT, access_token="tok")
+    await db.upsert_account(connection, account_id=ACCOUNT, access_token="tok")
     yield connection
     await connection.close()
 
@@ -80,7 +80,7 @@ def graph_for(meta: PublishingMeta, cfg: GatewaySettings) -> GraphClient:
 async def queue_one(conn, *, approved: bool = True, name: str = "a.mp4") -> int:
     return await db.enqueue_post(
         conn,
-        ig_user_id=ACCOUNT,
+        account_id=ACCOUNT,
         video_name=name,
         cover_name=None,
         caption="hi",
@@ -95,7 +95,7 @@ async def due_slot(conn, *, jitter: int = 0) -> schedule.Slot:
     """A slot whose time is right now."""
     local = db.now()
     await db.add_slot(
-        conn, ig_user_id=ACCOUNT, hour=local.hour, minute=local.minute,
+        conn, account_id=ACCOUNT, hour=local.hour, minute=local.minute,
         tz="UTC", jitter_minutes=jitter,
     )
     return schedule.Slot.from_row((await db.all_slots(conn, ACCOUNT))[0])
@@ -146,7 +146,7 @@ async def test_a_slot_that_is_not_due_publishes_nothing(conn, cfg):
     await queue_one(conn)
     # Two hours from now, well outside the grace window.
     later = db.now() + timedelta(hours=2)
-    await db.add_slot(conn, ig_user_id=ACCOUNT, hour=later.hour, minute=later.minute, tz="UTC")
+    await db.add_slot(conn, account_id=ACCOUNT, hour=later.hour, minute=later.minute, tz="UTC")
 
     assert await scheduler.tick_once(conn, graph_for(meta, cfg), cfg, Metrics()) == 0
 
@@ -187,8 +187,8 @@ async def test_two_slots_due_together_take_different_posts(conn, cfg):
     await queue_one(conn, name="first.mp4")
     await queue_one(conn, name="second.mp4")
     local = db.now()
-    await db.add_slot(conn, ig_user_id=ACCOUNT, hour=local.hour, minute=local.minute, tz="UTC")
-    await db.add_slot(conn, ig_user_id=ACCOUNT, hour=local.hour, minute=local.minute, tz="UTC")
+    await db.add_slot(conn, account_id=ACCOUNT, hour=local.hour, minute=local.minute, tz="UTC")
+    await db.add_slot(conn, account_id=ACCOUNT, hour=local.hour, minute=local.minute, tz="UTC")
 
     assert await scheduler.tick_once(conn, graph_for(meta, cfg), cfg, Metrics()) == 2
     names = {r["video_name"] for r in await db.queued_posts(conn)}
@@ -320,7 +320,7 @@ async def test_a_pinned_post_jumps_the_line_once_its_time_has_come(conn, cfg):
     meta = PublishingMeta()
     await queue_one(conn, name="ordinary.mp4")
     pinned = await db.enqueue_post(
-        conn, ig_user_id=ACCOUNT, video_name="pinned.mp4", cover_name=None,
+        conn, account_id=ACCOUNT, video_name="pinned.mp4", cover_name=None,
         caption="", keyword="X", link="https://example.com/x",
         approved=True, slot_override=db.now() - timedelta(minutes=5),
     )
@@ -334,7 +334,7 @@ async def test_a_pin_in_the_future_does_not_jump(conn, cfg):
     meta = PublishingMeta()
     ordinary = await queue_one(conn, name="ordinary.mp4")
     await db.enqueue_post(
-        conn, ig_user_id=ACCOUNT, video_name="pinned.mp4", cover_name=None,
+        conn, account_id=ACCOUNT, video_name="pinned.mp4", cover_name=None,
         caption="", keyword="X", link="https://example.com/x",
         approved=True, slot_override=db.now() + timedelta(days=3),
     )
@@ -355,7 +355,7 @@ async def test_queued_media_is_exempt_from_the_age_sweep(conn):
     """
     await queue_one(conn, name="scheduled.mp4")
     await db.enqueue_post(
-        conn, ig_user_id=ACCOUNT, video_name="cancelled.mp4", cover_name="cover.png",
+        conn, account_id=ACCOUNT, video_name="cancelled.mp4", cover_name="cover.png",
         caption="", keyword="X", link="https://example.com/x",
     )
     names = await db.live_media_names(conn)
@@ -380,7 +380,7 @@ async def test_published_media_is_no_longer_exempt(conn, cfg):
 async def test_upcoming_pairs_each_armed_post_with_a_real_time(conn, cfg):
     await queue_one(conn, name="one.mp4")
     await queue_one(conn, name="two.mp4")
-    await db.add_slot(conn, ig_user_id=ACCOUNT, hour=18, minute=0, tz="UTC")
+    await db.add_slot(conn, account_id=ACCOUNT, hour=18, minute=0, tz="UTC")
 
     rows = await scheduler.upcoming(conn, cfg, ACCOUNT, moment=db.now())
     times = [when for _, when in rows]
@@ -393,7 +393,7 @@ async def test_a_draft_does_not_consume_a_slot_in_the_projection(conn, cfg):
     forgot to approve it."""
     await queue_one(conn, name="draft.mp4", approved=False)
     await queue_one(conn, name="armed.mp4")
-    await db.add_slot(conn, ig_user_id=ACCOUNT, hour=18, minute=0, tz="UTC")
+    await db.add_slot(conn, account_id=ACCOUNT, hour=18, minute=0, tz="UTC")
 
     rows = {r["video_name"]: when for r, when in await scheduler.upcoming(
         conn, cfg, ACCOUNT, moment=db.now()

@@ -9,14 +9,27 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+
+# The account key arrives under either name for as long as a render host may be
+# older than this image. `account_id` is what it is called everywhere now; a
+# body still saying `ig_user_id` is a pipeline that has not been pulled yet, and
+# refusing it would turn a rename with no behaviour into a broken publish. F10.
+#
+# The gateway image deploys itself and the render host is pulled by hand, so the
+# side that lags is the one sending the old name. That asymmetry is the whole
+# reason the alias is here rather than on the other side.
+_ACCOUNT_KEY = AliasChoices("account_id", "ig_user_id")
+_ACCEPTS_BOTH = ConfigDict(populate_by_name=True)
 
 
 class PostRegistration(BaseModel):
     """A published Reel the poller should start watching."""
 
+    model_config = _ACCEPTS_BOTH
+
     media_id: str = Field(min_length=1)
-    ig_user_id: str = Field(min_length=1)
+    account_id: str = Field(min_length=1, validation_alias=_ACCOUNT_KEY)
     link: str = Field(min_length=1)
     # What the video told people to comment. Per post, because a video about a
     # repo may well ask for something better than "send".
@@ -49,7 +62,9 @@ class PostRegistration(BaseModel):
 class AccountRegistration(BaseModel):
     """An Instagram account this gateway answers for."""
 
-    ig_user_id: str = Field(min_length=1)
+    model_config = _ACCEPTS_BOTH
+
+    account_id: str = Field(min_length=1, validation_alias=_ACCOUNT_KEY)
     access_token: str = Field(min_length=1)
     username: str = ""
     # Meta hands this back with the long-lived token. Optional because a token
@@ -105,7 +120,9 @@ class QueueSubmission(BaseModel):
     already, and a URL baked into a row that sits for a week would rot with it.
     """
 
-    ig_user_id: str = Field(min_length=1)
+    model_config = _ACCEPTS_BOTH
+
+    account_id: str = Field(min_length=1, validation_alias=_ACCOUNT_KEY)
     video_name: str = Field(min_length=1)
     cover_name: str | None = None
     caption: str = ""
@@ -190,9 +207,11 @@ class RenderedRepo(BaseModel):
     does not rebuild a video that is already on disk.
     """
 
+    model_config = _ACCEPTS_BOTH
+
     repo_full_name: str = Field(min_length=1)
     # Blank when the Mac has no account configured. See the v9 migration.
-    ig_user_id: str = ""
+    account_id: str = Field(default="", validation_alias=_ACCOUNT_KEY)
     # `2026-08-08/firecrawl-anydoc`, so a person reading the row can find the
     # video it is talking about.
     run_folder: str = ""

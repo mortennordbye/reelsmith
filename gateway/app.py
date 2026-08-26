@@ -76,7 +76,7 @@ async def _apply_config_slots(conn: aiosqlite.Connection, cfg: GatewaySettings) 
             # for months, which is the failure this function exists to prevent.
             accounts = await db.all_accounts(conn, platform=db.PLATFORM_INSTAGRAM)
             if len(accounts) == 1:
-                account = str(accounts[0]["ig_user_id"])
+                account = str(accounts[0]["account_id"])
         if account:
             by_account.setdefault(account, []).extend(unnamed)
         else:

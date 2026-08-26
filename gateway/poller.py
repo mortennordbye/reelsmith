@@ -40,7 +40,7 @@ async def poll_account(
 ) -> int:
     """One sweep of one account's recent posts. Returns replies sent."""
     sent = 0
-    for post in await db.pollable_posts(conn, account["ig_user_id"], ttl_days=cfg.post_ttl_days):
+    for post in await db.pollable_posts(conn, account["account_id"], ttl_days=cfg.post_ttl_days):
         try:
             comments = await graph.list_comments(
                 media_id=post["media_id"], token=account["access_token"]
@@ -107,7 +107,7 @@ async def refresh_tokens_once(
         expires = db.parse_iso(account["token_expires_at"])
         days_left = (expires - db.now()).total_seconds() / 86_400 if expires else None
         if days_left is not None:
-            metrics.token_days_left.labels(ig_user_id=account["ig_user_id"]).set(days_left)
+            metrics.token_days_left.labels(ig_user_id=account["account_id"]).set(days_left)
             if days_left > cfg.token_refresh_margin_days:
                 continue
             if days_left <= 0:
@@ -115,24 +115,24 @@ async def refresh_tokens_once(
                 # in a browser, so say so rather than retrying daily forever.
                 log.error(
                     "Token for %s has expired and cannot be refreshed. Re-authorise it.",
-                    account["ig_user_id"],
+                    account["account_id"],
                 )
                 continue
 
         try:
             token, expires_in = await graph.refresh_token(token=account["access_token"])
         except GraphError as exc:
-            log.warning("Token refresh for %s failed: %s", account["ig_user_id"], exc)
+            log.warning("Token refresh for %s failed: %s", account["account_id"], exc)
             metrics.graph_errors.inc()
             continue
 
-        await db.save_account_token(conn, account["ig_user_id"], token, expires_in)
+        await db.save_account_token(conn, account["account_id"], token, expires_in)
         if expires_in:
-            metrics.token_days_left.labels(ig_user_id=account["ig_user_id"]).set(
+            metrics.token_days_left.labels(ig_user_id=account["account_id"]).set(
                 expires_in / 86_400
             )
         refreshed += 1
-        log.info("Refreshed the token for %s", account["ig_user_id"])
+        log.info("Refreshed the token for %s", account["account_id"])
     return refreshed
 
 

@@ -71,7 +71,7 @@ async def test_the_pipeline_routes_refuse_a_bad_token(client, headers):
     http, _ = client
     response = await http.post(
         "/api/posts",
-        json={"media_id": "m", "ig_user_id": ACCOUNT, "link": LINK},
+        json={"media_id": "m", "account_id": ACCOUNT, "link": LINK},
         headers=headers,
     )
 
@@ -86,7 +86,7 @@ async def test_registering_a_post_starts_the_poller_watching_it(client):
 
     response = await http.post(
         "/api/posts",
-        json={"media_id": "media-1", "ig_user_id": ACCOUNT, "link": LINK, "keyword": "SEND"},
+        json={"media_id": "media-1", "account_id": ACCOUNT, "link": LINK, "keyword": "SEND"},
         headers=AUTH,
     )
 
@@ -111,7 +111,7 @@ async def test_a_measure_only_registration_says_so_in_its_reply(client):
         "/api/posts",
         json={
             "media_id": "media-1",
-            "ig_user_id": ACCOUNT,
+            "account_id": ACCOUNT,
             "link": LINK,
             "poll_comments": False,
         },
@@ -128,7 +128,7 @@ async def test_a_normal_registration_still_says_watching(client):
 
     response = await http.post(
         "/api/posts",
-        json={"media_id": "media-1", "ig_user_id": ACCOUNT, "link": LINK},
+        json={"media_id": "media-1", "account_id": ACCOUNT, "link": LINK},
         headers=AUTH,
     )
 
@@ -137,7 +137,7 @@ async def test_a_normal_registration_still_says_watching(client):
 
 async def test_re_registering_fixes_a_wrong_link(client):
     http, app = client
-    payload = {"media_id": "media-1", "ig_user_id": ACCOUNT, "link": "https://wrong.example"}
+    payload = {"media_id": "media-1", "account_id": ACCOUNT, "link": "https://wrong.example"}
     await http.post("/api/posts", json=payload, headers=AUTH)
 
     await http.post("/api/posts", json={**payload, "link": LINK}, headers=AUTH)
@@ -157,7 +157,7 @@ async def test_re_registering_fixes_a_wrong_link(client):
 )
 async def test_a_malformed_registration_is_refused_with_the_field_named(client, bad):
     http, _ = client
-    payload = {"media_id": "m", "ig_user_id": ACCOUNT, "link": LINK, **bad}
+    payload = {"media_id": "m", "account_id": ACCOUNT, "link": LINK, **bad}
 
     response = await http.post("/api/posts", json=payload, headers=AUTH)
 
@@ -177,7 +177,7 @@ async def test_registering_an_account_subscribes_it_to_messages(client, meta):
 
     response = await http.post(
         "/api/accounts",
-        json={"ig_user_id": ACCOUNT, "access_token": "tok", "expires_in": 5_184_000},
+        json={"account_id": ACCOUNT, "access_token": "tok", "expires_in": 5_184_000},
         headers=AUTH,
     )
 
@@ -191,14 +191,14 @@ async def test_re_authorising_does_not_un_pause_an_account(client):
     http, app = client
     await http.post(
         "/api/accounts",
-        json={"ig_user_id": ACCOUNT, "access_token": "tok", "subscribe": False},
+        json={"account_id": ACCOUNT, "access_token": "tok", "subscribe": False},
         headers=AUTH,
     )
     await db.set_account_flags(app.state.db, ACCOUNT, active=False, dm_enabled=False)
 
     await http.post(
         "/api/accounts",
-        json={"ig_user_id": ACCOUNT, "access_token": "fresher", "subscribe": False},
+        json={"account_id": ACCOUNT, "access_token": "fresher", "subscribe": False},
         headers=AUTH,
     )
 
@@ -358,7 +358,7 @@ async def test_an_empty_upload_is_refused(client):
 async def test_the_metrics_endpoint_publishes_the_queue_depth(client):
     http, app = client
     await db.enqueue_post(
-        app.state.db, ig_user_id=ACCOUNT, video_name="a.mp4", cover_name=None,
+        app.state.db, account_id=ACCOUNT, video_name="a.mp4", cover_name=None,
         caption="", keyword="UV", link=LINK, repo_full_name="astral-sh/uv",
         approved=False,
     )
@@ -382,7 +382,7 @@ async def test_every_state_is_published_even_at_zero(client):
 async def test_a_row_leaving_failed_takes_the_gauge_back_down(client):
     http, app = client
     queued_id = await db.enqueue_post(
-        app.state.db, ig_user_id=ACCOUNT, video_name="a.mp4", cover_name=None,
+        app.state.db, account_id=ACCOUNT, video_name="a.mp4", cover_name=None,
         caption="", keyword="UV", link=LINK, repo_full_name="astral-sh/uv",
         approved=False,
     )

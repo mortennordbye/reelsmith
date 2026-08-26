@@ -27,7 +27,7 @@ def cfg(tmp_path):
 @pytest.fixture
 async def conn(cfg):
     connection = await db.connect(cfg.db_path)
-    await db.upsert_account(connection, ig_user_id=ACCOUNT, access_token="tok")
+    await db.upsert_account(connection, account_id=ACCOUNT, access_token="tok")
     yield connection
     await connection.close()
 
@@ -38,7 +38,7 @@ async def publish_one(
 ) -> int:
     queued_id = await db.enqueue_post(
         conn,
-        ig_user_id=account,
+        account_id=account,
         video_name=f"{media_id}.mp4",
         cover_name=None,
         caption="hi",
@@ -107,7 +107,7 @@ async def test_a_second_sweep_the_same_day_updates_rather_than_duplicates(conn, 
     # manual refresh would.
     account = await db.get_account(conn, ACCOUNT)
     await db.record_insights(
-        conn, media_id="media-1", ig_user_id=ACCOUNT,
+        conn, media_id="media-1", account_id=ACCOUNT,
         metrics={"views": 250, "reach": 90, "likes": 1, "comments": 0, "saved": 0, "shares": 0},
     )
     assert account is not None
@@ -122,7 +122,7 @@ async def test_history_is_kept_across_days(conn, cfg):
     await publish_one(conn, media_id="media-1")
     for day, views in (("2026-08-01", 100), ("2026-08-02", 400)):
         await db.record_insights(
-            conn, media_id="media-1", ig_user_id=ACCOUNT, on=day,
+            conn, media_id="media-1", account_id=ACCOUNT, on=day,
             metrics={"views": views, "reach": views, "likes": 0, "comments": 0,
                      "saved": 0, "shares": 0},
         )
@@ -227,7 +227,7 @@ async def test_a_row_written_before_retention_existed_is_read_again(conn, cfg):
     """
     await publish_one(conn, media_id="media-1")
     await db.record_insights(
-        conn, media_id="media-1", ig_user_id=ACCOUNT,
+        conn, media_id="media-1", account_id=ACCOUNT,
         metrics={"views": 1500, "reach": 1173, "likes": 23, "comments": 0,
                  "saved": 20, "shares": 9},  # the old image's shape
     )
@@ -269,13 +269,13 @@ async def test_the_funnel_is_attributed_to_the_reel_that_produced_it(conn, cfg):
 
     for i in range(3):
         await db.claim_comment(
-            conn, comment_id=f"c{i}", media_id="good", ig_user_id=ACCOUNT,
+            conn, comment_id=f"c{i}", media_id="good", account_id=ACCOUNT,
             author_id=f"a{i}",
         )
         await db.mark_comment_replied(conn, f"c{i}", igsid=f"a{i}")
-        await db.record_delivery(conn, igsid=f"a{i}", ig_user_id=ACCOUNT, media_id="good")
+        await db.record_delivery(conn, igsid=f"a{i}", account_id=ACCOUNT, media_id="good")
     await db.claim_comment(
-        conn, comment_id="c9", media_id="quiet", ig_user_id=ACCOUNT, author_id="a9"
+        conn, comment_id="c9", media_id="quiet", account_id=ACCOUNT, author_id="a9"
     )
 
     per_post = await db.per_post_funnel(conn, ACCOUNT)
@@ -286,12 +286,12 @@ async def test_the_funnel_is_attributed_to_the_reel_that_produced_it(conn, cfg):
 
 async def test_one_account_never_sees_another_accounts_numbers(conn, cfg):
     """The panel is about to have more than one account on it."""
-    await db.upsert_account(conn, ig_user_id=OTHER_ACCOUNT, access_token="tok2")
+    await db.upsert_account(conn, account_id=OTHER_ACCOUNT, access_token="tok2")
     await publish_one(conn, media_id="mine")
     await publish_one(conn, media_id="theirs", repo="them/repo", account=OTHER_ACCOUNT)
     for media_id, account in (("mine", ACCOUNT), ("theirs", OTHER_ACCOUNT)):
         await db.record_insights(
-            conn, media_id=media_id, ig_user_id=account,
+            conn, media_id=media_id, account_id=account,
             metrics={"views": 1, "reach": 1, "likes": 0, "comments": 0, "saved": 0, "shares": 0},
         )
 
@@ -310,15 +310,15 @@ async def test_the_account_funnel_counts_a_repeat_converter_twice(conn, cfg):
     """
     await publish_one(conn, media_id="post-a")
     await publish_one(conn, media_id="post-b", repo="other/repo")
-    await db.start_conversation(conn, igsid="fan", ig_user_id=ACCOUNT, media_id="post-a")
+    await db.start_conversation(conn, igsid="fan", account_id=ACCOUNT, media_id="post-a")
     for media_id in ("post-a", "post-b"):
         await db.claim_comment(
             conn, comment_id=f"c-{media_id}", media_id=media_id,
-            ig_user_id=ACCOUNT, author_id="fan",
+            account_id=ACCOUNT, author_id="fan",
         )
-        await db.record_delivery(conn, igsid="fan", ig_user_id=ACCOUNT, media_id=media_id)
+        await db.record_delivery(conn, igsid="fan", account_id=ACCOUNT, media_id=media_id)
         await db.update_conversation(
-            conn, igsid="fan", ig_user_id=ACCOUNT, link_sent=True
+            conn, igsid="fan", account_id=ACCOUNT, link_sent=True
         )
 
     account_wide = await db.funnel(conn, ACCOUNT)
@@ -339,7 +339,7 @@ async def test_a_reel_published_by_hand_is_not_invisible(conn, cfg):
     """
     await publish_one(conn, media_id="from-queue")
     await db.register_post(
-        conn, media_id="by-hand", ig_user_id=ACCOUNT,
+        conn, media_id="by-hand", account_id=ACCOUNT,
         keyword="SKILLS", link="https://github.com/mattpocock/skills",
     )
 
@@ -354,7 +354,7 @@ async def test_a_reel_published_by_hand_is_not_invisible(conn, cfg):
 
 async def test_a_hand_published_reel_is_swept_for_insights_too(conn, cfg):
     await db.register_post(
-        conn, media_id="by-hand", ig_user_id=ACCOUNT,
+        conn, media_id="by-hand", account_id=ACCOUNT,
         keyword="SKILLS", link="https://github.com/mattpocock/skills",
     )
     meta = FakeMeta(insights={"by-hand": {"views": 1500, "reach": 1173, "likes": 23,
@@ -406,7 +406,7 @@ async def test_a_video_queued_before_recipes_reports_no_recipe_rather_than_a_gue
     way."""
     await publish_one(conn, media_id="from-queue")
     await db.register_post(
-        conn, media_id="by-hand", ig_user_id=ACCOUNT,
+        conn, media_id="by-hand", account_id=ACCOUNT,
         keyword="SKILLS", link="https://github.com/mattpocock/skills",
     )
 
@@ -425,7 +425,7 @@ async def test_a_reel_in_both_tables_is_listed_once(conn, cfg):
     """The publish path registers the post as well as marking the queue row."""
     await publish_one(conn, media_id="media-1")
     await db.register_post(
-        conn, media_id="media-1", ig_user_id=ACCOUNT,
+        conn, media_id="media-1", account_id=ACCOUNT,
         keyword="UV", link="https://github.com/astral-sh/uv",
     )
 

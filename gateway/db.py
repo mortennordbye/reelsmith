@@ -28,7 +28,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -396,9 +396,37 @@ _MIGRATIONS: tuple[str, ...] = (
     ALTER TABLE rendered_repos ADD COLUMN score REAL NOT NULL DEFAULT 0;
     ALTER TABLE rendered_repos ADD COLUMN score_breakdown TEXT NOT NULL DEFAULT '';
     """,
+    # 15. `ig_user_id` becomes `account_id`, everywhere it means "which account".
+    #
+    # The column was named when there was one platform and it held a Meta user
+    # id on every row. It now holds a YouTube channel id on some, and it will
+    # hold a TikTok open id on others, so the name is wrong on two thirds of the
+    # rows it is about to carry and reads as a bug to anyone who has not been
+    # told otherwise. F10.
+    #
+    # No behaviour and no data movement. SQLite's RENAME COLUMN rewrites the
+    # indexes that reference it, so `posts_by_account`, `queued_by_state`,
+    # `slots_by_account` and `insights_by_account` need nothing of their own.
+    #
+    # `gateway/graph.py` and `gateway/publisher.py` keep calling their parameter
+    # `ig_user_id`, deliberately. At that point the value is being handed to
+    # Meta as an Instagram user id, which is exactly what it is, and the two
+    # names mark the boundary between the account key and one platform's id
+    # for it.
+    """
+    ALTER TABLE accounts         RENAME COLUMN ig_user_id TO account_id;
+    ALTER TABLE posts            RENAME COLUMN ig_user_id TO account_id;
+    ALTER TABLE comments_handled RENAME COLUMN ig_user_id TO account_id;
+    ALTER TABLE conversations    RENAME COLUMN ig_user_id TO account_id;
+    ALTER TABLE deliveries       RENAME COLUMN ig_user_id TO account_id;
+    ALTER TABLE queued_posts     RENAME COLUMN ig_user_id TO account_id;
+    ALTER TABLE schedule_slots   RENAME COLUMN ig_user_id TO account_id;
+    ALTER TABLE insights         RENAME COLUMN ig_user_id TO account_id;
+    ALTER TABLE rendered_repos   RENAME COLUMN ig_user_id TO account_id;
+    """,
 )
 
-# Which service an account row publishes to. `ig_user_id` holds a Meta user id
+# Which service an account row publishes to. `account_id` holds a Meta user id
 # on an instagram row and a channel id on a youtube one.
 PLATFORM_INSTAGRAM = "instagram"
 PLATFORM_YOUTUBE = "youtube"
@@ -524,7 +552,7 @@ async def _one(conn: aiosqlite.Connection, sql: str, args: Iterable[Any] = ()) -
 async def upsert_account(
     conn: aiosqlite.Connection,
     *,
-    ig_user_id: str,
+    account_id: str,
     access_token: str,
     username: str = "",
     expires_at: datetime | None = None,
@@ -540,22 +568,22 @@ async def upsert_account(
     stamp = iso(now())
     await conn.execute(
         """
-        INSERT INTO accounts (ig_user_id, username, access_token, token_expires_at,
+        INSERT INTO accounts (account_id, username, access_token, token_expires_at,
                               token_refreshed_at, created_at, platform)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(ig_user_id) DO UPDATE SET
+        ON CONFLICT(account_id) DO UPDATE SET
             username = excluded.username,
             access_token = excluded.access_token,
             token_expires_at = excluded.token_expires_at,
             token_refreshed_at = excluded.token_refreshed_at
         """,
-        (ig_user_id, username, access_token, iso(expires_at), stamp, stamp, platform),
+        (account_id, username, access_token, iso(expires_at), stamp, stamp, platform),
     )
     await conn.commit()
 
 
-async def get_account(conn: aiosqlite.Connection, ig_user_id: str) -> Mapping[str, Any] | None:
-    return await _one(conn, "SELECT * FROM accounts WHERE ig_user_id = ?", (ig_user_id,))
+async def get_account(conn: aiosqlite.Connection, account_id: str) -> Mapping[str, Any] | None:
+    return await _one(conn, "SELECT * FROM accounts WHERE account_id = ?", (account_id,))
 
 
 # Both readers below take `platform` and both default it to Instagram, which is
@@ -592,7 +620,7 @@ async def all_accounts(
 
 async def set_account_flags(
     conn: aiosqlite.Connection,
-    ig_user_id: str,
+    account_id: str,
     *,
     active: bool | None = None,
     dm_enabled: bool | None = None,
@@ -606,14 +634,14 @@ async def set_account_flags(
         args.append(int(dm_enabled))
     if not sets:
         return
-    args.append(ig_user_id)
-    await conn.execute(f"UPDATE accounts SET {', '.join(sets)} WHERE ig_user_id = ?", args)
+    args.append(account_id)
+    await conn.execute(f"UPDATE accounts SET {', '.join(sets)} WHERE account_id = ?", args)
     await conn.commit()
 
 
 async def save_account_token(
     conn: aiosqlite.Connection,
-    ig_user_id: str,
+    account_id: str,
     token: str,
     expires_in_s: int | None,
 ) -> None:
@@ -622,9 +650,9 @@ async def save_account_token(
     await conn.execute(
         """
         UPDATE accounts SET access_token = ?, token_expires_at = ?, token_refreshed_at = ?
-        WHERE ig_user_id = ?
+        WHERE account_id = ?
         """,
-        (token, iso(expires), iso(moment), ig_user_id),
+        (token, iso(expires), iso(moment), account_id),
     )
     await conn.commit()
 
@@ -676,7 +704,7 @@ async def register_post(
     conn: aiosqlite.Connection,
     *,
     media_id: str,
-    ig_user_id: str,
+    account_id: str,
     keyword: str,
     link: str,
     published_at: str | None = None,
@@ -699,7 +727,7 @@ async def register_post(
     """
     await conn.execute(
         """
-        INSERT INTO posts (media_id, ig_user_id, keyword, link, registered_at,
+        INSERT INTO posts (media_id, account_id, keyword, link, registered_at,
                            published_at, poll_comments)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(media_id) DO UPDATE SET
@@ -709,7 +737,7 @@ async def register_post(
         """,
         (
             media_id,
-            ig_user_id,
+            account_id,
             keyword,
             link,
             iso(now()),
@@ -725,7 +753,7 @@ async def get_post(conn: aiosqlite.Connection, media_id: str) -> Mapping[str, An
 
 
 async def pollable_posts(
-    conn: aiosqlite.Connection, ig_user_id: str, *, ttl_days: int
+    conn: aiosqlite.Connection, account_id: str, *, ttl_days: int
 ) -> list[Any]:
     """Posts still inside the seven day private reply window.
 
@@ -736,9 +764,9 @@ async def pollable_posts(
     cutoff = iso(now() - timedelta(days=ttl_days))
     return await _all(
         conn,
-        "SELECT * FROM posts WHERE ig_user_id = ? AND registered_at >= ? "
+        "SELECT * FROM posts WHERE account_id = ? AND registered_at >= ? "
         "AND poll_comments = 1 ORDER BY registered_at",
-        (ig_user_id, cutoff),
+        (account_id, cutoff),
     )
 
 
@@ -780,7 +808,7 @@ async def claim_comment(
     *,
     comment_id: str,
     media_id: str,
-    ig_user_id: str,
+    account_id: str,
     author_id: str | None = None,
 ) -> bool:
     """Take exclusive ownership of a comment. True means this caller may reply.
@@ -792,10 +820,10 @@ async def claim_comment(
     async with conn.execute(
         """
         INSERT OR IGNORE INTO comments_handled
-            (comment_id, media_id, ig_user_id, author_id, claimed_at)
+            (comment_id, media_id, account_id, author_id, claimed_at)
         VALUES (?, ?, ?, ?, ?)
         """,
-        (comment_id, media_id, ig_user_id, author_id, iso(now())),
+        (comment_id, media_id, account_id, author_id, iso(now())),
     ) as cur:
         won = cur.rowcount == 1
     await conn.commit()
@@ -835,7 +863,7 @@ async def comment_row(conn: aiosqlite.Connection, comment_id: str) -> Mapping[st
 
 
 async def start_conversation(
-    conn: aiosqlite.Connection, *, igsid: str, ig_user_id: str, media_id: str
+    conn: aiosqlite.Connection, *, igsid: str, account_id: str, media_id: str
 ) -> None:
     """Open, or reopen, a conversation at private reply time.
 
@@ -855,35 +883,35 @@ async def start_conversation(
     stamp = iso(now())
     await conn.execute(
         """
-        INSERT INTO conversations (igsid, ig_user_id, media_id, state, created_at, updated_at)
+        INSERT INTO conversations (igsid, account_id, media_id, state, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(igsid, ig_user_id) DO UPDATE SET
+        ON CONFLICT(igsid, account_id) DO UPDATE SET
             media_id = excluded.media_id,
             state = excluded.state,
             nudges_sent = 0,
             updated_at = excluded.updated_at
         """,
-        (igsid, ig_user_id, media_id, STATE_REPLIED, stamp, stamp),
+        (igsid, account_id, media_id, STATE_REPLIED, stamp, stamp),
     )
     await conn.commit()
 
 
 async def record_delivery(
-    conn: aiosqlite.Connection, *, igsid: str, ig_user_id: str, media_id: str
+    conn: aiosqlite.Connection, *, igsid: str, account_id: str, media_id: str
 ) -> None:
     """Remember that this person has this post's link, so it is never resent."""
     await conn.execute(
         """
-        INSERT OR IGNORE INTO deliveries (igsid, ig_user_id, media_id, sent_at)
+        INSERT OR IGNORE INTO deliveries (igsid, account_id, media_id, sent_at)
         VALUES (?, ?, ?, ?)
         """,
-        (igsid, ig_user_id, media_id, iso(now())),
+        (igsid, account_id, media_id, iso(now())),
     )
     await conn.commit()
 
 
 async def pending_ask(
-    conn: aiosqlite.Connection, *, igsid: str, ig_user_id: str
+    conn: aiosqlite.Connection, *, igsid: str, account_id: str
 ) -> str | None:
     """The most recent post this person asked about and has not been sent.
 
@@ -900,41 +928,41 @@ async def pending_ask(
         SELECT c.media_id
         FROM comments_handled c
         WHERE c.igsid = ?
-          AND c.ig_user_id = ?
+          AND c.account_id = ?
           AND c.replied_at IS NOT NULL
           AND NOT EXISTS (
               SELECT 1 FROM deliveries d
               WHERE d.igsid = c.igsid
-                AND d.ig_user_id = c.ig_user_id
+                AND d.account_id = c.account_id
                 AND d.media_id = c.media_id
           )
         ORDER BY c.claimed_at DESC
         LIMIT 1
         """,
-        (igsid, ig_user_id),
+        (igsid, account_id),
     )
     return row[0] if row else None
 
 
 async def get_conversation(
-    conn: aiosqlite.Connection, *, igsid: str, ig_user_id: str
+    conn: aiosqlite.Connection, *, igsid: str, account_id: str
 ) -> Mapping[str, Any] | None:
     return await _one(
         conn,
-        "SELECT * FROM conversations WHERE igsid = ? AND ig_user_id = ?",
-        (igsid, ig_user_id),
+        "SELECT * FROM conversations WHERE igsid = ? AND account_id = ?",
+        (igsid, account_id),
     )
 
 
-async def record_inbound(conn: aiosqlite.Connection, *, igsid: str, ig_user_id: str) -> None:
+async def record_inbound(conn: aiosqlite.Connection, *, igsid: str, account_id: str) -> None:
     """Stamp the message that opens a fresh 24 hour window."""
     stamp = iso(now())
     await conn.execute(
         """
         UPDATE conversations SET last_inbound_at = ?, updated_at = ?
-        WHERE igsid = ? AND ig_user_id = ?
+        WHERE igsid = ? AND account_id = ?
         """,
-        (stamp, stamp, igsid, ig_user_id),
+        (stamp, stamp, igsid, account_id),
     )
     await conn.commit()
 
@@ -943,7 +971,7 @@ async def update_conversation(
     conn: aiosqlite.Connection,
     *,
     igsid: str,
-    ig_user_id: str,
+    account_id: str,
     state: str | None = None,
     link_sent: bool = False,
     bump_nudges: bool = False,
@@ -961,9 +989,9 @@ async def update_conversation(
         sets.append("nudges_sent = nudges_sent + 1")
     if bump_follow_checks:
         sets.append("follow_checks = follow_checks + 1")
-    args.extend([igsid, ig_user_id])
+    args.extend([igsid, account_id])
     await conn.execute(
-        f"UPDATE conversations SET {', '.join(sets)} WHERE igsid = ? AND ig_user_id = ?", args
+        f"UPDATE conversations SET {', '.join(sets)} WHERE igsid = ? AND account_id = ?", args
     )
     await conn.commit()
 
@@ -976,7 +1004,7 @@ async def update_conversation(
 async def enqueue_post(
     conn: aiosqlite.Connection,
     *,
-    ig_user_id: str,
+    account_id: str,
     video_name: str,
     cover_name: str | None,
     caption: str,
@@ -1004,20 +1032,20 @@ async def enqueue_post(
     it is read back into the prompt that writes the next script.
     """
     row = await _one(
-        conn, "SELECT COALESCE(MAX(position), 0) + 1 FROM queued_posts WHERE ig_user_id = ?",
-        (ig_user_id,),
+        conn, "SELECT COALESCE(MAX(position), 0) + 1 FROM queued_posts WHERE account_id = ?",
+        (account_id,),
     )
     position = int(row[0]) if row else 1
     async with conn.execute(
         """
         INSERT INTO queued_posts
-            (ig_user_id, state, video_name, cover_name, caption, repo_full_name,
+            (account_id, state, video_name, cover_name, caption, repo_full_name,
              keyword, link, slot_override, position, created_at, title, recipe,
              hook)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            ig_user_id,
+            account_id,
             QUEUE_APPROVED if approved else QUEUE_DRAFT,
             video_name,
             cover_name,
@@ -1045,14 +1073,14 @@ async def get_queued(conn: aiosqlite.Connection, queued_id: int) -> Mapping[str,
 async def queued_posts(
     conn: aiosqlite.Connection,
     *,
-    ig_user_id: str | None = None,
+    account_id: str | None = None,
     states: Iterable[str] | None = None,
     limit: int = 200,
 ) -> list[Any]:
     where, args = [], []
-    if ig_user_id:
-        where.append("ig_user_id = ?")
-        args.append(ig_user_id)
+    if account_id:
+        where.append("account_id = ?")
+        args.append(account_id)
     states = tuple(states) if states else ()
     if states:
         where.append(f"state IN ({','.join('?' * len(states))})")
@@ -1130,7 +1158,7 @@ async def claim_queued(conn: aiosqlite.Connection, queued_id: int) -> bool:
 
 
 async def next_approved(
-    conn: aiosqlite.Connection, ig_user_id: str, *, before: datetime | None = None
+    conn: aiosqlite.Connection, account_id: str, *, before: datetime | None = None
 ) -> Mapping[str, Any] | None:
     """The post a due slot should take.
 
@@ -1143,12 +1171,12 @@ async def next_approved(
         conn,
         """
         SELECT * FROM queued_posts
-        WHERE ig_user_id = ? AND state = ? AND slot_override IS NOT NULL
+        WHERE account_id = ? AND state = ? AND slot_override IS NOT NULL
           AND slot_override <= ?
         ORDER BY slot_override
         LIMIT 1
         """,
-        (ig_user_id, QUEUE_APPROVED, moment),
+        (account_id, QUEUE_APPROVED, moment),
     )
     if pinned is not None:
         return pinned
@@ -1156,11 +1184,11 @@ async def next_approved(
         conn,
         """
         SELECT * FROM queued_posts
-        WHERE ig_user_id = ? AND state = ? AND slot_override IS NULL
+        WHERE account_id = ? AND state = ? AND slot_override IS NULL
         ORDER BY position, id
         LIMIT 1
         """,
-        (ig_user_id, QUEUE_APPROVED),
+        (account_id, QUEUE_APPROVED),
     )
 
 
@@ -1221,8 +1249,8 @@ async def update_queued(
     await conn.commit()
 
 
-async def queue_depth(conn: aiosqlite.Connection, ig_user_id: str | None = None) -> dict[str, int]:
-    where, args = ("WHERE ig_user_id = ?", (ig_user_id,)) if ig_user_id else ("", ())
+async def queue_depth(conn: aiosqlite.Connection, account_id: str | None = None) -> dict[str, int]:
+    where, args = ("WHERE account_id = ?", (account_id,)) if account_id else ("", ())
     rows = await _all(
         conn, f"SELECT state, COUNT(*) FROM queued_posts {where} GROUP BY state", args
     )
@@ -1241,7 +1269,7 @@ SLOT_SOURCE_CONFIG = "config"
 async def add_slot(
     conn: aiosqlite.Connection,
     *,
-    ig_user_id: str,
+    account_id: str,
     hour: int,
     minute: int,
     tz: str = "UTC",
@@ -1252,10 +1280,10 @@ async def add_slot(
     async with conn.execute(
         """
         INSERT INTO schedule_slots
-            (ig_user_id, hour, minute, tz, jitter_minutes, days, source, created_at)
+            (account_id, hour, minute, tz, jitter_minutes, days, source, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (ig_user_id, hour, minute, tz, jitter_minutes, days, source, iso(now())),
+        (account_id, hour, minute, tz, jitter_minutes, days, source, iso(now())),
     ) as cur:
         slot_id = int(cur.lastrowid or 0)
     await conn.commit()
@@ -1263,7 +1291,7 @@ async def add_slot(
 
 
 async def sync_config_slots(
-    conn: aiosqlite.Connection, ig_user_id: str, specs: Iterable[Any]
+    conn: aiosqlite.Connection, account_id: str, specs: Iterable[Any]
 ) -> tuple[int, int]:
     """Make the config-declared slots for one account match the config exactly.
 
@@ -1284,8 +1312,8 @@ async def sync_config_slots(
     specs = list(specs)
     existing = await _all(
         conn,
-        "SELECT * FROM schedule_slots WHERE ig_user_id = ? AND source = ?",
-        (ig_user_id, SLOT_SOURCE_CONFIG),
+        "SELECT * FROM schedule_slots WHERE account_id = ? AND source = ?",
+        (account_id, SLOT_SOURCE_CONFIG),
     )
 
     def shape(row: Any) -> tuple:
@@ -1309,7 +1337,7 @@ async def sync_config_slots(
             continue
         await add_slot(
             conn,
-            ig_user_id=ig_user_id,
+            account_id=account_id,
             hour=spec.hour,
             minute=spec.minute,
             tz=spec.tz,
@@ -1332,21 +1360,21 @@ async def config_slot_accounts(conn: aiosqlite.Connection) -> list[str]:
     """
     rows = await _all(
         conn,
-        "SELECT DISTINCT ig_user_id FROM schedule_slots WHERE source = ?",
+        "SELECT DISTINCT account_id FROM schedule_slots WHERE source = ?",
         (SLOT_SOURCE_CONFIG,),
     )
-    return [str(row["ig_user_id"]) for row in rows]
+    return [str(row["account_id"]) for row in rows]
 
 
-async def active_slots(conn: aiosqlite.Connection, ig_user_id: str | None = None) -> list[Any]:
-    where, args = ("AND ig_user_id = ?", (ig_user_id,)) if ig_user_id else ("", ())
+async def active_slots(conn: aiosqlite.Connection, account_id: str | None = None) -> list[Any]:
+    where, args = ("AND account_id = ?", (account_id,)) if account_id else ("", ())
     return await _all(
         conn, f"SELECT * FROM schedule_slots WHERE active = 1 {where} ORDER BY hour, minute", args
     )
 
 
-async def all_slots(conn: aiosqlite.Connection, ig_user_id: str | None = None) -> list[Any]:
-    where, args = ("WHERE ig_user_id = ?", (ig_user_id,)) if ig_user_id else ("", ())
+async def all_slots(conn: aiosqlite.Connection, account_id: str | None = None) -> list[Any]:
+    where, args = ("WHERE account_id = ?", (account_id,)) if account_id else ("", ())
     return await _all(
         conn, f"SELECT * FROM schedule_slots {where} ORDER BY hour, minute", args
     )
@@ -1403,7 +1431,7 @@ async def record_insights(
     conn: aiosqlite.Connection,
     *,
     media_id: str,
-    ig_user_id: str,
+    account_id: str,
     metrics: Mapping[str, float],
     on: str | None = None,
     moment: datetime | None = None,
@@ -1418,7 +1446,7 @@ async def record_insights(
     await conn.execute(
         """
         INSERT INTO insights
-            (media_id, ig_user_id, fetched_on, views, reach, likes, comments,
+            (media_id, account_id, fetched_on, views, reach, likes, comments,
              saved, shares, avg_watch_ms, total_watch_ms, skip_rate,
              fetched_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1433,7 +1461,7 @@ async def record_insights(
         """,
         (
             media_id,
-            ig_user_id,
+            account_id,
             on or moment.date().isoformat(),
             int(metrics.get("views", 0)),
             int(metrics.get("reach", 0)),
@@ -1451,7 +1479,7 @@ async def record_insights(
 
 
 async def reading_counts(
-    conn: aiosqlite.Connection, ig_user_id: str | None = None
+    conn: aiosqlite.Connection, account_id: str | None = None
 ) -> dict[str, int]:
     """How many daily readings each post has, which is how settled it is.
 
@@ -1460,7 +1488,7 @@ async def reading_counts(
     the Mac so `--cohorts` there can hold back the same posts the panel does;
     two views of one question disagreeing is worse than either being wrong.
     """
-    where, args = ("WHERE ig_user_id = ?", (ig_user_id,)) if ig_user_id else ("", ())
+    where, args = ("WHERE account_id = ?", (account_id,)) if account_id else ("", ())
     rows = await _all(
         conn,
         f"SELECT media_id, COUNT(*) AS readings FROM insights {where} GROUP BY media_id",
@@ -1470,7 +1498,7 @@ async def reading_counts(
 
 
 async def insights_series(
-    conn: aiosqlite.Connection, ig_user_id: str | None = None
+    conn: aiosqlite.Connection, account_id: str | None = None
 ) -> dict[str, list[Any]]:
     """Every reading ever taken, grouped by media and in date order.
 
@@ -1484,7 +1512,7 @@ async def insights_series(
     from last week, and the warning was written from intuition rather than from
     this table, which knows exactly how long a Reel takes to stop moving.
     """
-    where, args = ("WHERE ig_user_id = ?", (ig_user_id,)) if ig_user_id else ("", ())
+    where, args = ("WHERE account_id = ?", (account_id,)) if account_id else ("", ())
     rows = await _all(
         conn,
         f"""
@@ -1501,7 +1529,7 @@ async def insights_series(
 
 
 async def latest_insights(
-    conn: aiosqlite.Connection, ig_user_id: str | None = None
+    conn: aiosqlite.Connection, account_id: str | None = None
 ) -> dict[str, Any]:
     """The most recent reading per media, keyed by media id.
 
@@ -1509,7 +1537,7 @@ async def latest_insights(
     is doing. The per-date history stays in the table for the questions this
     cannot answer, such as whether an evening slot outperforms a morning one.
     """
-    where, args = ("WHERE ig_user_id = ?", (ig_user_id,)) if ig_user_id else ("", ())
+    where, args = ("WHERE account_id = ?", (account_id,)) if account_id else ("", ())
     rows = await _all(
         conn,
         f"""
@@ -1526,20 +1554,20 @@ async def latest_insights(
 
 
 async def last_insight_fetch(
-    conn: aiosqlite.Connection, ig_user_id: str | None = None
+    conn: aiosqlite.Connection, account_id: str | None = None
 ) -> str | None:
     """When insights were last stored, so Health can say if the sweep is alive.
 
     A page showing numbers with no indication of their age invites trusting a
     reading from a week ago.
     """
-    where, args = ("WHERE ig_user_id = ?", (ig_user_id,)) if ig_user_id else ("", ())
+    where, args = ("WHERE account_id = ?", (account_id,)) if account_id else ("", ())
     row = await _one(conn, f"SELECT MAX(fetched_at) FROM insights {where}", args)
     return row[0] if row and row[0] else None
 
 
 async def per_post_funnel(
-    conn: aiosqlite.Connection, ig_user_id: str | None = None
+    conn: aiosqlite.Connection, account_id: str | None = None
 ) -> dict[str, dict[str, int]]:
     """The DM funnel broken down by the Reel that produced it.
 
@@ -1548,7 +1576,7 @@ async def per_post_funnel(
     the question that decides what to make more of, which makes the aggregate
     the less useful of the two.
     """
-    where, args = ("WHERE ig_user_id = ?", (ig_user_id,)) if ig_user_id else ("", ())
+    where, args = ("WHERE account_id = ?", (account_id,)) if account_id else ("", ())
     out: dict[str, dict[str, int]] = {}
 
     for key, sql in (
@@ -1590,7 +1618,7 @@ async def record_rendered(
     conn: aiosqlite.Connection,
     *,
     repo_full_name: str,
-    ig_user_id: str = "",
+    account_id: str = "",
     run_folder: str = "",
     rendered_at: str | None = None,
     score: float = 0.0,
@@ -1605,16 +1633,16 @@ async def record_rendered(
     await conn.execute(
         """
         INSERT INTO rendered_repos
-            (repo_full_name, ig_user_id, run_folder, rendered_at, score, score_breakdown)
+            (repo_full_name, account_id, run_folder, rendered_at, score, score_breakdown)
         VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT (repo_full_name, ig_user_id) DO UPDATE SET
+        ON CONFLICT (repo_full_name, account_id) DO UPDATE SET
             run_folder = excluded.run_folder,
             score = excluded.score,
             score_breakdown = excluded.score_breakdown
         """,
         (
             repo_full_name,
-            ig_user_id or "",
+            account_id or "",
             run_folder,
             rendered_at or datetime.now(UTC).isoformat(timespec="seconds"),
             score,
@@ -1625,7 +1653,7 @@ async def record_rendered(
 
 
 async def rendered_repos_list(
-    conn: aiosqlite.Connection, ig_user_id: str | None = None, limit: int = 500
+    conn: aiosqlite.Connection, account_id: str | None = None, limit: int = 500
 ) -> list[Any]:
     """Every repo with a Reel built for it, oldest first.
 
@@ -1634,14 +1662,14 @@ async def rendered_repos_list(
     and starts a cooldown; a render is a reversible "this already exists on
     disk" that discovery drops without writing anything down.
 
-    A blank `ig_user_id` matches every account, since a render can predate the
+    A blank `account_id` matches every account, since a render can predate the
     account being configured and filtering it out would hide exactly the early
     records this table exists to keep.
     """
     where, args = [], []
-    if ig_user_id:
-        where.append("ig_user_id IN (?, '')")
-        args.append(ig_user_id)
+    if account_id:
+        where.append("account_id IN (?, '')")
+        args.append(account_id)
     clause = f"WHERE {' AND '.join(where)}" if where else ""
     return await _all(
         conn,
@@ -1688,7 +1716,7 @@ async def rendered_at_for(
 
 
 async def forget_rendered(
-    conn: aiosqlite.Connection, repo_full_name: str, ig_user_id: str | None = None
+    conn: aiosqlite.Connection, repo_full_name: str, account_id: str | None = None
 ) -> int:
     """Drop the render record, so a rejected video stops blocking its repo.
 
@@ -1698,16 +1726,16 @@ async def forget_rendered(
     """
     sql = "DELETE FROM rendered_repos WHERE repo_full_name = ?"
     args: list[Any] = [repo_full_name]
-    if ig_user_id:
-        sql += " AND ig_user_id IN (?, '')"
-        args.append(ig_user_id)
+    if account_id:
+        sql += " AND account_id IN (?, '')"
+        args.append(account_id)
     cur = await conn.execute(sql, args)
     await conn.commit()
     return cur.rowcount or 0
 
 
 async def covered_repos(
-    conn: aiosqlite.Connection, ig_user_id: str | None = None, limit: int = 500
+    conn: aiosqlite.Connection, account_id: str | None = None, limit: int = 500
 ) -> list[Any]:
     """Every repo this account has committed to, earliest commitment first.
 
@@ -1741,11 +1769,11 @@ async def covered_repos(
     queue_where = ["state != ?", "repo_full_name IS NOT NULL"]
     queue_args: list[Any] = [QUEUE_CANCELLED]
     direct_where, direct_args = [], []
-    if ig_user_id:
-        queue_where.append("ig_user_id = ?")
-        queue_args.append(ig_user_id)
-        direct_where.append("ig_user_id = ?")
-        direct_args.append(ig_user_id)
+    if account_id:
+        queue_where.append("account_id = ?")
+        queue_args.append(account_id)
+        direct_where.append("account_id = ?")
+        direct_args.append(account_id)
 
     direct_clause = f"WHERE {' AND '.join(direct_where)}" if direct_where else ""
     rows = await _all(
@@ -1784,7 +1812,7 @@ async def covered_repos(
 
 
 async def published_media(
-    conn: aiosqlite.Connection, ig_user_id: str | None = None, limit: int = 100
+    conn: aiosqlite.Connection, account_id: str | None = None, limit: int = 100
 ) -> list[Any]:
     """Every Reel this account has live, newest first, for the Posts page.
 
@@ -1800,11 +1828,11 @@ async def published_media(
     """
     queue_where, queue_args = ["q.state = ?"], [QUEUE_PUBLISHED]
     direct_where, direct_args = [], []
-    if ig_user_id:
-        queue_where.append("q.ig_user_id = ?")
-        queue_args.append(ig_user_id)
-        direct_where.append("p.ig_user_id = ?")
-        direct_args.append(ig_user_id)
+    if account_id:
+        queue_where.append("q.account_id = ?")
+        queue_args.append(account_id)
+        direct_where.append("p.account_id = ?")
+        direct_args.append(account_id)
 
     direct_clause = f"AND {' AND '.join(direct_where)}" if direct_where else ""
     rows = await _all(
@@ -1842,7 +1870,7 @@ async def published_media(
 
 
 async def insights_stale_media(
-    conn: aiosqlite.Connection, *, ig_user_id: str, on: str, within_days: int = 30
+    conn: aiosqlite.Connection, *, account_id: str, on: str, within_days: int = 30
 ) -> list[Any]:
     """Published Reels with no usable reading for `on` yet.
 
@@ -1878,14 +1906,14 @@ async def insights_stale_media(
         SELECT media_id FROM (
             SELECT q.media_id AS media_id, q.published_at AS at
             FROM queued_posts q
-            WHERE q.ig_user_id = ? AND q.state = ?
+            WHERE q.account_id = ? AND q.state = ?
               AND q.media_id IS NOT NULL AND q.published_at >= ?
 
             UNION ALL
 
             SELECT p.media_id AS media_id, p.registered_at AS at
             FROM posts p
-            WHERE p.ig_user_id = ? AND p.registered_at >= ?
+            WHERE p.account_id = ? AND p.registered_at >= ?
               AND p.media_id NOT IN (
                   SELECT media_id FROM queued_posts WHERE media_id IS NOT NULL
               )
@@ -1896,13 +1924,13 @@ async def insights_stale_media(
         )
         ORDER BY live.at DESC
         """,
-        (ig_user_id, QUEUE_PUBLISHED, cutoff, ig_user_id, cutoff, on),
+        (account_id, QUEUE_PUBLISHED, cutoff, account_id, cutoff, on),
     )
 
 
-async def funnel(conn: aiosqlite.Connection, ig_user_id: str | None = None) -> dict[str, int]:
+async def funnel(conn: aiosqlite.Connection, account_id: str | None = None) -> dict[str, int]:
     """The five numbers the whole mechanic exists to move."""
-    where, args = ("WHERE ig_user_id = ?", (ig_user_id,)) if ig_user_id else ("", ())
+    where, args = ("WHERE account_id = ?", (account_id,)) if account_id else ("", ())
     counts: dict[str, int] = {}
     for name, sql in (
         ("comments_seen", f"SELECT COUNT(*) FROM comments_handled {where}"),

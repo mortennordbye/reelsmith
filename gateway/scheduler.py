@@ -94,7 +94,7 @@ async def publish_queued_youtube(
     then do the bytes go up.
     """
     queued_id = int(queued["id"])
-    channel_id = account["ig_user_id"]
+    channel_id = account["account_id"]
 
     credentials = await db.youtube_credentials(conn, channel_id)
     if credentials is None:
@@ -209,7 +209,7 @@ async def publish_queued_instagram(
     """Publish one already-claimed row to Instagram."""
     queued_id = int(queued["id"])
     token = account["access_token"]
-    ig_user_id = account["ig_user_id"]
+    account_id = account["account_id"]
 
     video = media_url(cfg, queued["video_name"])
     if not video:
@@ -226,7 +226,7 @@ async def publish_queued_instagram(
         container_id = await publisher.create_container(
             graph,
             cfg,
-            ig_user_id=ig_user_id,
+            ig_user_id=account_id,
             token=token,
             video_url=video,
             caption=queued["caption"] or "",
@@ -250,7 +250,7 @@ async def publish_queued_instagram(
     try:
         await publisher.await_container(graph, cfg, container_id=container_id, token=token)
         result = await publisher.publish_container(
-            graph, cfg, ig_user_id=ig_user_id, token=token, container_id=container_id
+            graph, cfg, ig_user_id=account_id, token=token, container_id=container_id
         )
     except publisher.PublishError as exc:
         await db.set_queue_state(conn, queued_id, db.QUEUE_FAILED, failure=str(exc))
@@ -269,7 +269,7 @@ async def publish_queued_instagram(
     await db.register_post(
         conn,
         media_id=result.media_id,
-        ig_user_id=ig_user_id,
+        account_id=account_id,
         keyword=queued["keyword"],
         link=queued["link"],
     )
@@ -295,7 +295,7 @@ async def run_slot(
     if not await db.claim_slot_fire(conn, slot_id=slot.id, local_date=day_key):
         return False
 
-    queued = await db.next_approved(conn, account["ig_user_id"])
+    queued = await db.next_approved(conn, account["account_id"])
     if queued is None:
         # An empty queue is normal, not an error. The fire stays claimed so a
         # post approved later today waits for tomorrow's slot rather than going
@@ -333,7 +333,7 @@ async def tick_once(
     # the queue rather than about Meta, and a destination missing from here is
     # a destination that silently stops posting.
     for account in await db.active_accounts(conn, platform=None):
-        for row in await db.active_slots(conn, account["ig_user_id"]):
+        for row in await db.active_slots(conn, account["account_id"]):
             slot = schedule.Slot.from_row(row)
             local_day = schedule.due(
                 slot, moment, grace_minutes=cfg.scheduler_grace_minutes
@@ -365,7 +365,7 @@ async def scheduler_loop(
 
 
 async def upcoming(
-    conn: aiosqlite.Connection, cfg: GatewaySettings, ig_user_id: str, *, moment: datetime | None
+    conn: aiosqlite.Connection, cfg: GatewaySettings, account_id: str, *, moment: datetime | None
 ) -> list[tuple[Any, datetime | None]]:
     """Queued posts paired with when each is expected to go out.
 
@@ -375,9 +375,9 @@ async def upcoming(
     """
     moment = moment or db.now()
     rows = await db.queued_posts(
-        conn, ig_user_id=ig_user_id, states=(db.QUEUE_DRAFT, db.QUEUE_APPROVED)
+        conn, account_id=account_id, states=(db.QUEUE_DRAFT, db.QUEUE_APPROVED)
     )
-    slots = [schedule.Slot.from_row(r) for r in await db.active_slots(conn, ig_user_id)]
+    slots = [schedule.Slot.from_row(r) for r in await db.active_slots(conn, account_id)]
 
     # Only armed posts consume a slot. A draft sitting at the head of the queue
     # is not what goes out on Thursday, and showing it that way would be a lie

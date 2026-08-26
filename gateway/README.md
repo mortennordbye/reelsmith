@@ -106,7 +106,7 @@ and the app has to be **Live** or no webhook is ever delivered.
 curl -s -X POST localhost:8000/api/accounts \
   -H "authorization: Bearer $GATEWAY_API_TOKEN" \
   -H "content-type: application/json" \
-  -d '{"ig_user_id":"...","access_token":"...","expires_in":5184000}'
+  -d '{"account_id":"...","access_token":"...","expires_in":5184000}'
 ```
 
 That call also subscribes the account to `messages`. Skipping it produces no
@@ -116,10 +116,11 @@ error and no webhooks, which looks exactly like nobody messaging the account.
 
 A second destination. It shares the queue, the slots, the claims and the admin
 panel, because none of that is Meta-specific; only the publish call is. What
-tells them apart is `accounts.platform`, and `ig_user_id` holds the channel id
-on a YouTube row. The column name lies on those rows, which was worth less than
-renaming it across every query and template in the same change that added the
-feature.
+tells them apart is `accounts.platform`, and `account_id` holds the channel id
+on a YouTube row. It was called `ig_user_id` until 2026-08-26, when it stopped
+being true on two thirds of the rows it was about to carry; every route and body
+still accepts the old name, because a render host that has not been pulled yet
+is still sending it.
 
 ```bash
 curl -s -X POST localhost:8000/api/accounts/youtube \

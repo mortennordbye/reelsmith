@@ -56,10 +56,10 @@ async def refresh_account(
     """Fetch today's missing readings for one account. Returns how many stored."""
     moment = db.now()
     on = on or moment.date().isoformat()
-    ig_user_id = account["ig_user_id"]
+    account_id = account["account_id"]
 
     pending = await db.insights_stale_media(
-        conn, ig_user_id=ig_user_id, on=on, within_days=cfg.insights_max_age_days
+        conn, account_id=account_id, on=on, within_days=cfg.insights_max_age_days
     )
     stored = 0
     for row in pending:
@@ -74,7 +74,7 @@ async def refresh_account(
             metrics.graph_errors.inc()
             log.warning("Insights for %s failed: %s", media_id, exc)
             if exc.is_auth:
-                log.error("Stopping the insights sweep for %s, the token is bad", ig_user_id)
+                log.error("Stopping the insights sweep for %s, the token is bad", account_id)
                 break
             continue
 
@@ -86,7 +86,7 @@ async def refresh_account(
         await db.record_insights(
             conn,
             media_id=media_id,
-            ig_user_id=ig_user_id,
+            account_id=account_id,
             metrics=values,
             on=on,
             moment=moment,

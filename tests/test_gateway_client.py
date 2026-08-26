@@ -116,7 +116,7 @@ def test_every_read_says_which_account_is_asking(cfg):
     seen: list[tuple[str, str | None]] = []
 
     def handler(request):
-        seen.append((request.url.path, request.url.params.get("ig_user_id")))
+        seen.append((request.url.path, request.url.params.get("account_id")))
         return httpx.Response(200, json={
             "covered": [], "rendered": [], "results": [], "queue": [],
         })
@@ -143,7 +143,7 @@ def test_an_account_with_no_instagram_id_asks_the_question_it_always_asked(cfg):
     unpublished = cfg.model_copy(update={"ig_user_id": ""})
 
     def handler(request):
-        assert "ig_user_id" not in request.url.params
+        assert "account_id" not in request.url.params
         return httpx.Response(200, json={"covered": []})
 
     assert gateway.fetch_covered(unpublished, client=_client(handler)) == {}
@@ -154,7 +154,7 @@ def test_forgetting_a_render_is_scoped_to_the_account_too(cfg):
     repo. The gateway matches `IN (?, '')`, so a render that predates the
     account being configured is still reachable."""
     def handler(request):
-        assert request.url.params.get("ig_user_id") == "17841400000000000"
+        assert request.url.params.get("account_id") == "17841400000000000"
         return httpx.Response(200, json={"detail": "gone"})
 
     assert gateway.forget_rendered("a/b", cfg, client=_client(handler)) is True
@@ -329,7 +329,7 @@ def test_registering_a_post_sends_what_the_poller_needs(cfg):
     assert gateway.register_post("media-1", "https://github.com/a/b", cfg, client=_client(handler))
     assert seen == {
         "media_id": "media-1",
-        "ig_user_id": "17841400000000000",
+        "account_id": "17841400000000000",
         "link": "https://github.com/a/b",
         "keyword": "send",
         # The publisher registers a post the moment its media id exists, so it
@@ -748,7 +748,7 @@ def test_enqueue_defaults_to_the_instagram_account(cfg):
 
     gateway.enqueue("v.mp4", "https://github.com/a/b", cfg, client=_client(handler))
 
-    assert seen["ig_user_id"] == cfg.ig_user_id
+    assert seen["account_id"] == cfg.ig_user_id
     assert seen["title"] == ""
 
 
@@ -855,7 +855,7 @@ def test_enqueue_can_target_a_channel_instead(cfg):
         title="A hook that fits a title",
     )
 
-    assert seen["ig_user_id"] == "UCq0Ff3lJ7dK2sWnEv8mXtLp"
+    assert seen["account_id"] == "UCq0Ff3lJ7dK2sWnEv8mXtLp"
     assert seen["title"] == "A hook that fits a title"
 
 
@@ -874,13 +874,13 @@ def test_the_queue_ceiling_counts_only_the_feed(cfg):
             200,
             json={
                 "queue": [
-                    {"state": "approved", "ig_user_id": cfg.ig_user_id},
-                    {"state": "draft", "ig_user_id": cfg.ig_user_id},
+                    {"state": "approved", "account_id": cfg.ig_user_id},
+                    {"state": "draft", "account_id": cfg.ig_user_id},
                 ]
             },
         )
 
     count = gateway.fetch_pending_count(cfg, client=_client(handler))
 
-    assert asked["ig_user_id"] == cfg.ig_user_id
+    assert asked["account_id"] == cfg.ig_user_id
     assert count == 2
