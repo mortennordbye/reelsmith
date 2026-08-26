@@ -48,7 +48,7 @@ def metrics():
 async def conn(cfg):
     connection = await db.connect(cfg.db_path)
     await db.upsert_account(
-        connection, ig_user_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
+        connection, account_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
     )
     await db.upsert_youtube_credentials(
         connection,
@@ -70,7 +70,7 @@ def _video(cfg, name: str = "short-abc123.mp4") -> str:
 
 async def _queue(conn, cfg, **overrides) -> int:
     fields = {
-        "ig_user_id": CHANNEL,
+        "account_id": CHANNEL,
         "video_name": _video(cfg),
         "cover_name": None,
         "caption": DESCRIPTION,
@@ -198,10 +198,10 @@ async def test_a_channel_with_no_credentials_fails_without_asking_google(
     conn, graph, cfg, metrics, meta
 ):
     await db.upsert_account(
-        conn, ig_user_id="UCorphaned000000000000000", access_token="",
+        conn, account_id="UCorphaned000000000000000", access_token="",
         platform=db.PLATFORM_YOUTUBE,
     )
-    queued_id = await _queue(conn, cfg, ig_user_id="UCorphaned000000000000000")
+    queued_id = await _queue(conn, cfg, account_id="UCorphaned000000000000000")
 
     account = await db.get_account(conn, "UCorphaned000000000000000")
     queued = await db.get_queued(conn, queued_id)
@@ -283,9 +283,9 @@ async def test_an_instagram_row_still_takes_the_meta_path(cfg, graph, metrics, m
     """The dispatch must be the only thing that changed for Instagram."""
     conn = await db.connect(cfg.db_path)
     try:
-        await db.upsert_account(conn, ig_user_id=ACCOUNT, access_token="tok")
+        await db.upsert_account(conn, account_id=ACCOUNT, access_token="tok")
         queued_id = await db.enqueue_post(
-            conn, ig_user_id=ACCOUNT, video_name=_video(cfg), cover_name=None,
+            conn, account_id=ACCOUNT, video_name=_video(cfg), cover_name=None,
             caption="a caption", keyword="send", link=LINK, approved=True,
         )
         await db.claim_queued(conn, queued_id)

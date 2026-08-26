@@ -76,7 +76,7 @@ async def _apply_config_slots(conn: aiosqlite.Connection, cfg: GatewaySettings) 
             # for months, which is the failure this function exists to prevent.
             accounts = await db.all_accounts(conn, platform=db.PLATFORM_INSTAGRAM)
             if len(accounts) == 1:
-                account = str(accounts[0]["ig_user_id"])
+                account = str(accounts[0]["account_id"])
         if account:
             by_account.setdefault(account, []).extend(unnamed)
         else:
@@ -196,6 +196,26 @@ def create_app(
                 ),
             ]
             log.info("Polling comments every %ds", cfg.poll_interval_s)
+
+            # A third refresher, because TikTok is the only platform here whose
+            # refresh token rotates. Instagram's rides on the render host's
+            # --snapshot job and Google's has no clock at all. Gated on the same
+            # flag as publishing, since a loop calling TikTok on a deployment
+            # that has no TikTok account is a log line a day saying nothing.
+            if cfg.tiktok_enabled:
+                tasks.append(
+                    asyncio.create_task(
+                        poller.tiktok_refresher_loop(
+                            conn, client, cfg, app.state.metrics
+                        ),
+                        name="tiktok-refresher",
+                    )
+                )
+                log.info(
+                    "TikTok on, refreshing every %ds, %s path",
+                    cfg.tiktok_refresh_interval_s,
+                    "direct post" if cfg.tiktok_direct_post else "inbox",
+                )
 
             # On by default, unlike the scheduler. This one only reads: it
             # creates nothing, publishes nothing and messages nobody, so

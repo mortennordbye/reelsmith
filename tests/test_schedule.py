@@ -17,7 +17,7 @@ from gateway import schedule
 def slot(**overrides) -> schedule.Slot:
     base = {
         "id": 1,
-        "ig_user_id": "acct",
+        "account_id": "acct",
         "hour": 18,
         "minute": 0,
         "tz": "UTC",

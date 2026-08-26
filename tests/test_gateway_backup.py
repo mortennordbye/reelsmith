@@ -29,7 +29,7 @@ def cfg(tmp_path):
 @pytest.fixture
 async def conn(cfg):
     connection = await db.connect(cfg.db_path)
-    await db.upsert_account(connection, ig_user_id=ACCOUNT, access_token="tok")
+    await db.upsert_account(connection, account_id=ACCOUNT, access_token="tok")
     yield connection
     await connection.close()
 
@@ -42,7 +42,7 @@ def metrics():
 async def test_the_copy_is_a_database_that_remembers_what_was_answered(conn, cfg, metrics):
     """The reason this exists, tested the way it will be used."""
     await db.claim_comment(
-        conn, comment_id="c1", media_id="media-1", ig_user_id=ACCOUNT, author_id=IGSID
+        conn, comment_id="c1", media_id="media-1", account_id=ACCOUNT, author_id=IGSID
     )
 
     path = await backup.backup_once(cfg, metrics)
@@ -60,7 +60,7 @@ async def test_a_claim_made_after_the_copy_is_not_in_it(conn, cfg, metrics):
     """A point in time copy, not a live mirror. Says what it is."""
     path = await backup.backup_once(cfg, metrics)
     await db.claim_comment(
-        conn, comment_id="later", media_id="media-1", ig_user_id=ACCOUNT, author_id=IGSID
+        conn, comment_id="later", media_id="media-1", account_id=ACCOUNT, author_id=IGSID
     )
 
     restored = await aiosqlite.connect(path)
@@ -98,7 +98,7 @@ async def test_it_works_while_the_service_connection_is_mid_transaction(conn, cf
     test connection is idle at the moment it is asked and a live one is not.
     """
     await conn.execute(
-        "INSERT INTO comments_handled (comment_id, media_id, ig_user_id, claimed_at) "
+        "INSERT INTO comments_handled (comment_id, media_id, account_id, claimed_at) "
         "VALUES ('open', 'media-1', ?, '2026-08-02T00:00:00+00:00')",
         (ACCOUNT,),
     )  # deliberately not committed, so the write transaction stays open

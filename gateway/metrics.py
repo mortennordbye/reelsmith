@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from prometheus_client import CollectorRegistry, Counter, Gauge, generate_latest
 
+from gateway import db
+
 
 class Metrics:
     def __init__(self) -> None:
@@ -70,17 +72,28 @@ class Metrics:
         self.token_days_left = Gauge(
             "reelsmith_token_days_left",
             "Days before an account token expires, the thing that silently ends everything",
+            # Deliberately still `ig_user_id`, where everything else is now
+            # `account_id`. A Prometheus label is part of a series' identity and
+            # the alert rules that read it are in the homelab repo, so renaming
+            # it here would break them from a change with no behaviour in it.
+            # It moves in a homelab PR or not at all. F10, F7.
             ["ig_user_id"],
             registry=reg,
         )
 
         # --- The scheduled queue -------------------------------------------
+        #
+        # Labelled by platform since 2026-08-26. Unlabelled, `ReelsmithPublishFailing`
+        # fired without saying where, and a platform that had stopped publishing
+        # entirely was invisible behind the other two still succeeding, which is
+        # the failure worth paging on. F7.
         self.posts_published = Counter(
-            "reelsmith_posts_published_total", "Reels published from the queue", registry=reg
+            "reelsmith_posts_published_total", "Posts published from the queue",
+            ["platform"], registry=reg,
         )
         self.publish_failures = Counter(
             "reelsmith_publish_failures_total", "Publish attempts that did not complete",
-            registry=reg,
+            ["platform"], registry=reg,
         )
         # The one to alert on. A slot firing into an empty queue is the shape of
         # "the account went quiet three days ago and nobody noticed", and it is
@@ -96,7 +109,8 @@ class Metrics:
             registry=reg,
         )
         self.queue_depth = Gauge(
-            "reelsmith_queue_depth", "Posts in the queue, by state", ["state"], registry=reg
+            "reelsmith_queue_depth", "Posts in the queue, by state and account",
+            ["state", "account"], registry=reg,
         )
         self.insights_fetched = Counter(
             "reelsmith_insights_fetched_total",
@@ -113,6 +127,15 @@ class Metrics:
             "Unix time of the last state backup that finished",
             registry=reg,
         )
+
+        # A labelled counter does not exist until it is first incremented, so a
+        # platform that has never published has no series at all and a rule
+        # written over it evaluates to nothing rather than to zero. CLAUDE.md
+        # already states the rule for the queue gauge; it applies here for the
+        # same reason and one step earlier.
+        for platform in db.PLATFORMS:
+            self.posts_published.labels(platform=platform)
+            self.publish_failures.labels(platform=platform)
 
     def export(self) -> bytes:
         return generate_latest(self.registry)

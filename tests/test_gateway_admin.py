@@ -58,7 +58,7 @@ async def client(cfg):
             ) as http,
         ):
             await db.upsert_account(
-                app.state.db, ig_user_id=ACCOUNT, access_token="tok", username="nightly"
+                app.state.db, account_id=ACCOUNT, access_token="tok", username="nightly"
             )
             await http.post("/admin/login", data={"token": ADMIN_TOKEN})
             yield http, app
@@ -79,7 +79,7 @@ async def upload(http, name: str = "out.mp4") -> str:
 async def queue(http, *, approved: bool = False, **overrides) -> dict:
     video = overrides.pop("video_name", None) or await upload(http)
     body = {
-        "ig_user_id": ACCOUNT, "video_name": video, "caption": "hello",
+        "account_id": ACCOUNT, "video_name": video, "caption": "hello",
         "keyword": "UV", "link": LINK, "repo_full_name": "astral-sh/uv",
         "approved": approved, **overrides,
     }
@@ -113,7 +113,7 @@ async def test_a_post_pointing_at_a_missing_file_is_refused(client):
     """Otherwise it fails at publish time, days later, with nobody watching."""
     http, _ = client
     response = await http.post("/api/queue", headers=AUTH, json={
-        "ig_user_id": ACCOUNT, "video_name": "ghost.mp4", "keyword": "X", "link": LINK,
+        "account_id": ACCOUNT, "video_name": "ghost.mp4", "keyword": "X", "link": LINK,
     })
     assert response.status_code == 400
     assert "ghost.mp4" in response.json()["detail"]
@@ -122,7 +122,7 @@ async def test_a_post_pointing_at_a_missing_file_is_refused(client):
 async def test_a_traversing_filename_is_rejected_by_the_model(client):
     http, _ = client
     response = await http.post("/api/queue", headers=AUTH, json={
-        "ig_user_id": ACCOUNT, "video_name": "../../gateway.sqlite3",
+        "account_id": ACCOUNT, "video_name": "../../gateway.sqlite3",
         "keyword": "X", "link": LINK,
     })
     assert response.status_code == 422
@@ -132,7 +132,7 @@ async def test_the_keyword_must_be_one_word(client):
     http, _ = client
     video = await upload(http)
     response = await http.post("/api/queue", headers=AUTH, json={
-        "ig_user_id": ACCOUNT, "video_name": video,
+        "account_id": ACCOUNT, "video_name": video,
         "keyword": "two words", "link": LINK,
     })
     assert response.status_code == 422
@@ -214,7 +214,7 @@ async def test_a_directly_published_post_is_covered_via_its_link(client):
     repo has to come back out of the GitHub link."""
     http, app = client
     await db.register_post(
-        app.state.db, media_id="1", ig_user_id=ACCOUNT,
+        app.state.db, media_id="1", account_id=ACCOUNT,
         keyword="UV", link="https://github.com/DietrichGebert/ponytail",
     )
     assert "DietrichGebert/ponytail" in await covered(http)
@@ -226,7 +226,7 @@ async def test_the_earliest_commitment_wins(client):
     http, app = client
     await queue(http)
     await db.register_post(
-        app.state.db, media_id="2", ig_user_id=ACCOUNT,
+        app.state.db, media_id="2", account_id=ACCOUNT,
         keyword="UV", link=LINK, published_at="2099-01-01T00:00:00+00:00",
     )
     assert (await covered(http))["astral-sh/uv"] < "2099"
@@ -312,7 +312,7 @@ async def test_a_render_from_before_the_account_existed_still_lists(client):
     """A blank owner matches every account. Filtering it out would hide exactly
     the early records the table was added to keep."""
     http, app = client
-    await db.record_rendered(app.state.db, repo_full_name="astral-sh/uv", ig_user_id="")
+    await db.record_rendered(app.state.db, repo_full_name="astral-sh/uv", account_id="")
 
     rows = await db.rendered_repos_list(app.state.db, ACCOUNT)
     assert [row["repo_full_name"] for row in rows] == ["astral-sh/uv"]
@@ -377,7 +377,7 @@ async def test_the_queue_page_says_when_the_video_was_made(client):
     await db.record_rendered(
         app.state.db,
         repo_full_name="astral-sh/uv",
-        ig_user_id=ACCOUNT,
+        account_id=ACCOUNT,
         rendered_at="2026-08-14T02:31:00+00:00",
     )
 
@@ -408,7 +408,7 @@ async def test_the_youtube_row_gets_the_date_too(client):
     await db.record_rendered(
         app.state.db,
         repo_full_name="astral-sh/uv",
-        ig_user_id="UCq0Ff3lJ7dK2sWnEv8mXtLp",
+        account_id="UCq0Ff3lJ7dK2sWnEv8mXtLp",
         rendered_at="2026-08-14T02:31:00+00:00",
     )
 
@@ -537,7 +537,7 @@ async def test_adding_pausing_and_deleting_a_slot(client):
     conn = app.state.db
 
     await http.post("/admin/slots/add", data={
-        "ig_user_id": ACCOUNT, "hour": "18", "minute": "30",
+        "account_id": ACCOUNT, "hour": "18", "minute": "30",
         "tz": "Europe/Oslo", "jitter_minutes": "20", "days": ["1", "3"],
     })
     slot = (await db.all_slots(conn, ACCOUNT))[0]
@@ -560,7 +560,7 @@ async def test_slots_declared_in_config_are_applied_at_startup(tmp_path):
     app = create_app(cfg, http=FakeMeta().client(), background=False)
     async with app.router.lifespan_context(app):
         conn = app.state.db
-        await db.upsert_account(conn, ig_user_id=ACCOUNT, access_token="tok")
+        await db.upsert_account(conn, account_id=ACCOUNT, access_token="tok")
 
     # The account has to exist before the slots can be attached to it, so a
     # second boot is what applies them. That is the real sequence too: the
@@ -581,7 +581,7 @@ async def test_config_slot_ids_survive_a_restart(tmp_path):
     for _ in range(2):
         app = create_app(cfg, http=FakeMeta().client(), background=False)
         async with app.router.lifespan_context(app):
-            await db.upsert_account(app.state.db, ig_user_id=ACCOUNT, access_token="tok")
+            await db.upsert_account(app.state.db, account_id=ACCOUNT, access_token="tok")
             first = [r["id"] for r in await db.all_slots(app.state.db, ACCOUNT)]
 
     app = create_app(cfg, http=FakeMeta().client(), background=False)
@@ -593,7 +593,7 @@ async def test_a_slot_removed_from_config_disappears(tmp_path):
     two = settings(tmp_path, slots="18:00 UTC\n09:00 UTC")
     app = create_app(two, http=FakeMeta().client(), background=False)
     async with app.router.lifespan_context(app):
-        await db.upsert_account(app.state.db, ig_user_id=ACCOUNT, access_token="tok")
+        await db.upsert_account(app.state.db, account_id=ACCOUNT, access_token="tok")
     app = create_app(two, http=FakeMeta().client(), background=False)
     async with app.router.lifespan_context(app):
         assert len(await db.all_slots(app.state.db, ACCOUNT)) == 2
@@ -612,8 +612,8 @@ async def test_a_ui_slot_survives_a_config_sync(tmp_path):
     app = create_app(cfg, http=FakeMeta().client(), background=False)
     async with app.router.lifespan_context(app):
         conn = app.state.db
-        await db.upsert_account(conn, ig_user_id=ACCOUNT, access_token="tok")
-        await db.add_slot(conn, ig_user_id=ACCOUNT, hour=7, minute=45, tz="UTC")
+        await db.upsert_account(conn, account_id=ACCOUNT, access_token="tok")
+        await db.add_slot(conn, account_id=ACCOUNT, hour=7, minute=45, tz="UTC")
 
     app = create_app(cfg, http=FakeMeta().client(), background=False)
     async with app.router.lifespan_context(app):
@@ -634,7 +634,7 @@ async def test_a_bad_slot_declaration_refuses_to_start(tmp_path):
 async def test_an_out_of_range_hour_is_refused(client):
     http, _ = client
     response = await http.post("/admin/slots/add", data={
-        "ig_user_id": ACCOUNT, "hour": "25", "minute": "0",
+        "account_id": ACCOUNT, "hour": "25", "minute": "0",
     })
     assert response.status_code == 400
 
@@ -685,7 +685,7 @@ async def anon(cfg):
                 transport=httpx.ASGITransport(app=app), base_url=BASE
             ) as http,
         ):
-            await db.upsert_account(app.state.db, ig_user_id=ACCOUNT, access_token="tok")
+            await db.upsert_account(app.state.db, account_id=ACCOUNT, access_token="tok")
             yield http, app
 
 
@@ -712,7 +712,7 @@ async def test_a_stranger_cannot_read_the_queue(anon):
         ("/admin/queue/1/approve", {}),
         ("/admin/queue/1/cancel", {}),
         ("/admin/queue/1/edit", {"caption": "x"}),
-        ("/admin/slots/add", {"ig_user_id": ACCOUNT, "hour": "3"}),
+        ("/admin/slots/add", {"account_id": ACCOUNT, "hour": "3"}),
         ("/admin/accounts/" + ACCOUNT + "/flags", {"field": "active", "value": "0"}),
     ],
 )
@@ -761,7 +761,7 @@ async def test_the_posts_page_puts_the_hook_next_to_what_it_scored(client):
     http, app = client
     conn = app.state.db
     qid = await db.enqueue_post(
-        conn, ig_user_id=ACCOUNT, video_name="v.mp4", cover_name=None, caption="c",
+        conn, account_id=ACCOUNT, video_name="v.mp4", cover_name=None, caption="c",
         keyword="UV", link=LINK, repo_full_name="a/b", approved=True,
         hook="Your coding agent dies when you close the terminal",
     )
@@ -794,7 +794,7 @@ async def test_the_insights_page_groups_published_reels(client):
     conn = app.state.db
     for i, recipe in enumerate(("old1234.aaaaaaaa", "old1234.aaaaaaaa", "new5678.bbbbbbbb")):
         qid = await db.enqueue_post(
-            conn, ig_user_id=ACCOUNT, video_name=f"v{i}.mp4", cover_name=None,
+            conn, account_id=ACCOUNT, video_name=f"v{i}.mp4", cover_name=None,
             caption="c", keyword="UV", link=LINK, repo_full_name=f"a/b{i}",
             approved=True, recipe=recipe, hook=f"hook number {i}",
         )
@@ -803,7 +803,7 @@ async def test_the_insights_page_groups_published_reels(client):
         # have stopped moving and one reading is a post still arriving.
         for day in (1, 2, 3):
             await db.record_insights(
-                conn, media_id=f"m{i}", ig_user_id=ACCOUNT, on=f"2026-08-0{day}",
+                conn, media_id=f"m{i}", account_id=ACCOUNT, on=f"2026-08-0{day}",
                 metrics={"views": 100 + i, "reach": 90, "likes": 1, "comments": 0,
                          "saved": 0, "shares": 0, "avg_watch_ms": 4000,
                          "total_watch_ms": 400000, "skip_rate": 70.0 + i},
@@ -828,7 +828,7 @@ async def test_a_post_still_arriving_is_held_back_from_the_cohorts(client):
 
     async def publish(media_id: str, readings: int):
         qid = await db.enqueue_post(
-            conn, ig_user_id=ACCOUNT, video_name=f"{media_id}.mp4", cover_name=None,
+            conn, account_id=ACCOUNT, video_name=f"{media_id}.mp4", cover_name=None,
             caption="c", keyword="UV", link=LINK, repo_full_name=f"a/{media_id}",
             approved=True, hook="h",
         )
@@ -837,7 +837,7 @@ async def test_a_post_still_arriving_is_held_back_from_the_cohorts(client):
         )
         for day in range(1, readings + 1):
             await db.record_insights(
-                conn, media_id=media_id, ig_user_id=ACCOUNT, on=f"2026-08-{day:02d}",
+                conn, media_id=media_id, account_id=ACCOUNT, on=f"2026-08-{day:02d}",
                 metrics={"views": 40, "reach": 30, "likes": 0, "comments": 0,
                          "saved": 0, "shares": 0, "avg_watch_ms": 4000,
                          "total_watch_ms": 40000, "skip_rate": 70.0},
@@ -866,7 +866,7 @@ async def test_the_repos_page_shows_what_blocks_discovery(client):
     conn = app.state.db
     await queue(http, repo_full_name="astral-sh/uv")
     await db.record_rendered(
-        conn, repo_full_name="never/committed", ig_user_id=ACCOUNT,
+        conn, repo_full_name="never/committed", account_id=ACCOUNT,
         run_folder="2026-08-18/never-committed",
         score=0.81, score_breakdown='{"velocity": 0.44, "stars": 0.12}',
     )
@@ -1085,16 +1085,16 @@ async def test_the_posts_page_shows_what_a_reel_did(client):
         app.state.db, queued["id"], media_id="media-1", permalink="https://ig/p/1"
     )
     await db.record_insights(
-        app.state.db, media_id="media-1", ig_user_id=ACCOUNT,
+        app.state.db, media_id="media-1", account_id=ACCOUNT,
         metrics={"views": 1500, "reach": 1173, "likes": 23, "comments": 0,
                  "saved": 20, "shares": 9},
     )
     await db.claim_comment(
         app.state.db, comment_id="c1", media_id="media-1",
-        ig_user_id=ACCOUNT, author_id="a1",
+        account_id=ACCOUNT, author_id="a1",
     )
     await db.record_delivery(
-        app.state.db, igsid="a1", ig_user_id=ACCOUNT, media_id="media-1"
+        app.state.db, igsid="a1", account_id=ACCOUNT, media_id="media-1"
     )
 
     body = (await http.get("/admin/posts")).text
@@ -1114,7 +1114,7 @@ async def test_the_posts_page_scores_the_hook(client):
         app.state.db, queued["id"], media_id="media-1", permalink="https://ig/p/1"
     )
     await db.record_insights(
-        app.state.db, media_id="media-1", ig_user_id=ACCOUNT,
+        app.state.db, media_id="media-1", account_id=ACCOUNT,
         metrics={"views": 1500, "reach": 1173, "likes": 23, "comments": 0,
                  "saved": 20, "shares": 9, "avg_watch_ms": 8370,
                  "total_watch_ms": 10_622_235, "skip_rate": 64.2},
@@ -1147,7 +1147,7 @@ async def test_the_switcher_appears_only_once_there_is_a_choice(client):
     assert 'class="switcher' not in (await http.get("/admin/")).text
 
     await db.upsert_account(
-        app.state.db, ig_user_id="17841400000000009", access_token="t2", username="second"
+        app.state.db, account_id="17841400000000009", access_token="t2", username="second"
     )
     assert 'class="switcher' in (await http.get("/admin/")).text
 
@@ -1156,7 +1156,7 @@ async def test_scoping_to_an_account_hides_the_others(client):
     http, app = client
     other = "17841400000000009"
     await db.upsert_account(
-        app.state.db, ig_user_id=other, access_token="t2", username="second"
+        app.state.db, account_id=other, access_token="t2", username="second"
     )
 
     body = (await http.get(f"/admin/?account={other}")).text
@@ -1184,7 +1184,7 @@ async def test_every_board_names_its_platform(client, page):
     username between them."""
     http, app = client
     await db.upsert_account(
-        app.state.db, ig_user_id="UC-chan", access_token="tok",
+        app.state.db, account_id="UC-chan", access_token="tok",
         username="thenightlybuild", platform=db.PLATFORM_YOUTUBE,
     )
 
@@ -1203,7 +1203,7 @@ async def test_a_single_board_still_names_its_platform(client):
     else on the page says which surface it is."""
     http, app = client
     await db.upsert_account(
-        app.state.db, ig_user_id="UC-chan", access_token="tok",
+        app.state.db, account_id="UC-chan", access_token="tok",
         username="thenightlybuild", platform=db.PLATFORM_YOUTUBE,
     )
 

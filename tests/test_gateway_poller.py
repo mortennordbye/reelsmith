@@ -44,9 +44,9 @@ def metrics():
 @pytest.fixture
 async def conn(cfg):
     connection = await db.connect(cfg.db_path)
-    await db.upsert_account(connection, ig_user_id=ACCOUNT, access_token="tok")
+    await db.upsert_account(connection, account_id=ACCOUNT, access_token="tok")
     await db.register_post(
-        connection, media_id="media-1", ig_user_id=ACCOUNT, keyword="send", link=LINK
+        connection, media_id="media-1", account_id=ACCOUNT, keyword="send", link=LINK
     )
     yield connection
     await connection.close()
@@ -118,7 +118,7 @@ async def test_a_paused_account_is_skipped_entirely(conn, graph, cfg, metrics, m
 async def test_one_unreadable_post_does_not_stop_the_others(conn, graph, cfg, metrics, meta):
     """A deleted post, or one with comments turned off, is a normal event."""
     await db.register_post(
-        conn, media_id="media-2", ig_user_id=ACCOUNT, keyword="send", link=LINK
+        conn, media_id="media-2", account_id=ACCOUNT, keyword="send", link=LINK
     )
     calls = {"n": 0}
     original = graph.list_comments
@@ -241,6 +241,8 @@ async def test_migrating_a_v1_database_does_not_resend_existing_links(cfg):
         await conn.execute("PRAGMA user_version=1")
         await conn.execute(
             """
+            -- v1's own column name. The rename to account_id is migration 15,
+            -- which is exactly what this test is about to run.
             INSERT INTO conversations
                 (igsid, ig_user_id, media_id, state, link_sent_at, created_at, updated_at)
             VALUES ('1028439703126642', ?, 'media-1', 'converted', '2026-07-31T20:01:43+00:00',
@@ -258,7 +260,7 @@ async def test_migrating_a_v1_database_does_not_resend_existing_links(cfg):
 
         # And so it is not outstanding.
         assert (
-            await db.pending_ask(conn, igsid="1028439703126642", ig_user_id=ACCOUNT) is None
+            await db.pending_ask(conn, igsid="1028439703126642", account_id=ACCOUNT) is None
         )
     finally:
         await conn.close()

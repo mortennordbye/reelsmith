@@ -183,20 +183,33 @@ three docs are `docs/tiktok-api-setup.md`, `docs/multi-destination-audit.md` and
 `docs/tiktok-publishing-plan.md`.
 
 - **A destination is an `accounts` row, not a table.** `accounts.platform` says
-  which service and `ig_user_id` is an opaque account key holding a Meta user id
+  which service and `account_id` is an opaque account key holding a Meta user id
   on one platform and a channel id on another. Credentials live in a table per
   platform, because Meta's shape is a token plus an expiry and Google's is a
   client pair plus a refresh token, and one table holding both is half null on
-  every row. The name `ig_user_id` is wrong on every non Instagram row and the
-  rename to `account_id` is mechanical and deliberately deferred.
-- **The whole publish fork is one `if` in `scheduler.publish_queued`.**
+  every row.
+- **It was called `ig_user_id` until 2026-08-26, and three places kept the old
+  name on purpose.** `gateway/graph.py` and `gateway/publisher.py` still take an
+  `ig_user_id`, because at that point the value is being handed to Meta as an
+  Instagram user id, which is what it is; the two names mark the boundary
+  between the account key and one platform's id for it. The `reelsmith_token_days_left`
+  gauge keeps its `ig_user_id` label, because a Prometheus label is part of a
+  series' identity and the alert rules reading it are in the homelab repo, so it
+  moves in a homelab PR or not at all. And every API route and body still
+  accepts `ig_user_id` alongside `account_id`: the gateway image deploys itself
+  and the render host is pulled by hand, so the side that lags is always the one
+  sending the old name, and refusing it would turn a rename with no behaviour
+  into discovery reading every account's commitments as its own.
+- **The whole publish fork is one lookup in `scheduler.publish_queued`.**
   Everything above it is written about a queue that publishes something on a
   timetable and never looks at what. That is why a platform costs a module and a
-  branch rather than a subsystem. **Instagram is the fallthrough of that `if`**,
-  so a row for a platform with no branch is handed to Meta's publisher rather
-  than failing. That is the opposite of `db.active_accounts`, which defaults to
-  Instagram precisely so a missed call site is inert, and it is worth fixing in
-  the same change that adds a third platform.
+  branch rather than a subsystem. **Instagram used to be the fallthrough**, so a
+  row for a platform with no branch was handed to Meta's publisher: a Reels
+  container against a TikTok open id with an empty token, on a live account.
+  That was the opposite of `db.active_accounts`, which defaults to Instagram
+  precisely so a missed call site is inert. It matches on the platform now and
+  fails the row rather than the tick, so one misconfigured account cannot stop
+  the other two publishing. F1.
 - **The scriptwriter learns from Instagram alone, and this is not a gap to
   close.** `skip_rate` is the share who scrolled past inside three seconds and
   it is the one number the loop turns on. YouTube's `averageViewPercentage`

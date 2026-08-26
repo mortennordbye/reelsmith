@@ -30,19 +30,19 @@ def cfg(tmp_path):
 @pytest.fixture
 async def conn(cfg):
     connection = await db.connect(cfg.db_path)
-    await db.upsert_account(connection, ig_user_id=ACCOUNT, access_token="tok")
+    await db.upsert_account(connection, account_id=ACCOUNT, access_token="tok")
     yield connection
     await connection.close()
 
 
 async def test_a_measured_post_is_never_polled(conn):
     await db.register_post(
-        conn, media_id="live", ig_user_id=ACCOUNT, keyword="send", link=LINK
+        conn, media_id="live", account_id=ACCOUNT, keyword="send", link=LINK
     )
     await db.register_post(
         conn,
         media_id="backfilled",
-        ig_user_id=ACCOUNT,
+        account_id=ACCOUNT,
         keyword="send",
         link=LINK,
         poll_comments=False,
@@ -56,12 +56,12 @@ async def test_a_measured_post_is_never_polled(conn):
 async def test_re_registering_never_disarms_a_live_post(conn):
     """The whole reason the flag is decided on the way in and never updated."""
     await db.register_post(
-        conn, media_id="live", ig_user_id=ACCOUNT, keyword="send", link=LINK
+        conn, media_id="live", account_id=ACCOUNT, keyword="send", link=LINK
     )
     await db.register_post(
         conn,
         media_id="live",
-        ig_user_id=ACCOUNT,
+        account_id=ACCOUNT,
         keyword="PONYTAIL",
         link=LINK,
         poll_comments=False,
@@ -79,7 +79,7 @@ async def test_a_measured_post_stays_measured_if_it_is_re_sent(conn):
         await db.register_post(
             conn,
             media_id="backfilled",
-            ig_user_id=ACCOUNT,
+            account_id=ACCOUNT,
             keyword="send",
             link=LINK,
             poll_comments=False,
@@ -98,7 +98,7 @@ async def test_the_post_is_listed_under_the_date_it_went_out(conn):
     await db.register_post(
         conn,
         media_id="backfilled",
-        ig_user_id=ACCOUNT,
+        account_id=ACCOUNT,
         keyword="send",
         link=LINK,
         published_at="2026-07-31T18:04:11+00:00",
@@ -115,7 +115,7 @@ async def test_the_post_is_listed_under_the_date_it_went_out(conn):
 async def test_a_post_registered_without_a_date_still_has_one(conn):
     """Every row written before v8, and every one the publisher writes."""
     await db.register_post(
-        conn, media_id="live", ig_user_id=ACCOUNT, keyword="send", link=LINK
+        conn, media_id="live", account_id=ACCOUNT, keyword="send", link=LINK
     )
 
     rows = await db.published_media(conn, ACCOUNT)
@@ -127,13 +127,13 @@ async def test_a_publish_date_is_filled_in_but_never_cleared(conn):
     await db.register_post(
         conn,
         media_id="m",
-        ig_user_id=ACCOUNT,
+        account_id=ACCOUNT,
         keyword="send",
         link=LINK,
         published_at="2026-07-31T18:04:11+00:00",
     )
     await db.register_post(
-        conn, media_id="m", ig_user_id=ACCOUNT, keyword="send", link=LINK
+        conn, media_id="m", account_id=ACCOUNT, keyword="send", link=LINK
     )
 
     rows = await db.published_media(conn, ACCOUNT)
@@ -162,6 +162,7 @@ async def test_every_post_that_predates_the_flag_keeps_being_polled(cfg):
             await connection.executescript(statements)
         await connection.execute("PRAGMA user_version=7")
         await connection.execute(
+            # v7's own column name; account_id arrives in migration 15.
             "INSERT INTO posts (media_id, ig_user_id, keyword, link, registered_at) "
             "VALUES ('live', ?, 'send', ?, ?)",
             (ACCOUNT, LINK, db.iso(db.now())),
@@ -182,13 +183,13 @@ async def test_a_backfilled_post_is_swept_for_insights(conn):
     await db.register_post(
         conn,
         media_id="backfilled",
-        ig_user_id=ACCOUNT,
+        account_id=ACCOUNT,
         keyword="send",
         link=LINK,
         published_at="2026-06-01T10:00:00+00:00",
         poll_comments=False,
     )
 
-    stale = await db.insights_stale_media(conn, ig_user_id=ACCOUNT, on="2026-08-02")
+    stale = await db.insights_stale_media(conn, account_id=ACCOUNT, on="2026-08-02")
 
     assert [row["media_id"] for row in stale] == ["backfilled"]

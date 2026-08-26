@@ -134,18 +134,18 @@ async def handle_comment(
     author_id: str | None,
 ) -> Outcome:
     """Send the one private reply this comment gets, and open a conversation."""
-    ig_user_id = account["ig_user_id"]
+    account_id = account["account_id"]
 
     # Our own replies come back from the comments endpoint too, and replying to
     # ourselves would be a loop with a rate limit at the end of it.
-    if author_id and author_id == ig_user_id:
+    if author_id and author_id == account_id:
         return SKIPPED
 
     if not await db.claim_comment(
         conn,
         comment_id=comment_id,
         media_id=post["media_id"],
-        ig_user_id=ig_user_id,
+        account_id=account_id,
         author_id=author_id,
     ):
         return SKIPPED
@@ -168,7 +168,7 @@ async def handle_comment(
 
     try:
         result = await graph.send_private_reply(
-            ig_user_id=ig_user_id,
+            ig_user_id=account_id,
             token=account["access_token"],
             comment_id=comment_id,
             text=copy.PRIVATE_REPLY,
@@ -189,7 +189,7 @@ async def handle_comment(
         await db.start_conversation(
             conn,
             igsid=result.recipient_id,
-            ig_user_id=ig_user_id,
+            account_id=account_id,
             media_id=post["media_id"],
         )
     else:
@@ -228,17 +228,17 @@ async def handle_inbound_message(
     metrics: Metrics,
     *,
     igsid: str,
-    ig_user_id: str,
+    account_id: str,
 ) -> Outcome:
     """Someone wrote to the account. Decide whether they get the link."""
     metrics.inbound_messages.inc()
 
-    account = await db.get_account(conn, ig_user_id)
+    account = await db.get_account(conn, account_id)
     if account is None:
-        log.warning("Message for unknown account %s", ig_user_id)
+        log.warning("Message for unknown account %s", account_id)
         return Outcome("skipped", "unknown account")
 
-    conversation = await db.get_conversation(conn, igsid=igsid, ig_user_id=ig_user_id)
+    conversation = await db.get_conversation(conn, igsid=igsid, account_id=account_id)
     if conversation is None:
         # Nobody who was sent a private reply can land here, because that path
         # creates the row. This is a cold DM, and answering one with an
@@ -247,8 +247,8 @@ async def handle_inbound_message(
         log.info("Inbound from %s with no conversation, ignoring", igsid)
         return Outcome("skipped", "no conversation")
 
-    await db.record_inbound(conn, igsid=igsid, ig_user_id=ig_user_id)
-    conversation = await db.get_conversation(conn, igsid=igsid, ig_user_id=ig_user_id)
+    await db.record_inbound(conn, igsid=igsid, account_id=account_id)
+    conversation = await db.get_conversation(conn, igsid=igsid, account_id=account_id)
     assert conversation is not None
 
     # Is there an outstanding ask, meaning a comment we private-replied to whose
@@ -258,7 +258,7 @@ async def handle_inbound_message(
     #
     # This replaced a check on a `converted` state, which was terminal per
     # person and so silently failed every returning commenter.
-    media_id = await db.pending_ask(conn, igsid=igsid, ig_user_id=ig_user_id)
+    media_id = await db.pending_ask(conn, igsid=igsid, account_id=account_id)
     if media_id is None:
         return Outcome("skipped", "nothing outstanding")
 
@@ -274,12 +274,12 @@ async def handle_inbound_message(
         graph, metrics, igsid=igsid, token=account["access_token"]
     )
     await db.update_conversation(
-        conn, igsid=igsid, ig_user_id=ig_user_id, bump_follow_checks=True
+        conn, igsid=igsid, account_id=account_id, bump_follow_checks=True
     )
 
     # Re-read: recording the inbound above is what opened the window, so this is
     # the state the send has to be judged against.
-    conversation = await db.get_conversation(conn, igsid=igsid, ig_user_id=ig_user_id)
+    conversation = await db.get_conversation(conn, igsid=igsid, account_id=account_id)
     assert conversation is not None
     if not window_is_open(conversation, window_s=cfg.message_window_s):
         metrics.window_lapsed.inc()
@@ -290,7 +290,7 @@ async def handle_inbound_message(
         text = copy.link_message(post["link"], late=late)
         try:
             await graph.send_message(
-                ig_user_id=ig_user_id,
+                ig_user_id=account_id,
                 token=account["access_token"],
                 igsid=igsid,
                 text=text,
@@ -302,11 +302,11 @@ async def handle_inbound_message(
 
         # Per person and per post, so this exact link is never sent twice while
         # a later post can still be asked for.
-        await db.record_delivery(conn, igsid=igsid, ig_user_id=ig_user_id, media_id=media_id)
+        await db.record_delivery(conn, igsid=igsid, account_id=account_id, media_id=media_id)
         await db.update_conversation(
             conn,
             igsid=igsid,
-            ig_user_id=ig_user_id,
+            account_id=account_id,
             state=db.STATE_CONVERTED,
             link_sent=True,
         )
@@ -320,7 +320,7 @@ async def handle_inbound_message(
 
     try:
         await graph.send_message(
-            ig_user_id=ig_user_id,
+            ig_user_id=account_id,
             token=account["access_token"],
             igsid=igsid,
             text=copy.NUDGE,
@@ -333,7 +333,7 @@ async def handle_inbound_message(
     await db.update_conversation(
         conn,
         igsid=igsid,
-        ig_user_id=ig_user_id,
+        account_id=account_id,
         state=db.STATE_AWAITING_FOLLOW,
         bump_nudges=True,
     )

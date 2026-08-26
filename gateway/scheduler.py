@@ -30,7 +30,7 @@ from urllib.parse import quote
 
 import aiosqlite
 
-from gateway import db, publisher, schedule, youtube
+from gateway import db, publisher, schedule, tiktok, youtube
 from gateway.config import GatewaySettings
 from gateway.graph import GraphClient
 from gateway.metrics import Metrics
@@ -65,13 +65,39 @@ async def publish_queued(
     Returns `(published, safe_to_retry)`. The caller uses the second value to
     decide whether the slot gets its turn back; see the module docstring.
     """
-    if account["platform"] == db.PLATFORM_YOUTUBE:
-        return await publish_queued_youtube(
-            conn, graph, cfg, metrics, account=account, queued=queued
+    platform = str(account["platform"] or "")
+    publisher_for = {
+        db.PLATFORM_INSTAGRAM: publish_queued_instagram,
+        db.PLATFORM_YOUTUBE: publish_queued_youtube,
+        db.PLATFORM_TIKTOK: publish_queued_tiktok,
+    }.get(platform)
+
+    if publisher_for is None:
+        # **Instagram used to be the fallthrough of this branch**, which meant a
+        # row for a platform with no publisher was handed to Meta: a Reels
+        # container created against a TikTok open id with an empty access
+        # token, against a live account. That is the opposite of the fail safe
+        # design in `db.active_accounts`, where the readers default to
+        # Instagram precisely so a missed call site is inert. Here the same
+        # default was fail open. F1.
+        #
+        # Failing the row rather than the tick, so one misconfigured account
+        # cannot stop the other two publishing.
+        await db.set_queue_state(
+            conn,
+            int(queued["id"]),
+            db.QUEUE_FAILED,
+            failure=f"no publisher for platform {platform!r}",
         )
-    return await publish_queued_instagram(
-        conn, graph, cfg, metrics, account=account, queued=queued
-    )
+        metrics.publish_failures.labels(platform=platform or "unknown").inc()
+        log.error(
+            "Queue %d: account %s is on platform %r, which has no publisher. "
+            "The row is failed rather than sent to another platform's API.",
+            int(queued["id"]), account["account_id"], platform,
+        )
+        return False, False
+
+    return await publisher_for(conn, graph, cfg, metrics, account=account, queued=queued)
 
 
 async def publish_queued_youtube(
@@ -94,7 +120,7 @@ async def publish_queued_youtube(
     then do the bytes go up.
     """
     queued_id = int(queued["id"])
-    channel_id = account["ig_user_id"]
+    channel_id = account["account_id"]
 
     credentials = await db.youtube_credentials(conn, channel_id)
     if credentials is None:
@@ -102,14 +128,14 @@ async def publish_queued_youtube(
         await db.set_queue_state(
             conn, queued_id, db.QUEUE_FAILED, failure="no YouTube credentials stored"
         )
-        metrics.publish_failures.inc()
+        metrics.publish_failures.labels(platform=db.PLATFORM_YOUTUBE).inc()
         log.error("Queue %d: channel %s has no stored credentials", queued_id, channel_id)
         return False, False
 
     video_path = Path(cfg.covers_dir) / str(queued["video_name"] or "")
     if not queued["video_name"] or not video_path.is_file():
         await db.set_queue_state(conn, queued_id, db.QUEUE_FAILED, failure="no video file")
-        metrics.publish_failures.inc()
+        metrics.publish_failures.labels(platform=db.PLATFORM_YOUTUBE).inc()
         log.error("Queue %d: no video at %s", queued_id, video_path)
         return False, False
 
@@ -118,7 +144,7 @@ async def publish_queued_youtube(
         # YouTube rejects an empty title, and a video called after its filename
         # is worse than one that waits for a person.
         await db.set_queue_state(conn, queued_id, db.QUEUE_FAILED, failure="no title")
-        metrics.publish_failures.inc()
+        metrics.publish_failures.labels(platform=db.PLATFORM_YOUTUBE).inc()
         log.error("Queue %d: a YouTube row needs a title", queued_id)
         return False, False
 
@@ -146,7 +172,7 @@ async def publish_queued_youtube(
         exhausted = attempts >= cfg.max_publish_attempts
         state = db.QUEUE_FAILED if exhausted else db.QUEUE_APPROVED
         await db.set_queue_state(conn, queued_id, state, failure=str(exc))
-        metrics.publish_failures.inc()
+        metrics.publish_failures.labels(platform=db.PLATFORM_YOUTUBE).inc()
         log.warning(
             "Queue %d: no upload session (attempt %d/%d): %s",
             queued_id, attempts, cfg.max_publish_attempts, exc,
@@ -165,14 +191,14 @@ async def publish_queued_youtube(
         )
     except youtube.UploadError as exc:
         await db.set_queue_state(conn, queued_id, db.QUEUE_FAILED, failure=str(exc))
-        metrics.publish_failures.inc()
+        metrics.publish_failures.labels(platform=db.PLATFORM_YOUTUBE).inc()
         log.error("Queue %d: upload failed after the session existed: %s", queued_id, exc)
         return False, False
 
     await db.mark_queue_published(
         conn, queued_id, media_id=result.video_id, permalink=result.url
     )
-    metrics.posts_published.inc()
+    metrics.posts_published.labels(platform=db.PLATFORM_YOUTUBE).inc()
 
     # No `register_post` here, unlike the Instagram path. That call arms the
     # comment poller and the insights sweep, both of which are Meta-only, and a
@@ -197,6 +223,152 @@ async def publish_queued_youtube(
     return True, False
 
 
+async def publish_queued_tiktok(
+    conn: aiosqlite.Connection,
+    graph: GraphClient,
+    cfg: GatewaySettings,
+    metrics: Metrics,
+    *,
+    account: Any,
+    queued: Any,
+) -> tuple[bool, bool]:
+    """Publish one claimed row to TikTok, on whichever path is configured.
+
+    The same two-step shape as the other two, and the same line drawn in the
+    same place: `publish_id` is this path's container id. Before
+    `video/init/` returns, TikTok was never asked to make anything and the slot
+    gets its turn back. After it, a post may exist and only a person decides.
+
+    **The media is fetched, not pushed**, so this is Meta's shape rather than
+    YouTube's and `media_url` is the same seam. What is different is the token:
+    a TikTok access token lasts 24 hours, so it is minted per publish out of a
+    refresh token the refresher loop keeps alive, and the rotated refresh token
+    is persisted before the publish is attempted.
+    """
+    queued_id = int(queued["id"])
+    open_id = account["account_id"]
+
+    stored = await db.tiktok_credentials(conn, open_id)
+    if stored is None:
+        # An account row with no credentials cannot be fixed by trying again.
+        await db.set_queue_state(
+            conn, queued_id, db.QUEUE_FAILED, failure="no TikTok credentials stored"
+        )
+        metrics.publish_failures.labels(platform=db.PLATFORM_TIKTOK).inc()
+        log.error("Queue %d: TikTok account %s has no stored credentials", queued_id, open_id)
+        return False, False
+
+    video = media_url(cfg, queued["video_name"])
+    if not video:
+        await db.set_queue_state(conn, queued_id, db.QUEUE_FAILED, failure="no video file")
+        metrics.publish_failures.labels(platform=db.PLATFORM_TIKTOK).inc()
+        log.error("Queue %d: no video file, nothing to publish", queued_id)
+        return False, False
+
+    credentials = tiktok.Credentials(
+        open_id=open_id,
+        client_key=stored["client_key"],
+        client_secret=stored["client_secret"],
+        refresh_token=stored["refresh_token"],
+    )
+    try:
+        fresh = await tiktok.refresh_access_token(graph.http, credentials=credentials)
+        # Before the publish, not after. The refresh token just spent is dead
+        # and a publish that throws must not take the new one with it.
+        await db.save_tiktok_refresh(
+            conn, open_id, fresh.refresh_token, fresh.refresh_expires_in
+        )
+
+        privacy = cfg.tiktok_privacy_level
+        if cfg.tiktok_direct_post:
+            # Mandatory rather than advisory, and the privacy level has to come
+            # from what it returns or the post fails
+            # `privacy_level_option_mismatch`, which reads like a bad constant
+            # and is actually a stale read.
+            info = await tiktok.creator_info(graph.http, token=fresh.access_token)
+            if privacy not in info.privacy_level_options:
+                await db.set_queue_state(
+                    conn,
+                    queued_id,
+                    db.QUEUE_FAILED,
+                    failure=(
+                        f"{privacy} is not offered by this account; it allows "
+                        f"{', '.join(info.privacy_level_options) or 'nothing'}"
+                    ),
+                )
+                metrics.publish_failures.labels(platform=db.PLATFORM_TIKTOK).inc()
+                log.error(
+                    "Queue %d: %s asked for %s and the account offers %s",
+                    queued_id, open_id, privacy, info.privacy_level_options,
+                )
+                return False, False
+
+        publish_id = await tiktok.start_publish(
+            graph.http,
+            token=fresh.access_token,
+            video_url=video,
+            title=str(queued["title"] or queued["caption"] or ""),
+            direct_post=cfg.tiktok_direct_post,
+            privacy_level=privacy,
+            is_aigc=cfg.tiktok_is_aigc,
+        )
+    except tiktok.PublishError as exc:
+        if exc.publish_started:
+            await db.set_queue_state(conn, queued_id, db.QUEUE_FAILED, failure=str(exc))
+            metrics.publish_failures.labels(platform=db.PLATFORM_TIKTOK).inc()
+            log.error("Queue %d: TikTok failed after a publish existed: %s", queued_id, exc)
+            return False, False
+        attempts = int(queued["attempts"] or 0)
+        exhausted = attempts >= cfg.max_publish_attempts
+        state = db.QUEUE_FAILED if exhausted else db.QUEUE_APPROVED
+        await db.set_queue_state(conn, queued_id, state, failure=str(exc))
+        metrics.publish_failures.labels(platform=db.PLATFORM_TIKTOK).inc()
+        log.warning(
+            "Queue %d: TikTok refused before anything existed (attempt %d/%d): %s",
+            queued_id, attempts, cfg.max_publish_attempts, exc,
+        )
+        return False, not exhausted
+
+    await db.set_container(conn, queued_id, publish_id)
+
+    try:
+        result = await tiktok.await_publish(
+            graph.http,
+            token=fresh.access_token,
+            publish_id=publish_id,
+            direct_post=cfg.tiktok_direct_post,
+            poll_interval_s=cfg.tiktok_poll_interval_s,
+            timeout_s=cfg.tiktok_publish_timeout_s,
+        )
+    except tiktok.PublishError as exc:
+        await db.set_queue_state(conn, queued_id, db.QUEUE_FAILED, failure=str(exc))
+        metrics.publish_failures.labels(platform=db.PLATFORM_TIKTOK).inc()
+        log.error("Queue %d: TikTok publish did not finish: %s", queued_id, exc)
+        return False, False
+
+    # No permalink. `status/fetch` reports the post completed and hands back no
+    # id and no URL, and the video id the insights sweep needs is not the
+    # publish id, so finding it means listing the account's recent videos and
+    # matching. That is phase 7 and it does not belong in the publish path.
+    await db.mark_queue_published(conn, queued_id, media_id=publish_id, permalink="")
+    metrics.posts_published.labels(platform=db.PLATFORM_TIKTOK).inc()
+
+    # No `register_post`, for the same reason the YouTube path has none: that
+    # call arms the comment poller and the insights sweep, both Meta-only.
+    log.info(
+        "Published queue %d to TikTok %s as %s (%s)",
+        queued_id, open_id, publish_id, result.status,
+    )
+    if result.in_inbox:
+        log.info(
+            "Queue %d is in the creator's TikTok inbox and needs one tap in the app. "
+            "This is the unaudited path, which is what GATEWAY_TIKTOK_DIRECT_POST "
+            "being off means.",
+            queued_id,
+        )
+    return True, False
+
+
 async def publish_queued_instagram(
     conn: aiosqlite.Connection,
     graph: GraphClient,
@@ -209,7 +381,7 @@ async def publish_queued_instagram(
     """Publish one already-claimed row to Instagram."""
     queued_id = int(queued["id"])
     token = account["access_token"]
-    ig_user_id = account["ig_user_id"]
+    account_id = account["account_id"]
 
     video = media_url(cfg, queued["video_name"])
     if not video:
@@ -218,7 +390,7 @@ async def publish_queued_instagram(
         # never asks Meta anything was also the one path Prometheus could not
         # see, so a post that died for want of a file was invisible to
         # ReelsmithPublishFailing while every other failure fired it.
-        metrics.publish_failures.inc()
+        metrics.publish_failures.labels(platform=db.PLATFORM_INSTAGRAM).inc()
         log.error("Queue %d: no video file, nothing to publish", queued_id)
         return False, False
 
@@ -226,7 +398,7 @@ async def publish_queued_instagram(
         container_id = await publisher.create_container(
             graph,
             cfg,
-            ig_user_id=ig_user_id,
+            ig_user_id=account_id,
             token=token,
             video_url=video,
             caption=queued["caption"] or "",
@@ -238,7 +410,7 @@ async def publish_queued_instagram(
         exhausted = attempts >= cfg.max_publish_attempts
         state = db.QUEUE_FAILED if exhausted else db.QUEUE_APPROVED
         await db.set_queue_state(conn, queued_id, state, failure=str(exc))
-        metrics.publish_failures.inc()
+        metrics.publish_failures.labels(platform=db.PLATFORM_INSTAGRAM).inc()
         log.warning(
             "Queue %d: container creation failed (attempt %d/%d): %s",
             queued_id, attempts, cfg.max_publish_attempts, exc,
@@ -250,18 +422,18 @@ async def publish_queued_instagram(
     try:
         await publisher.await_container(graph, cfg, container_id=container_id, token=token)
         result = await publisher.publish_container(
-            graph, cfg, ig_user_id=ig_user_id, token=token, container_id=container_id
+            graph, cfg, ig_user_id=account_id, token=token, container_id=container_id
         )
     except publisher.PublishError as exc:
         await db.set_queue_state(conn, queued_id, db.QUEUE_FAILED, failure=str(exc))
-        metrics.publish_failures.inc()
+        metrics.publish_failures.labels(platform=db.PLATFORM_INSTAGRAM).inc()
         log.error("Queue %d: publish failed after the container existed: %s", queued_id, exc)
         return False, False
 
     await db.mark_queue_published(
         conn, queued_id, media_id=result.media_id, permalink=result.permalink
     )
-    metrics.posts_published.inc()
+    metrics.posts_published.labels(platform=db.PLATFORM_INSTAGRAM).inc()
 
     # Registering the post is what makes the keyword mechanic work on it. It
     # happens here rather than as a separate call from the Mac because the media
@@ -269,7 +441,7 @@ async def publish_queued_instagram(
     await db.register_post(
         conn,
         media_id=result.media_id,
-        ig_user_id=ig_user_id,
+        account_id=account_id,
         keyword=queued["keyword"],
         link=queued["link"],
     )
@@ -295,7 +467,7 @@ async def run_slot(
     if not await db.claim_slot_fire(conn, slot_id=slot.id, local_date=day_key):
         return False
 
-    queued = await db.next_approved(conn, account["ig_user_id"])
+    queued = await db.next_approved(conn, account["account_id"])
     if queued is None:
         # An empty queue is normal, not an error. The fire stays claimed so a
         # post approved later today waits for tomorrow's slot rather than going
@@ -333,7 +505,7 @@ async def tick_once(
     # the queue rather than about Meta, and a destination missing from here is
     # a destination that silently stops posting.
     for account in await db.active_accounts(conn, platform=None):
-        for row in await db.active_slots(conn, account["ig_user_id"]):
+        for row in await db.active_slots(conn, account["account_id"]):
             slot = schedule.Slot.from_row(row)
             local_day = schedule.due(
                 slot, moment, grace_minutes=cfg.scheduler_grace_minutes
@@ -365,7 +537,7 @@ async def scheduler_loop(
 
 
 async def upcoming(
-    conn: aiosqlite.Connection, cfg: GatewaySettings, ig_user_id: str, *, moment: datetime | None
+    conn: aiosqlite.Connection, cfg: GatewaySettings, account_id: str, *, moment: datetime | None
 ) -> list[tuple[Any, datetime | None]]:
     """Queued posts paired with when each is expected to go out.
 
@@ -375,9 +547,9 @@ async def upcoming(
     """
     moment = moment or db.now()
     rows = await db.queued_posts(
-        conn, ig_user_id=ig_user_id, states=(db.QUEUE_DRAFT, db.QUEUE_APPROVED)
+        conn, account_id=account_id, states=(db.QUEUE_DRAFT, db.QUEUE_APPROVED)
     )
-    slots = [schedule.Slot.from_row(r) for r in await db.active_slots(conn, ig_user_id)]
+    slots = [schedule.Slot.from_row(r) for r in await db.active_slots(conn, account_id)]
 
     # Only armed posts consume a slot. A draft sitting at the head of the queue
     # is not what goes out on Thursday, and showing it that way would be a lie

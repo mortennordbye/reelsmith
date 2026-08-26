@@ -106,20 +106,50 @@ and the app has to be **Live** or no webhook is ever delivered.
 curl -s -X POST localhost:8000/api/accounts \
   -H "authorization: Bearer $GATEWAY_API_TOKEN" \
   -H "content-type: application/json" \
-  -d '{"ig_user_id":"...","access_token":"...","expires_in":5184000}'
+  -d '{"account_id":"...","access_token":"...","expires_in":5184000}'
 ```
 
 That call also subscribes the account to `messages`. Skipping it produces no
 error and no webhooks, which looks exactly like nobody messaging the account.
 
+### TikTok, and why there is a refresher
+
+The third destination, and the only one whose token can be lost for good.
+
+Instagram's token is refreshed by the render host's `--snapshot` job, and a
+missed pass costs a day. Google's refresh token has no clock, so YouTube needs
+no loop at all. TikTok's access token lasts 24 hours and its refresh token is
+**rewritten on every use**: the one just spent is dead the moment the response
+arrives. So `poller.tiktok_refresher_loop` runs daily, and it commits what came
+back before doing anything with the access token it came with. Failing after
+that write costs a day. Failing before it costs the account, recoverable only
+by a person in a browser.
+
+`tiktok_credentials` is its own table for the same reason `youtube_credentials`
+is: three platforms with three shapes, and one table holding all of them would
+be two thirds null on every row. Only this one needs `refresh_expires_at`.
+
+**Two publish paths, and they end differently.** Direct Post needs an audit that
+reviews a posting screen this repo does not have; the unaudited path forces
+`SELF_ONLY` on a private account. The inbox path needs no audit and drops the
+video into the creator's drafts for one tap. They differ by one field, one
+endpoint and one success state, which is why `gateway/tiktok.py` serves both and
+a refusal costs a config flag rather than a rewrite. `SEND_TO_USER_INBOX` is the
+finish line on the inbox path and an intermediate state on the other, so waiting
+for `PUBLISH_COMPLETE` on the inbox path times out on a video that worked.
+
+**TikTok reports failure inside a 200** as readily as with a status code, so
+every response is read for `error.code` rather than for its status.
+
 ### Registering a YouTube channel
 
 A second destination. It shares the queue, the slots, the claims and the admin
 panel, because none of that is Meta-specific; only the publish call is. What
-tells them apart is `accounts.platform`, and `ig_user_id` holds the channel id
-on a YouTube row. The column name lies on those rows, which was worth less than
-renaming it across every query and template in the same change that added the
-feature.
+tells them apart is `accounts.platform`, and `account_id` holds the channel id
+on a YouTube row. It was called `ig_user_id` until 2026-08-26, when it stopped
+being true on two thirds of the rows it was about to carry; every route and body
+still accepts the old name, because a render host that has not been pulled yet
+is still sending it.
 
 ```bash
 curl -s -X POST localhost:8000/api/accounts/youtube \

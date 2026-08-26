@@ -51,7 +51,7 @@ async def test_registering_a_second_instagram_account_keeps_the_first_ones_slots
     """
     conn = await db.connect(cfg.db_path)
     try:
-        await db.upsert_account(conn, ig_user_id=ACCOUNT, access_token="tok")
+        await db.upsert_account(conn, account_id=ACCOUNT, access_token="tok")
     finally:
         await conn.close()
 
@@ -59,7 +59,7 @@ async def test_registering_a_second_instagram_account_keeps_the_first_ones_slots
 
     conn = await db.connect(cfg.db_path)
     try:
-        await db.upsert_account(conn, ig_user_id=SECOND, access_token="tok")
+        await db.upsert_account(conn, account_id=SECOND, access_token="tok")
     finally:
         await conn.close()
 
@@ -83,9 +83,9 @@ async def test_an_unresolved_line_freezes_the_sweep_for_every_account(cfg, meta)
     )
     conn = await db.connect(before.db_path)
     try:
-        await db.upsert_account(conn, ig_user_id=ACCOUNT, access_token="tok")
+        await db.upsert_account(conn, account_id=ACCOUNT, access_token="tok")
         await db.upsert_account(
-            conn, ig_user_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
+            conn, account_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
         )
     finally:
         await conn.close()
@@ -98,7 +98,7 @@ async def test_an_unresolved_line_freezes_the_sweep_for_every_account(cfg, meta)
     # A second Instagram account arrives, so the unnamed line stops resolving.
     conn = await db.connect(before.db_path)
     try:
-        await db.upsert_account(conn, ig_user_id=SECOND, access_token="tok")
+        await db.upsert_account(conn, account_id=SECOND, access_token="tok")
     finally:
         await conn.close()
 
@@ -124,8 +124,8 @@ async def test_naming_the_account_survives_a_second_one_being_registered(cfg, me
     )
     conn = await db.connect(named.db_path)
     try:
-        await db.upsert_account(conn, ig_user_id=ACCOUNT, access_token="tok")
-        await db.upsert_account(conn, ig_user_id=SECOND, access_token="tok")
+        await db.upsert_account(conn, account_id=ACCOUNT, access_token="tok")
+        await db.upsert_account(conn, account_id=SECOND, access_token="tok")
     finally:
         await conn.close()
 
@@ -145,9 +145,9 @@ async def test_a_line_actually_deleted_from_config_still_removes_its_slots(cfg, 
     )
     conn = await db.connect(both.db_path)
     try:
-        await db.upsert_account(conn, ig_user_id=ACCOUNT, access_token="tok")
+        await db.upsert_account(conn, account_id=ACCOUNT, access_token="tok")
         await db.upsert_account(
-            conn, ig_user_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
+            conn, account_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
         )
     finally:
         await conn.close()
@@ -177,7 +177,7 @@ async def test_the_deletion_says_what_it_deleted(cfg, meta, caplog, monkeypatch)
     named = settings(cfg.db_path.parent, slots=f"06:00 UTC account={ACCOUNT}")
     conn = await db.connect(named.db_path)
     try:
-        await db.upsert_account(conn, ig_user_id=ACCOUNT, access_token="tok")
+        await db.upsert_account(conn, account_id=ACCOUNT, access_token="tok")
     finally:
         await conn.close()
 

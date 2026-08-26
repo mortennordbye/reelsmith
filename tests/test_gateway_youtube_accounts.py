@@ -52,10 +52,10 @@ def metrics():
 async def conn(cfg):
     """One account of each kind, which is the shape the cluster will run."""
     connection = await db.connect(cfg.db_path)
-    await db.upsert_account(connection, ig_user_id=ACCOUNT, access_token="tok")
+    await db.upsert_account(connection, account_id=ACCOUNT, access_token="tok")
     await db.upsert_account(
         connection,
-        ig_user_id=CHANNEL,
+        account_id=CHANNEL,
         access_token="",
         username="@reelsmith",
         platform=db.PLATFORM_YOUTUBE,
@@ -91,10 +91,10 @@ async def _publish_to_both(conn) -> None:
     would pass with no filter in place.
     """
     await db.register_post(
-        conn, media_id="media-1", ig_user_id=ACCOUNT, keyword="send", link=LINK
+        conn, media_id="media-1", account_id=ACCOUNT, keyword="send", link=LINK
     )
     await db.register_post(
-        conn, media_id="yt-video-1", ig_user_id=CHANNEL, keyword="send", link=LINK
+        conn, media_id="yt-video-1", account_id=CHANNEL, keyword="send", link=LINK
     )
 
 
@@ -146,7 +146,7 @@ async def test_the_scheduler_looks_at_every_platform(conn, graph, cfg, metrics):
     channel's slots at all.
     """
     seen = [
-        account["ig_user_id"]
+        account["account_id"]
         for account in await db.active_accounts(conn, platform=None)
     ]
 
@@ -157,14 +157,14 @@ async def test_the_scheduler_looks_at_every_platform(conn, graph, cfg, metrics):
 
 async def test_the_admin_panel_lists_every_platform(client):
     http, app = client
-    await db.upsert_account(app.state.db, ig_user_id=ACCOUNT, access_token="tok")
+    await db.upsert_account(app.state.db, account_id=ACCOUNT, access_token="tok")
     await db.upsert_account(
-        app.state.db, ig_user_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
+        app.state.db, account_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
     )
 
     accounts = await db.all_accounts(app.state.db, platform=None)
 
-    assert {a["ig_user_id"] for a in accounts} == {ACCOUNT, CHANNEL}
+    assert {a["account_id"] for a in accounts} == {ACCOUNT, CHANNEL}
 
 
 async def test_the_default_is_instagram_so_a_missed_call_site_is_inert(conn):
@@ -174,8 +174,8 @@ async def test_the_default_is_instagram_so_a_missed_call_site_is_inert(conn):
     Meta and was never updated should ignore a new destination; the opposite
     default would have it send a channel id to graph.instagram.com.
     """
-    assert [a["ig_user_id"] for a in await db.all_accounts(conn)] == [ACCOUNT]
-    assert [a["ig_user_id"] for a in await db.active_accounts(conn)] == [ACCOUNT]
+    assert [a["account_id"] for a in await db.all_accounts(conn)] == [ACCOUNT]
+    assert [a["account_id"] for a in await db.active_accounts(conn)] == [ACCOUNT]
 
 
 # --- Registration -----------------------------------------------------------
@@ -260,7 +260,7 @@ async def test_re_authorising_a_channel_does_not_un_pause_it(client):
 async def test_the_platform_of_an_existing_row_is_not_overwritten(conn):
     """A row changing destination would point a queue full of posts somewhere
     new, which is a mistake rather than a re-authorisation."""
-    await db.upsert_account(conn, ig_user_id=CHANNEL, access_token="tok")
+    await db.upsert_account(conn, account_id=CHANNEL, access_token="tok")
 
     assert (await db.get_account(conn, CHANNEL))["platform"] == db.PLATFORM_YOUTUBE
 
@@ -279,9 +279,9 @@ async def test_config_slots_still_apply_once_a_channel_is_registered(cfg, meta):
     cfg = settings(cfg.db_path.parent, slots="18:00 Europe/Oslo jitter=15")
     conn = await db.connect(cfg.db_path)
     try:
-        await db.upsert_account(conn, ig_user_id=ACCOUNT, access_token="tok")
+        await db.upsert_account(conn, account_id=ACCOUNT, access_token="tok")
         await db.upsert_account(
-            conn, ig_user_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
+            conn, account_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
         )
     finally:
         await conn.close()
@@ -323,9 +323,9 @@ async def test_each_destination_gets_its_own_slots(cfg, meta):
     )
     conn = await db.connect(cfg.db_path)
     try:
-        await db.upsert_account(conn, ig_user_id=ACCOUNT, access_token="tok")
+        await db.upsert_account(conn, account_id=ACCOUNT, access_token="tok")
         await db.upsert_account(
-            conn, ig_user_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
+            conn, account_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
         )
     finally:
         await conn.close()
@@ -354,9 +354,9 @@ async def test_removing_a_channels_lines_stops_it_posting(cfg, meta):
     )
     conn = await db.connect(with_channel.db_path)
     try:
-        await db.upsert_account(conn, ig_user_id=ACCOUNT, access_token="tok")
+        await db.upsert_account(conn, account_id=ACCOUNT, access_token="tok")
         await db.upsert_account(
-            conn, ig_user_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
+            conn, account_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
         )
     finally:
         await conn.close()
@@ -383,10 +383,10 @@ async def test_named_lines_still_apply_when_an_unnamed_one_is_ambiguous(cfg, met
     conn = await db.connect(cfg.db_path)
     try:
         # Two Instagram accounts, so the unnamed line cannot be resolved.
-        await db.upsert_account(conn, ig_user_id=ACCOUNT, access_token="tok")
-        await db.upsert_account(conn, ig_user_id="17841400000000001", access_token="tok")
+        await db.upsert_account(conn, account_id=ACCOUNT, access_token="tok")
+        await db.upsert_account(conn, account_id="17841400000000001", access_token="tok")
         await db.upsert_account(
-            conn, ig_user_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
+            conn, account_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
         )
     finally:
         await conn.close()

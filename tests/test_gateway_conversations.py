@@ -27,9 +27,9 @@ def cfg(tmp_path):
 @pytest.fixture
 async def conn(cfg):
     connection = await db.connect(cfg.db_path)
-    await db.upsert_account(connection, ig_user_id=ACCOUNT, access_token="tok", username="reels")
+    await db.upsert_account(connection, account_id=ACCOUNT, access_token="tok", username="reels")
     await db.register_post(
-        connection, media_id="media-1", ig_user_id=ACCOUNT, keyword="send", link=LINK
+        connection, media_id="media-1", account_id=ACCOUNT, keyword="send", link=LINK
     )
     yield connection
     await connection.close()
@@ -74,7 +74,7 @@ async def reply_to(conn, graph, cfg, metrics, cid="c1"):
 
 async def inbound(conn, graph, cfg, metrics, igsid=IGSID):
     return await conversations.handle_inbound_message(
-        conn, graph, cfg, metrics, igsid=igsid, ig_user_id=ACCOUNT
+        conn, graph, cfg, metrics, igsid=igsid, account_id=ACCOUNT
     )
 
 
@@ -144,7 +144,7 @@ async def test_a_crash_after_claiming_still_blocks_a_retry(conn, graph, cfg, met
     Losing one reply is the deliberate trade. Meta may have accepted the send
     before the crash, and a duplicate is worse than a miss.
     """
-    await db.claim_comment(conn, comment_id="c9", media_id="media-1", ig_user_id=ACCOUNT)
+    await db.claim_comment(conn, comment_id="c9", media_id="media-1", account_id=ACCOUNT)
 
     outcome = await reply_to(conn, graph, cfg, metrics, cid="c9")
 
@@ -186,7 +186,7 @@ async def test_the_private_reply_opens_a_conversation_from_the_recipient_id(
 ):
     await reply_to(conn, graph, cfg, metrics)
 
-    conversation = await db.get_conversation(conn, igsid=IGSID, ig_user_id=ACCOUNT)
+    conversation = await db.get_conversation(conn, igsid=IGSID, account_id=ACCOUNT)
     assert conversation is not None
     assert conversation["state"] == db.STATE_REPLIED
     assert conversation["media_id"] == "media-1"
@@ -216,7 +216,7 @@ async def test_the_link_arrives_once_the_follow_shows_up(conn, graph, cfg, metri
 
     assert outcome.action == "link_sent"
     assert LINK in meta.texts[0]
-    conversation = await db.get_conversation(conn, igsid=IGSID, ig_user_id=ACCOUNT)
+    conversation = await db.get_conversation(conn, igsid=IGSID, account_id=ACCOUNT)
     assert conversation["state"] == db.STATE_CONVERTED
     assert conversation["link_sent_at"] is not None
 
@@ -393,7 +393,7 @@ LINK2 = "https://github.com/xai-org/grok-build"
 
 async def _second_post(conn):
     await db.register_post(
-        conn, media_id="media-2", ig_user_id=ACCOUNT, keyword="grok", link=LINK2
+        conn, media_id="media-2", account_id=ACCOUNT, keyword="grok", link=LINK2
     )
     return await db.get_post(conn, "media-2")
 
@@ -498,22 +498,22 @@ async def test_the_backfill_does_not_resend_to_someone_already_converted(cfg):
     """Shipping this must not blast a link at everyone who already has one."""
     conn = await db.connect(cfg.db_path)
     try:
-        await db.upsert_account(conn, ig_user_id=ACCOUNT, access_token="tok")
+        await db.upsert_account(conn, account_id=ACCOUNT, access_token="tok")
         await db.register_post(
-            conn, media_id="media-1", ig_user_id=ACCOUNT, keyword="send", link=LINK
+            conn, media_id="media-1", account_id=ACCOUNT, keyword="send", link=LINK
         )
         await db.claim_comment(
-            conn, comment_id="c1", media_id="media-1", ig_user_id=ACCOUNT
+            conn, comment_id="c1", media_id="media-1", account_id=ACCOUNT
         )
         await db.mark_comment_replied(conn, "c1", igsid=IGSID)
         await db.start_conversation(
-            conn, igsid=IGSID, ig_user_id=ACCOUNT, media_id="media-1"
+            conn, igsid=IGSID, account_id=ACCOUNT, media_id="media-1"
         )
         await db.record_delivery(
-            conn, igsid=IGSID, ig_user_id=ACCOUNT, media_id="media-1"
+            conn, igsid=IGSID, account_id=ACCOUNT, media_id="media-1"
         )
 
-        assert await db.pending_ask(conn, igsid=IGSID, ig_user_id=ACCOUNT) is None
+        assert await db.pending_ask(conn, igsid=IGSID, account_id=ACCOUNT) is None
     finally:
         await conn.close()
 
@@ -552,7 +552,7 @@ async def test_the_same_person_commenting_on_a_second_post_still_gets_a_reply(
     """The guard is per post. A new Reel is a new ask."""
     await reply_to(conn, graph, cfg, metrics, cid="c1")
     await db.register_post(
-        conn, media_id="media-2", ig_user_id=ACCOUNT, keyword="grok", link=LINK2
+        conn, media_id="media-2", account_id=ACCOUNT, keyword="grok", link=LINK2
     )
     meta.sends.clear()
 

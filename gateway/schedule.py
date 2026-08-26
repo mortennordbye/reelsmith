@@ -40,7 +40,7 @@ class Slot:
     """A schedule_slots row, with the parsing done once."""
 
     id: int
-    ig_user_id: str
+    account_id: str
     hour: int
     minute: int
     tz: str
@@ -51,7 +51,7 @@ class Slot:
     def from_row(cls, row: Any) -> Slot:
         return cls(
             id=int(row["id"]),
-            ig_user_id=str(row["ig_user_id"]),
+            account_id=str(row["account_id"]),
             hour=int(row["hour"]),
             minute=int(row["minute"]),
             tz=str(row["tz"] or "UTC"),

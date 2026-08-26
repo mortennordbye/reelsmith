@@ -10,6 +10,7 @@ send exactly one of these".
 from __future__ import annotations
 
 import json
+import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,6 +26,8 @@ IGSID = "9876543210"
 # A YouTube channel id: `UC` and 22 more characters. Registered as an account
 # row alongside the Instagram one, which is the shape the cluster runs.
 CHANNEL = "UCq0Ff3lJ7dK2sWnEv8mXtLp"
+# A TikTok open id, which is what `accounts.account_id` holds on a TikTok row.
+OPEN_ID = "_000TikTokOpenIdLooksLikeThis0000"
 
 
 @dataclass
@@ -79,6 +82,129 @@ class FakeYouTube:
 
 
 @dataclass
+class FakeTikTok:
+    """Stands in for open.tiktokapis.com.
+
+    Four calls, and the interesting assertions are about two boundaries. One is
+    the same line `publisher.PublishError` draws: a failure before `publish_id`
+    exists is retryable and one after it is not. The other is the path, because
+    `SEND_TO_USER_INBOX` is the finish line on the inbox path and a stage on the
+    direct one, and a publisher that gets that wrong hangs on a video that
+    already worked.
+
+    TikTok reports failure inside a 200 as readily as with a status code, so
+    `error_code` produces the shape a real refusal has rather than an HTTP
+    error, which is what a naive client would sail straight past.
+    """
+
+    publish_id: str = "tt-publish-1"
+    access_token: str = "act.fake"
+    # What a refresh hands back. Different from what was sent, because rotation
+    # is the whole reason this platform needs a refresher loop.
+    refresh_token: str = "rft.rotated"
+    expires_in: int = 86_400
+    refresh_expires_in: int = 31_536_000
+    privacy_level_options: list[str] = field(
+        default_factory=lambda: ["PUBLIC_TO_EVERYONE", "SELF_ONLY"]
+    )
+    max_video_post_duration_sec: int = 600
+    # The statuses `status/fetch` will report, in order, one per poll. The last
+    # one repeats once the list runs out.
+    statuses: list[str] = field(default_factory=lambda: ["PUBLISH_COMPLETE"])
+    fail_reason: str = ""
+    # A TikTok error code returned inside a 200, which is how a real refusal
+    # arrives. `unaudited_client_can_only_post_to_private_accounts` is the one
+    # worth reaching for.
+    error_code: str = ""
+    token_error: str = ""
+    # Every init body, so a test can assert whether post_info was sent at all.
+    inits: list[dict[str, Any]] = field(default_factory=list)
+    init_urls: list[str] = field(default_factory=list)
+    # Every refresh token this fake was sent, so a test can prove the caller
+    # stored the last one it was given.
+    refresh_tokens_seen: list[str] = field(default_factory=list)
+    polls: int = 0
+
+    def handle(self, request: httpx.Request) -> httpx.Response | None:
+        """Answer if this is ours, otherwise None so the others get a look."""
+        url = str(request.url)
+        if not url.startswith("https://open.tiktokapis.com"):
+            return None
+
+        if url.endswith("/v2/oauth/token/"):
+            self.refresh_tokens_seen.append(
+                dict(urllib.parse.parse_qsl(request.content.decode())).get(
+                    "refresh_token", ""
+                )
+            )
+            if self.token_error:
+                return httpx.Response(
+                    200,
+                    json={
+                        "error": self.token_error,
+                        "error_description": "no",
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": self.access_token,
+                    "refresh_token": self.refresh_token,
+                    "expires_in": self.expires_in,
+                    "refresh_expires_in": self.refresh_expires_in,
+                    "open_id": OPEN_ID,
+                },
+            )
+
+        if url.endswith("/creator_info/query/"):
+            if self.error_code:
+                return httpx.Response(200, json=self._error())
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "creator_username": "nightlybuild",
+                        "privacy_level_options": self.privacy_level_options,
+                        "comment_disabled": False,
+                        "duet_disabled": False,
+                        "stitch_disabled": False,
+                        "max_video_post_duration_sec": self.max_video_post_duration_sec,
+                    },
+                    "error": {"code": "ok"},
+                },
+            )
+
+        if url.endswith("/video/init/"):
+            self.init_urls.append(url)
+            self.inits.append(json.loads(request.content))
+            if self.error_code:
+                return httpx.Response(200, json=self._error())
+            return httpx.Response(
+                200,
+                json={"data": {"publish_id": self.publish_id}, "error": {"code": "ok"}},
+            )
+
+        if url.endswith("/status/fetch/"):
+            index = min(self.polls, len(self.statuses) - 1)
+            self.polls += 1
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "status": self.statuses[index],
+                        "fail_reason": self.fail_reason,
+                    },
+                    "error": {"code": "ok"},
+                },
+            )
+
+        return httpx.Response(404, json=self._error("unknown_endpoint"))
+
+    def _error(self, code: str = "") -> dict[str, Any]:
+        return {"error": {"code": code or self.error_code, "message": "refused"}}
+
+
+@dataclass
 class FakeMeta:
     """Stands in for graph.instagram.com.
 
@@ -106,9 +232,11 @@ class FakeMeta:
     # retention ones, which is how Meta treats an image post. The client is
     # expected to notice and ask again without them.
     not_a_reel: set[str] = field(default_factory=set)
-    # The gateway hands one httpx client to both upstreams, so one transport
-    # has to answer for both. Google gets first refusal and falls through.
+    # The gateway hands one httpx client to every upstream, so one transport
+    # has to answer for all of them. Google gets first refusal, then TikTok,
+    # and Meta is the fallthrough.
     youtube: FakeYouTube = field(default_factory=FakeYouTube)
+    tiktok: FakeTikTok = field(default_factory=FakeTikTok)
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self._handle)
@@ -128,6 +256,10 @@ class FakeMeta:
         google = self.youtube.handle(request)
         if google is not None:
             return google
+
+        bytedance = self.tiktok.handle(request)
+        if bytedance is not None:
+            return bytedance
 
         if path.endswith("/messages") and request.method == "POST":
             if self.fail_sends_with:
