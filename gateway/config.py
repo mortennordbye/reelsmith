@@ -69,6 +69,25 @@ class GatewaySettings(BaseSettings):
     token_refresh_margin_days: int = 15
     token_refresh_interval_s: int = 86_400
 
+    # --- TikTok ---------------------------------------------------------------
+    # Off by default, like the scheduler and for the same reason: publishing to
+    # a third real account should be a decision rather than something gained by
+    # upgrading. See GATEWAY_TIKTOK_* in .env.example.
+    tiktok_enabled: bool = False
+    # Daily, and unlike the Meta margin this is not a "when it is nearly due"
+    # check. TikTok's access token lasts 24 hours, so a daily pass is the
+    # minimum that keeps one alive at all; the refresh token's own year is
+    # extended as a side effect. Anything slower and the account is dead between
+    # passes.
+    tiktok_refresh_interval_s: int = 86_400
+    # Direct Post or the inbox. Off until the audit lands, which
+    # docs/tiktok-api-setup.md argues will probably be never: the audit reviews
+    # a posting screen this repo does not have and rejects apps "designed for
+    # private/personal use only". The unaudited path forces SELF_ONLY on a
+    # private account, so the inbox is the only thing that actually publishes
+    # before then.
+    tiktok_direct_post: bool = False
+
     # --- Insights ------------------------------------------------------------
     # Reads how published Reels are doing. Read only against Meta: it creates
     # nothing, publishes nothing and messages nobody, which is why it is on by
