@@ -103,9 +103,13 @@ no equivalent there, so the link goes in the description directly and the
 written call to action is stripped.
 Verify: one render produces two queue rows and one media file.
 
-**5. Config and rollout.** `GATEWAY_YOUTUBE_ENABLED`, off by default for the
+**5. Config and rollout.** ~~`GATEWAY_YOUTUBE_ENABLED`~~, off by default for the
 same reason `scheduler_enabled` is: publishing to a second real account should
-be a decision rather than something gained by upgrading. `privacyStatus`
+be a decision rather than something gained by upgrading. **Never built, and
+decided against on 2026-08-26**: nothing on the YouTube path runs unless a slot
+fires, and a slot only fires when the scheduler is on, so it would be a second
+gate on something already gated completely. `gateway/config.py` says so where
+the flag would have been. `privacyStatus`
 explicit in config and set to `private` until the audit lands, so the pre-audit
 behaviour is chosen rather than discovered. `containsSyntheticMedia` decided and
 the reasoning written down. A Homelab PR for the ConfigMap and the secret.

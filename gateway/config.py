@@ -213,10 +213,36 @@ class GatewaySettings(BaseSettings):
     # back downgraded, since that is what the lock would look like if it ever
     # does apply here.
     youtube_privacy_status: str = "private"
-    # A declaration, not a default. This account's voice is a clone of a real
-    # person reading a script that person commissioned, which is a judgment
-    # call rather than an obvious yes or no. See PROFILE.md.
+    # A declaration, not a default, and answered the same way on both platforms
+    # that ask. **Revisited on 2026-08-26 against TikTok's `is_aigc`, which is
+    # the same question**, and kept at False for a reason rather than because a
+    # value had to be sent.
+    #
+    # What these fields ask is whether the content is synthetic media: generated
+    # or meaningfully altered so that it depicts something that did not happen.
+    # Here the voice is a clone of a real person, reading a script that person
+    # commissioned, about a repository that exists, over a screenshot of that
+    # repository's own README. Nothing depicts anything that did not happen. A
+    # cloned voice reading its owner's words is closer to a person using a
+    # microphone than to a fabricated likeness, and the label exists for the
+    # second thing.
+    #
+    # That is a judgement and it is worth re-reading if the format ever gains a
+    # face, a person who did not consent, or a claim the video acts out rather
+    # than reports. **The two flags move together or not at all**, and one
+    # changed without the other is the bug to look for. See PROFILE.md.
     youtube_synthetic_media: bool = False
+    # Deliberately absent: GATEWAY_YOUTUBE_ENABLED.
+    #
+    # `docs/youtube-publishing-plan.md` names it and it was never built. Adding
+    # it now would be a second gate on something `scheduler_enabled` already
+    # gates completely: nothing on the YouTube path runs unless a slot fires,
+    # and a slot only fires when the scheduler is on.
+    #
+    # `tiktok_enabled` is not the same case, and the asymmetry is the point.
+    # That platform has a background loop of its own, rotating a token daily,
+    # which would call TikTok on every deployment that has no TikTok account.
+    # A flag earns its place when something runs without it.
     # Shorts are 10 to 20 MB and go up in seconds on any real connection. The
     # ceiling is for a stalled transfer, not a slow one.
     youtube_upload_timeout_s: int = 600

@@ -220,9 +220,30 @@ three docs are `docs/tiktok-api-setup.md`, `docs/multi-destination-audit.md` and
 - **TikTok's gate is not YouTube's gate.** YouTube's private lock turned out not
   to apply here. TikTok's is enforced by a documented error code, and the audit
   that lifts it reviews a posting screen this repo does not have and rejects
-  apps "designed for private/personal use only". So there is no publisher yet on
-  purpose, and the plan builds one serving both the audited and the unaudited
-  path so a refusal costs a flag.
+  apps "designed for private/personal use only". So the publisher serves both
+  the audited and the unaudited path and a refusal costs a flag:
+  `GATEWAY_TIKTOK_DIRECT_POST` off is the inbox, which needs no audit and drops
+  the video into the creator's drafts for one tap, and
+  `GATEWAY_TIKTOK_PRIVACY_LEVEL` is `SELF_ONLY` until the audit lands so the
+  pre-audit behaviour is chosen rather than discovered.
+- **`GATEWAY_TIKTOK_ENABLED` gates three things and there is no YouTube
+  equivalent on purpose.** It gates the token refresher, the insights sweep and
+  publishing, and a queued TikTok row reaching a slot with it off fails that row
+  rather than retrying, because a flag that is off is not a transient condition.
+  `docs/youtube-publishing-plan.md` named a `GATEWAY_YOUTUBE_ENABLED` that was
+  never built, and it is decided against rather than added: nothing on the
+  YouTube path runs unless a slot fires, and a slot only fires when the
+  scheduler is on. A flag earns its place when something runs without it, which
+  is what the TikTok refresher does.
+- **`is_aigc` and `containsSyntheticMedia` are the same question and they move
+  together.** Both are `false`, and since 2026-08-26 for a reason rather than
+  because a value had to be sent: the fields ask whether the content depicts
+  something that did not happen, and here a cloned voice reads its owner's own
+  words about a repository that exists over a screenshot of that repository's
+  README. Worth re-reading if the format ever gains a face, a person who did not
+  consent, or a claim the video acts out rather than reports. One changed
+  without the other is the bug to look for; the reasoning is in
+  `gateway/config.py` next to the flag.
 
 ### An account is a directory, and it is never guessed
 

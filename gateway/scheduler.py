@@ -248,6 +248,24 @@ async def publish_queued_tiktok(
     queued_id = int(queued["id"])
     open_id = account["account_id"]
 
+    if not cfg.tiktok_enabled:
+        # The same decision `scheduler_enabled` makes one level up: publishing
+        # to a third real account is a choice rather than something gained by
+        # upgrading. Failing the row rather than retrying it, because a flag
+        # that is off is not a transient condition and a row retrying against
+        # it forever would look like an API problem.
+        await db.set_queue_state(
+            conn, queued_id, db.QUEUE_FAILED,
+            failure="TikTok publishing is off (GATEWAY_TIKTOK_ENABLED)",
+        )
+        metrics.publish_failures.labels(platform=db.PLATFORM_TIKTOK).inc()
+        log.error(
+            "Queue %d is for TikTok and GATEWAY_TIKTOK_ENABLED is false. "
+            "Nothing was sent. Turn it on, or cancel the row.",
+            queued_id,
+        )
+        return False, False
+
     stored = await db.tiktok_credentials(conn, open_id)
     if stored is None:
         # An account row with no credentials cannot be fixed by trying again.
