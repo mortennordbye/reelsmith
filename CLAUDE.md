@@ -310,16 +310,24 @@ section is.
   one or two and stop on their own. A ten-post queue is the case
   `db.live_media_names` already exists to protect, so nothing on the gateway
   side has to change to hold one.
-- **One render feeds both destinations.** `--enqueue` and `--recover` make an
-  Instagram row and a YouTube row from the same MP4, uploaded once, so the
-  nightly needs no second render and no extra step to keep the channel fed. It
-  is driven by `YOUTUBE_CHANNEL_ID` in the render host's `.env`, and without it
-  the fan-out skips YouTube silently and only the Reel is queued. The channel
-  id is all that host needs: the gateway holds the OAuth credentials, so no
-  Google secret reaches the machine that renders.
+- **One render feeds all three destinations.** `--enqueue` and `--recover` make
+  an Instagram row, a YouTube row and a TikTok row from the same MP4, uploaded
+  once, so the nightly needs no second render and no extra step to keep three
+  surfaces fed. It is driven by `YOUTUBE_CHANNEL_ID` and `TIKTOK_OPEN_ID` in
+  the render host's `.env`, and without either the fan-out skips that
+  destination silently and queues the rest. The id is all that host needs: the
+  gateway holds the credentials, so no Google or TikTok secret reaches the
+  machine that renders.
+- **Which render goes where is a decision, not a detail.** YouTube gets
+  `out-no-cta.mp4`, because a follow ask on a surface that calls following
+  subscribing reads wrong. TikTok gets `out.mp4`, because it is a feed like
+  Instagram's and the word is the same word. The caption follows the same
+  split: `youtube_description` takes the ask out and `tiktok_title` keeps it.
+  Say so in the code rather than letting it be whichever variable was nearest.
 - **`--max-queue` counts the Instagram queue only.** YouTube drains one a day
-  against Instagram's three, so its queue grows by design. Counted in the
-  ceiling it would climb past `--max-queue` on its own and pin the batch at
+  against Instagram's three, so its queue grows by design, and a third queue
+  draining at its own rate does not change that reasoning. Counted in the
+  ceiling either would climb past `--max-queue` on its own and pin the batch at
   zero renders, permanently, with every component still reporting healthy. The
   ceiling asks whether the feed is stocked far enough ahead, and the feed is
   Instagram.

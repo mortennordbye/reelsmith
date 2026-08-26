@@ -38,6 +38,13 @@ log = logging.getLogger(__name__)
 #
 #   a line of its own       "Comment ADHD and I will send you the link."
 #   the tail of a paragraph "...patched only afterwards. Comment REVIEW for the link."
+# TikTok's one caption field. Measured in UTF-16 runes rather than characters,
+# which matters only for emoji and astral glyphs, and PROFILE.md bans both. The
+# gateway trims to the same number; this is here so the copy that reaches a
+# viewer is decided where the wording rules live rather than by a truncation
+# somewhere downstream.
+_TIKTOK_TITLE_LIMIT = 2_200
+
 _CTA_LINE_RE = re.compile(
     r"^\s*(?:comment\s+[A-Za-z0-9]{2,}|follow\s+(?:for|to|so|us|me|this|the\s+account))\b.*$",
     re.IGNORECASE,
@@ -165,6 +172,59 @@ def youtube_description(caption: str, link: str) -> str:
     tags = lines.pop() if lines and lines[-1].lstrip().startswith("#") else ""
     prose = "\n".join(lines).strip()
     return "\n\n".join(part for part in (prose, f"Repo: {link}", tags) if part)
+
+
+def tiktok_title(caption: str, link: str) -> str:
+    """The Instagram caption, folded into the one field TikTok has.
+
+    A third shape, not a variation on the other two. Instagram takes a caption
+    and YouTube takes a title plus a description, so `youtube_description`
+    could drop the ask and keep everything else in place. TikTok has one
+    `title` of 2,200 UTF-16 runes carrying the ask, the link and the hashtags
+    together, and it is what shows under the video rather than above it.
+
+    **The ask stays**, which is the difference from YouTube. It came out there
+    because a description saying "follow" on a surface that calls it
+    subscribing reads wrong. TikTok is a feed like Instagram's, the word is the
+    same word, and the ask is the account's current call to action on all three
+    surfaces.
+
+    The written ask the model produced anyway still comes out, the same way it
+    does everywhere else, so ours is the only one. Fixing two channels of three
+    is how a video shipped asking for two different things in one breath.
+
+    Here rather than in the gateway for the reason `youtube_description` is
+    here: this is where `strip_written_cta` and the wording rules live, and a
+    gateway that rebuilt the copy would be a second place for it to drift.
+    """
+    lines = [line for line in strip_written_cta(caption).splitlines() if line.strip()]
+    tags = lines.pop() if lines and lines[-1].lstrip().startswith("#") else ""
+    prose = "\n".join(lines).strip()
+    whole = "\n\n".join(
+        part for part in (prose, CAPTION_CTA, f"Repo: {link}", tags) if part
+    )
+    if len(whole) <= _TIKTOK_TITLE_LIMIT:
+        return whole
+
+    # Over the limit, things come off in the order they are worth least. The
+    # hashtags go first, then the link: a truncated URL is worse than no URL
+    # and half a hashtag is a tell. The prose is trimmed last and the ask is
+    # never trimmed, because a caption that runs out mid sentence still reads
+    # as a caption, and one that loses its call to action has lost the only
+    # thing it was asking for.
+    #
+    # Reaching any of this means something odd upstream: the caption is written
+    # to a budget an order of magnitude inside this.
+    for without in (
+        (prose, CAPTION_CTA, f"Repo: {link}"),
+        (prose, CAPTION_CTA),
+    ):
+        shorter = "\n\n".join(part for part in without if part)
+        if len(shorter) <= _TIKTOK_TITLE_LIMIT:
+            return shorter
+
+    room = _TIKTOK_TITLE_LIMIT - len(CAPTION_CTA) - 2
+    return f"{prose[:room].rstrip()}\n\n{CAPTION_CTA}"
 
 
 def strip_cta_cues(cues: list[VisualCue]) -> list[VisualCue]:
