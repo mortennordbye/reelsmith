@@ -225,19 +225,16 @@ if [[ -d "$PRIVATE_DIR" ]]; then
     printf '  resulting accounts/<name>/ onto the share.\n'
   fi
 
-  # The pre-accounts layout, still linked while a host is mid migration. Delete
-  # this block once every host reports its accounts under $PRIVATE_DIR/accounts.
-  [[ -e "$PRIVATE_DIR/ref/morten.wav" ]] &&
-    ln -sfn "$PRIVATE_DIR/ref/morten.wav" tools/chatterbox/ref/morten.wav
-  if [[ -d "$PRIVATE_DIR/data" && ! -L data ]]; then
-    rm -rf data
-    ln -sfn "$PRIVATE_DIR/data" data
-    # data/.gitkeep is tracked, and replacing the directory reads as an
-    # uncommitted deletion forever. Hide it locally rather than committing a
-    # change that only makes sense on this host.
-    git update-index --skip-worktree data/.gitkeep 2>/dev/null || true
-    grep -qxF "/data" .git/info/exclude 2>/dev/null || echo "/data" >> .git/info/exclude
-  fi
+  # The pre-accounts layout is gone. Every host now keeps its identity under
+  # $PRIVATE_DIR/accounts/<name>/, so nothing links $PRIVATE_DIR/ref or
+  # $PRIVATE_DIR/data any more.
+  #
+  # It is worth saying why the old block is deleted rather than left as a
+  # fallback. It ended in `[[ -e "$PRIVATE_DIR/ref/morten.wav" ]] && ln -sfn`,
+  # and under `set -e` a failing test at the end of an `&&` list exits the
+  # script. So the moment the legacy recording was tidied away, this stopped
+  # linking anything at all and reported success by exiting early. A fallback
+  # that breaks when the thing it falls back from is removed is worse than none.
 else
   printf '  %s is not mounted; skipping. The pipeline will not find the voice\n' "$PRIVATE_DIR"
   printf '  or the profile until it is.\n'

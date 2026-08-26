@@ -116,8 +116,29 @@ def apply(moves: list[Move]) -> list[Move]:
             # symlink to a share makes likely. `shutil.move` on a symlink moves
             # the link itself, which is exactly what is wanted.
             shutil.move(str(move.source), str(move.target))
+            _keep_tracked_placeholders(move)
         done.append(move)
     return done
+
+
+# Files that are tracked in git but sit inside a directory this moves. They are
+# repo scaffolding rather than account state, so they travel with the directory
+# and leave a deletion behind in `git status`.
+#
+# `data/.gitkeep` is the only one today. On a host where `pod-setup.sh` has set
+# `skip-worktree` the deletion is invisible, which is how this went unnoticed
+# the first time; on a laptop it shows as a `D` and stays there until somebody
+# works out whether it matters. It does not, and a migration that leaves a
+# dirty tree behind invites exactly that question at exactly the wrong moment.
+_TRACKED_PLACEHOLDERS = (".gitkeep",)
+
+
+def _keep_tracked_placeholders(move: Move) -> None:
+    """Put back any tracked placeholder the directory move carried off."""
+    for name in _TRACKED_PLACEHOLDERS:
+        if (move.target / name).is_file() and not (move.source / name).exists():
+            move.source.mkdir(parents=True, exist_ok=True)
+            (move.source / name).touch()
 
 
 # What a new account's `.env` starts as. Only the per account half, because the

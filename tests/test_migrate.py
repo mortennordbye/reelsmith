@@ -116,6 +116,34 @@ def test_nothing_there_is_reported_rather_than_failing(tmp_path):
     assert [m.source.name for m in done] == [".env"]
 
 
+def test_a_tracked_placeholder_is_left_where_git_expects_it(checkout):
+    """`data/.gitkeep` is tracked, and moving the directory carries it off,
+    which leaves a `D` in `git status` that stays until somebody works out
+    whether it matters.
+
+    It does not, and on a host where `pod-setup.sh` has set `skip-worktree` the
+    deletion is invisible, which is how it went unnoticed the first time. A
+    migration that leaves a dirty tree behind invites exactly that question at
+    exactly the wrong moment.
+    """
+    (checkout / "data" / ".gitkeep").touch()
+
+    migrate.apply(migrate.plan("nightlybuild", root=checkout))
+
+    assert (checkout / "data" / ".gitkeep").is_file()
+    assert (checkout / "accounts" / "nightlybuild" / "data" / "used_repos.json").is_file()
+
+
+def test_nothing_is_put_back_where_there_was_no_placeholder(checkout):
+    """Only files git tracks come back. Recreating the directory otherwise
+    would leave `data/` looking like a store that had been emptied."""
+    (checkout / "data" / ".gitkeep").unlink(missing_ok=True)
+
+    migrate.apply(migrate.plan("nightlybuild", root=checkout))
+
+    assert not (checkout / "data").exists()
+
+
 def test_running_it_twice_moves_nothing_the_second_time(checkout):
     migrate.apply(migrate.plan("nightlybuild", root=checkout))
 
