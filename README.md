@@ -47,6 +47,9 @@ mkdir -p accounts/nightlybuild
 echo "REELSMITH_ACCOUNT=nightlybuild" >> .env
 ```
 
+`python main.py --new-account <name>` makes the directory, a `data/`, a `ref/`
+and an `.env` of commented out lines, and prints what is left to do by hand.
+
 There is no default account and no resolving one by counting. Without
 `REELSMITH_ACCOUNT` or `--account <name>`, every run fails at startup naming the
 accounts it can see. Guessing wrong publishes to the wrong audience and nothing

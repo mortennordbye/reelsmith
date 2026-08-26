@@ -307,6 +307,49 @@ no stage signature changes.
   were, so a checkout mid migration reads the store it already has rather than
   starting an empty one.
 
+### A second account is not a second niche, and only one of them is built
+
+`--account` gives a second account its own credentials, cooldown store, voice
+and build subtree. It does not give it a different **subject**, and the
+distance between those two is worth knowing before anything is promised.
+
+`python main.py --new-account <name>` makes the directory, a `data/`, a `ref/`
+and an `.env` of commented out lines. Every line is commented out on purpose: a
+profile with a blank `IG_USER_ID` looks configured and fails at the first
+publish, where one with nothing set fails at `require_instagram`, which says
+what is missing and where to set it. It fills nothing in, because the voice
+recording, the identity and the editorial section are all things only a person
+can produce.
+
+**A second account in the same niche works today.** A second niche does not,
+and these are the measured reasons rather than a guess:
+
+- **`VideoSpec.repo: RepoMeta` is the one real interface break.** It is
+  required, and mirrored in `video/src/schema.ts`, so generalising it to a
+  subject touches every stage. Nothing else in the models is niche specific.
+- **`spec.repo` is read in exactly two places on the render side**, the
+  `repo_card` branch of `SceneRenderer.tsx` and the `BrowserFrame` URL label.
+  Verified 2026-08-26 and still true. A new niche needs one scene component and
+  a label, not a redesign.
+- **Reusable unchanged**: `tts.py`, `captions.py`, `spec.py`, `renderer.py`,
+  `publisher.py`, `results.py`, `backfill.py`, the whole of `gateway/`, the
+  scheduler, the cooldown tables and the insights sweep.
+- **Not reusable**: `sources/github.py`, the discovery and ranking half of
+  `pipeline/scraper.py`, and `SYSTEM_PROMPT` in `pipeline/scriptwriter.py`.
+
+**The generalisation is deliberately not built yet, and that is a decision
+rather than an omission.** The only second niche that exists is prototyped
+outside the pipeline: `video/src/spinoff/` has its own Remotion entry point and
+`tools/spinoff/voice.py` is a script rather than a stage, so nothing consumes a
+`VideoSpec` in that shape. Generalising a required field for a consumer that
+does not exist, whose shot kit has not met `SceneRenderer` yet, is inventing the
+abstraction before the second case can argue with it. `PROFILE.md` also records
+that niche's supply problem as open, which means the second case is not settled
+enough to design against.
+
+So the order is: settle the second niche's shape against the real renderer,
+then break the interface once, with two real callers to check it. Not before.
+
 **Registering a second Instagram account used to delete the first one's
 schedule**, at boot, with one warning line describing a different symptom. Fixed
 2026-08-26: the config slot sweep no longer runs while any slot line is
