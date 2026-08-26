@@ -28,7 +28,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -424,13 +424,39 @@ _MIGRATIONS: tuple[str, ...] = (
     ALTER TABLE insights         RENAME COLUMN ig_user_id TO account_id;
     ALTER TABLE rendered_repos   RENAME COLUMN ig_user_id TO account_id;
     """,
+    # 16. TikTok credentials.
+    #
+    # A table rather than more nullable columns on `accounts`, for the same
+    # reason `youtube_credentials` is one: Meta's shape is a token plus an
+    # expiry, Google's is a client pair plus a refresh token with no clock, and
+    # this is a client pair plus a refresh token that **has** a clock and is
+    # **rewritten on every use**. One table holding all three would be two
+    # thirds null on every row.
+    #
+    # `refresh_expires_at` is the column neither of the others needs. TikTok's
+    # refresh token lasts 365 days and rotates on every refresh, so a dropped
+    # write is not a bad day, it is an account that cannot be recovered without
+    # a browser. `refreshed_at` exists so a refresher that has quietly stopped
+    # shows up as a stale date rather than only when the year runs out.
+    """
+    CREATE TABLE tiktok_credentials (
+        open_id            TEXT PRIMARY KEY,
+        client_key         TEXT NOT NULL,
+        client_secret      TEXT NOT NULL,
+        refresh_token      TEXT NOT NULL,
+        refresh_expires_at TEXT NOT NULL DEFAULT '',
+        refreshed_at       TEXT NOT NULL DEFAULT '',
+        created_at         TEXT NOT NULL
+    );
+    """,
 )
 
 # Which service an account row publishes to. `account_id` holds a Meta user id
 # on an instagram row and a channel id on a youtube one.
 PLATFORM_INSTAGRAM = "instagram"
 PLATFORM_YOUTUBE = "youtube"
-PLATFORMS = (PLATFORM_INSTAGRAM, PLATFORM_YOUTUBE)
+PLATFORM_TIKTOK = "tiktok"
+PLATFORMS = (PLATFORM_INSTAGRAM, PLATFORM_YOUTUBE, PLATFORM_TIKTOK)
 
 # Conversation states. `replied` means the private reply went out and we are
 # waiting for the commenter to open the messaging window by saying anything at
@@ -693,6 +719,83 @@ async def youtube_credentials(
     return await _one(
         conn, "SELECT * FROM youtube_credentials WHERE channel_id = ?", (channel_id,)
     )
+
+
+async def upsert_tiktok_credentials(
+    conn: aiosqlite.Connection,
+    *,
+    open_id: str,
+    client_key: str,
+    client_secret: str,
+    refresh_token: str,
+    refresh_expires_in: int | None = None,
+) -> None:
+    """Store what is needed to mint an access token for one TikTok account.
+
+    Re-authorising replaces all of it, including the expiry, because a fresh
+    consent round trip hands back a fresh year.
+    """
+    expires_at = ""
+    if refresh_expires_in:
+        expires_at = iso(now() + timedelta(seconds=refresh_expires_in))
+    await conn.execute(
+        """
+        INSERT INTO tiktok_credentials (open_id, client_key, client_secret,
+                                        refresh_token, refresh_expires_at,
+                                        refreshed_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(open_id) DO UPDATE SET
+            client_key = excluded.client_key,
+            client_secret = excluded.client_secret,
+            refresh_token = excluded.refresh_token,
+            refresh_expires_at = excluded.refresh_expires_at,
+            refreshed_at = excluded.refreshed_at
+        """,
+        (open_id, client_key, client_secret, refresh_token, expires_at,
+         iso(now()), iso(now())),
+    )
+    await conn.commit()
+
+
+async def tiktok_credentials(
+    conn: aiosqlite.Connection, open_id: str
+) -> Mapping[str, Any] | None:
+    return await _one(
+        conn, "SELECT * FROM tiktok_credentials WHERE open_id = ?", (open_id,)
+    )
+
+
+async def save_tiktok_refresh(
+    conn: aiosqlite.Connection,
+    open_id: str,
+    refresh_token: str,
+    refresh_expires_in: int | None = None,
+) -> None:
+    """Write back the refresh token TikTok just handed us.
+
+    **The one write in this file that cannot be skipped.** TikTok rotates the
+    refresh token on every use and says to use the new one, so the token that
+    was just spent is dead. Losing this write does not cost a day the way a
+    missed Meta refresh does; it costs the account, recoverable only by a person
+    in a browser.
+
+    Committed here rather than left to the caller, so the token is durable
+    before anything is done with the access token it came with.
+    """
+    expires_at = ""
+    if refresh_expires_in:
+        expires_at = iso(now() + timedelta(seconds=refresh_expires_in))
+    await conn.execute(
+        """
+        UPDATE tiktok_credentials
+           SET refresh_token = ?,
+               refresh_expires_at = COALESCE(NULLIF(?, ''), refresh_expires_at),
+               refreshed_at = ?
+         WHERE open_id = ?
+        """,
+        (refresh_token, expires_at, iso(now()), open_id),
+    )
+    await conn.commit()
 
 
 # --------------------------------------------------------------------------

@@ -11,8 +11,18 @@ reply window is seven days wide.
 days, is refreshed rather than reissued, and once expired cannot be refreshed at
 all. Nothing else in this service notices that happening.
 
-Both loops swallow their exceptions on purpose. A poll that throws must not take
-the webhook receiver down with it.
+**The TikTok refresher is a third loop and a genuinely different mechanism.**
+Instagram's refresh rides on the render host's `--snapshot` job and YouTube
+needs none, because Google's refresh token has no clock. TikTok's access token
+lasts 24 hours and its refresh token **rotates on every use**, so the token just
+spent is dead the moment the response arrives. A missed Meta refresh costs a
+day. A dropped TikTok write costs the account, recoverable only by a person in
+a browser. That is why the write happens before anything is done with the access
+token it came back with, and why it is not conditional on the token looking
+different.
+
+All three loops swallow their exceptions on purpose. A poll that throws must not
+take the webhook receiver down with it.
 """
 
 from __future__ import annotations
@@ -22,8 +32,9 @@ import logging
 from typing import Any
 
 import aiosqlite
+import httpx
 
-from gateway import conversations, db
+from gateway import conversations, db, tiktok
 from gateway.config import GatewaySettings
 from gateway.graph import GraphClient, GraphError
 from gateway.metrics import Metrics
@@ -147,3 +158,79 @@ async def refresher_loop(
         except Exception:
             log.exception("Token refresh pass failed, continuing")
         await asyncio.sleep(cfg.token_refresh_interval_s)
+
+
+async def refresh_tiktok_once(
+    conn: aiosqlite.Connection, http: httpx.AsyncClient, metrics: Metrics
+) -> int:
+    """Rotate every TikTok account's refresh token. Returns how many moved.
+
+    Unconditional rather than margin-based, unlike the Meta pass above. That one
+    skips an account with 40 days left because a refresh costs a call and buys
+    nothing. Here the access token lasts 24 hours, so a daily pass is the
+    minimum that keeps one alive at all, and the refresh token's own year is
+    extended as a side effect rather than as the goal.
+
+    **The write comes first.** `save_tiktok_refresh` commits the token TikTok
+    just handed back before this function does anything else with the access
+    token, because the one that was spent is already dead. Failing after the
+    write costs a day; failing before it costs the account.
+    """
+    rotated = 0
+    for account in await db.all_accounts(conn, platform=db.PLATFORM_TIKTOK):
+        open_id = account["account_id"]
+        stored = await db.tiktok_credentials(conn, open_id)
+        if not stored:
+            log.warning("TikTok account %s has no credentials row; skipping", open_id)
+            continue
+
+        expires = db.parse_iso(stored["refresh_expires_at"])
+        if expires:
+            days_left = (expires - db.now()).total_seconds() / 86_400
+            metrics.token_days_left.labels(ig_user_id=open_id).set(days_left)
+            if days_left <= 0:
+                # A year of daily refreshes should make this unreachable, so
+                # arriving here means the loop stopped and nobody noticed.
+                log.error(
+                    "TikTok refresh token for %s has expired. Re-authorise it in a "
+                    "browser; nothing here can recover it.",
+                    open_id,
+                )
+                continue
+
+        credentials = tiktok.Credentials(
+            open_id=open_id,
+            client_key=stored["client_key"],
+            client_secret=stored["client_secret"],
+            refresh_token=stored["refresh_token"],
+        )
+        try:
+            fresh = await tiktok.refresh_access_token(http, credentials=credentials)
+        except tiktok.PublishError as exc:
+            log.warning("TikTok token refresh for %s failed: %s", open_id, exc)
+            metrics.graph_errors.inc()
+            continue
+
+        await db.save_tiktok_refresh(
+            conn, open_id, fresh.refresh_token, fresh.refresh_expires_in
+        )
+        rotated += 1
+        log.info(
+            "Refreshed TikTok token for %s (refresh token %s)",
+            open_id,
+            "rotated" if fresh.rotated_from(credentials.refresh_token) else "unchanged",
+        )
+    return rotated
+
+
+async def tiktok_refresher_loop(
+    conn: aiosqlite.Connection, http: httpx.AsyncClient, cfg: GatewaySettings, metrics: Metrics
+) -> None:
+    while True:
+        try:
+            await refresh_tiktok_once(conn, http, metrics)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("TikTok token refresh pass failed, continuing")
+        await asyncio.sleep(cfg.tiktok_refresh_interval_s)
