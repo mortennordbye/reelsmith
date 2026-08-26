@@ -282,6 +282,25 @@ def _headers(cfg: Settings) -> dict[str, str]:
     return {"authorization": f"Bearer {cfg.gateway_token}"}
 
 
+def _scope(cfg: Settings) -> dict[str, str]:
+    """Which account is asking, for every read that can answer for one.
+
+    Left off, the gateway answers for all of them, and until a second account
+    existed that was harmless: the Instagram row and the YouTube row are the
+    same video for the same repo. With two accounts it is wrong in the
+    expensive direction. Account 2's discovery would read account 1's
+    commitments as its own and drop those repos, and the two would starve each
+    other out of the top of a stars-sorted result set, which is the failure
+    that killed two nights of batches in August with only one account doing it
+    to itself. F8.
+
+    Empty when no account is selected, which sends no parameter and asks the
+    same question this code asked before, so a checkout mid migration is not a
+    third behaviour to reason about.
+    """
+    return {"ig_user_id": cfg.ig_user_id} if cfg.ig_user_id else {}
+
+
 def _borrow(existing: httpx.Client | None) -> AbstractContextManager[httpx.Client]:
     """Use the caller's client without closing it, or own one and close it.
 
@@ -460,7 +479,7 @@ def fetch_queue(cfg: Settings, *, client: httpx.Client | None = None) -> list[di
     url = f"{cfg.gateway_url.rstrip('/')}/api/queue"
     try:
         with client or httpx.Client(timeout=_TIMEOUT) as http:
-            response = http.get(url, headers=_headers(cfg))
+            response = http.get(url, headers=_headers(cfg), params=_scope(cfg))
             response.raise_for_status()
             return list(response.json().get("queue") or [])
     except (httpx.HTTPError, ValueError) as exc:
@@ -482,7 +501,7 @@ def fetch_results(cfg: Settings, *, client: httpx.Client | None = None) -> list[
     url = f"{cfg.gateway_url.rstrip('/')}/api/results"
     try:
         with client or httpx.Client(timeout=_TIMEOUT) as http:
-            response = http.get(url, headers=_headers(cfg))
+            response = http.get(url, headers=_headers(cfg), params=_scope(cfg))
             response.raise_for_status()
             return list(response.json().get("results") or [])
     except (httpx.HTTPError, ValueError) as exc:
@@ -505,7 +524,7 @@ def fetch_covered(cfg: Settings, *, client: httpx.Client | None = None) -> dict[
     url = f"{cfg.gateway_url.rstrip('/')}/api/covered"
     try:
         with client or httpx.Client(timeout=_TIMEOUT) as http:
-            response = http.get(url, headers=_headers(cfg))
+            response = http.get(url, headers=_headers(cfg), params=_scope(cfg))
             response.raise_for_status()
             rows = response.json().get("covered") or []
     except (httpx.HTTPError, ValueError) as exc:
@@ -547,9 +566,7 @@ def fetch_pending_count(cfg: Settings, *, client: httpx.Client | None = None) ->
     url = f"{cfg.gateway_url.rstrip('/')}/api/queue"
     try:
         with client or httpx.Client(timeout=_TIMEOUT) as http:
-            response = http.get(
-                url, headers=_headers(cfg), params={"ig_user_id": cfg.ig_user_id}
-            )
+            response = http.get(url, headers=_headers(cfg), params=_scope(cfg))
             response.raise_for_status()
             rows = response.json().get("queue") or []
     except (httpx.HTTPError, ValueError) as exc:
@@ -577,7 +594,7 @@ def fetch_rendered(cfg: Settings, *, client: httpx.Client | None = None) -> dict
     url = f"{cfg.gateway_url.rstrip('/')}/api/rendered"
     try:
         with client or httpx.Client(timeout=_TIMEOUT) as http:
-            response = http.get(url, headers=_headers(cfg))
+            response = http.get(url, headers=_headers(cfg), params=_scope(cfg))
             response.raise_for_status()
             rows = response.json().get("rendered") or []
     except (httpx.HTTPError, ValueError) as exc:
@@ -659,7 +676,7 @@ def forget_rendered(
     url = f"{cfg.gateway_url.rstrip('/')}/api/rendered/{repo_full_name.strip('/')}"
     try:
         with _borrow(client) as http:
-            response = http.delete(url, headers=_headers(cfg))
+            response = http.delete(url, headers=_headers(cfg), params=_scope(cfg))
             response.raise_for_status()
     except (httpx.HTTPError, ValueError) as exc:
         log.warning(
