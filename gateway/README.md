@@ -141,6 +141,23 @@ for `PUBLISH_COMPLETE` on the inbox path times out on a video that worked.
 **TikTok reports failure inside a 200** as readily as with a status code, so
 every response is read for `error.code` rather than for its status.
 
+Turning it on is three settings and a registration:
+
+```bash
+GATEWAY_TIKTOK_ENABLED=true       # the refresher, the sweep, and publishing
+GATEWAY_TIKTOK_DIRECT_POST=false  # the inbox path, which needs no audit
+GATEWAY_TIKTOK_PRIVACY_LEVEL=SELF_ONLY   # what an unaudited client may ask for
+
+uv run python scripts/tiktok_authorise.py --gateway https://gate.example
+```
+
+`GATEWAY_TIKTOK_ENABLED` gates all three of those things, and a queued TikTok
+row reaching a slot with it off fails that row rather than retrying: a flag
+that is off is not a transient condition. There is deliberately no
+`GATEWAY_YOUTUBE_ENABLED`, because nothing on that path runs unless a slot
+fires and a slot only fires when the scheduler is on. A flag earns its place
+when something runs without it.
+
 ### Registering a YouTube channel
 
 A second destination. It shares the queue, the slots, the claims and the admin

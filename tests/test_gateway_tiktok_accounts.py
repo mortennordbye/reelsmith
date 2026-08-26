@@ -239,6 +239,36 @@ async def test_publishing_rotates_the_refresh_token_before_it_posts(conn, meta, 
     assert stored["refresh_token"] == "rft.rotated"
 
 
+async def test_the_flag_being_off_stops_a_publish_rather_than_retrying_it(
+    conn, meta, cfg, metrics
+):
+    """The same decision `scheduler_enabled` makes one level up: publishing to
+    a third real account is a choice rather than something gained by upgrading.
+
+    Failed rather than approved, because a flag that is off is not a transient
+    condition and a row retrying against it forever would look like an API
+    problem rather than a configuration one.
+    """
+    off = settings(cfg.db_path.parent, tiktok_enabled=False)
+    account = await db.get_account(conn, OPEN_ID)
+    queued_id = await db.enqueue_post(
+        conn, account_id=OPEN_ID, video_name="a.mp4", cover_name=None,
+        caption="c", keyword="X", link=LINK, repo_full_name="a/b", approved=True,
+    )
+
+    async with meta.client() as http:
+        published, retry = await scheduler.publish_queued(
+            conn, GraphClient(http, off), off, metrics,
+            account=account, queued=await db.get_queued(conn, queued_id),
+        )
+
+    assert (published, retry) == (False, False)
+    assert meta.tiktok.inits == []
+    row = await db.get_queued(conn, queued_id)
+    assert row["state"] == db.QUEUE_FAILED
+    assert "GATEWAY_TIKTOK_ENABLED" in row["failure"]
+
+
 # --- Registration -------------------------------------------------------------
 
 
