@@ -100,16 +100,20 @@
       letter-spacing: .06em; font-weight: 600; padding: 3px 9px;
       border-radius: var(--r-sm); vertical-align: middle; margin-right: 4px;
     }
-    /* Violet and red rather than anything from the palette above: green,
+    /* Violet, red and teal rather than anything from the palette above: green,
        copper and salmon already mean approved, waiting and failed, and a badge
-       that borrows a state colour is a badge that gets misread as a state. */
+       that borrows a state colour is a badge that gets misread as a state.
+       Three hues from three parts of the wheel, so they stay separable when
+       two boards sit next to each other and when neither is read in colour. */
     .platform.instagram { color: #c98ae0; background: #241a2b; border: 1px solid #4d3a63; }
     .platform.youtube { color: #ff6b5e; background: #2b1310; border: 1px solid #6b2b24; }
+    .platform.tiktok { color: #4fd1c5; background: #10262b; border: 1px solid #24575e; }
     /* The stripe repeats the badge down the left edge, so scrolling past a
        heading does not lose which surface you are looking at. */
     h2.board { display: flex; align-items: center; gap: 8px; padding-left: 10px; }
     h2.board.instagram { border-left: 3px solid #4d3a63; }
     h2.board.youtube { border-left: 3px solid #6b2b24; }
+    h2.board.tiktok { border-left: 3px solid #24575e; }
     button, .btn {
       font: inherit; font-size: 13px; padding: 5px 11px; border-radius: var(--r-sm);
       border: 1px solid var(--line-2); background: #1c1c1c; color: var(--ink);
@@ -141,11 +145,12 @@
       border: 1px solid transparent;
     }
     .switcher a.on { color: var(--ink); border-color: var(--line-2); background: #1c1c1c; }
-    /* Same two hues as the board badges, so the picker and the heading it
+    /* Same three hues as the board badges, so the picker and the heading it
        selects agree without the header growing a second word. */
     .switcher .mark { margin-right: 5px; }
     .switcher .mark.instagram { color: #c98ae0; }
     .switcher .mark.youtube { color: #ff6b5e; }
+    .switcher .mark.tiktok { color: #4fd1c5; }
     /* Per-post numbers. A fixed grid rather than a table, because the row has
        a thumbnail beside it and a table would fight the video element. */
     .metrics { display: flex; gap: 20px; flex-wrap: wrap; margin: 8px 0 0; }

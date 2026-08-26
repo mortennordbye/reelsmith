@@ -35,6 +35,7 @@ from gateway.models import (
     QueueSubmission,
     Registered,
     RenderedRepo,
+    TikTokAccountRegistration,
     YouTubeAccountRegistration,
 )
 
@@ -126,12 +127,22 @@ async def metrics(request: Request) -> Response:
 
 
 async def _refresh_queue_depth(conn: Any, metrics: Any) -> None:
-    depth = await db.queue_depth(conn)
-    # Every state is published, including the ones at zero. Without this a row
-    # leaving `failed` would leave the series at its last non-zero value
-    # forever, so the alert that fired would never resolve.
-    for state in db.QUEUE_STATES:
-        metrics.queue_depth.labels(state=state).set(depth.get(state, 0))
+    depth = await db.queue_depth_by_account(conn)
+    # Every account crossed with every state, including the pairs at zero.
+    # Without this a row leaving `failed` would leave the series at its last
+    # non-zero value forever, so the alert that fired would never resolve. An
+    # account is included whether or not it has ever queued anything, because a
+    # destination sitting at zero is exactly what "it stopped publishing three
+    # days ago" looks like.
+    accounts = {str(row["account_id"]) for row in await db.all_accounts(conn, platform=None)}
+    # Plus any account that owns rows but no longer has a row of its own, which
+    # is a queue nothing will drain and the last thing to hide from a gauge.
+    accounts |= {account for account, _ in depth}
+    for account in sorted(accounts):
+        for state in db.QUEUE_STATES:
+            metrics.queue_depth.labels(state=state, account=account).set(
+                depth.get((account, state), 0)
+            )
 
 
 @router.post("/api/posts", response_model=Registered, dependencies=[Depends(require_token)])
@@ -211,6 +222,43 @@ async def register_youtube_account(
     # reaches a log line, here or anywhere.
     log.info("Registered the YouTube channel %s", body.channel_id)
     return Registered(detail=f"stored {body.channel_id}")
+
+
+@router.post(
+    "/api/accounts/tiktok", response_model=Registered, dependencies=[Depends(require_token)]
+)
+async def register_tiktok_account(
+    request: Request, body: TikTokAccountRegistration
+) -> Registered:
+    """Register a TikTok account to publish to, and store what mints its tokens.
+
+    Credentials first and the account row second, the same order as the YouTube
+    route and for the same reason: an account row whose credentials never
+    arrived is a row the scheduler picks up and fails on, while credentials
+    with no account row are inert.
+    """
+    conn = request.app.state.db
+    await db.upsert_tiktok_credentials(
+        conn,
+        open_id=body.open_id,
+        client_key=body.client_key,
+        client_secret=body.client_secret,
+        refresh_token=body.refresh_token,
+        refresh_expires_in=body.refresh_expires_in,
+    )
+    await db.upsert_account(
+        conn,
+        account_id=body.open_id,
+        # No Meta token exists for a TikTok account. See the v10 migration for
+        # why the column stays NOT NULL rather than being rebuilt to allow null.
+        access_token="",
+        username=body.username,
+        platform=db.PLATFORM_TIKTOK,
+    )
+    # The open id only. Nothing about the secret or the refresh token reaches a
+    # log line, here or anywhere.
+    log.info("Registered the TikTok account %s", body.open_id)
+    return Registered(detail=f"stored {body.open_id}")
 
 
 @router.post("/api/covers", response_model=CoverUploaded, dependencies=[Depends(require_token)])

@@ -1360,6 +1360,23 @@ async def queue_depth(conn: aiosqlite.Connection, account_id: str | None = None)
     return {str(row[0]): int(row[1]) for row in rows}
 
 
+async def queue_depth_by_account(
+    conn: aiosqlite.Connection,
+) -> dict[tuple[str, str], int]:
+    """The same count, split by account, keyed `(account_id, state)`.
+
+    So `reelsmith_queue_depth` can carry an account label. With three
+    destinations and two accounts a single number answers "is anything stuck"
+    and nothing else, and a queue that has stopped draining on one account is
+    hidden behind the others still moving. F7.
+    """
+    rows = await _all(
+        conn,
+        "SELECT account_id, state, COUNT(*) FROM queued_posts GROUP BY account_id, state",
+    )
+    return {(str(row[0]), str(row[1])): int(row[2]) for row in rows}
+
+
 # --------------------------------------------------------------------------
 # Slots
 # --------------------------------------------------------------------------

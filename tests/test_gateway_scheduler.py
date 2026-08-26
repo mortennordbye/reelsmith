@@ -421,4 +421,6 @@ async def test_a_missing_video_file_is_counted_as_a_failure(conn, cfg):
     await scheduler.tick_once(conn, graph_for(meta, cfg), cfg, metrics)
 
     assert (await db.get_queued(conn, queued_id))["state"] == db.QUEUE_FAILED
-    assert metrics.registry.get_sample_value("reelsmith_publish_failures_total") == 1
+    assert metrics.registry.get_sample_value(
+        "reelsmith_publish_failures_total", {"platform": db.PLATFORM_INSTAGRAM}
+    ) == 1
