@@ -61,6 +61,10 @@ set -euo pipefail
 NAS_HOST="${NAS_HOST:-nas.local.bigd.no}"
 NAS_SHARE="${NAS_SHARE:-shared-data}"
 NAS_BACKUP_ROOT="${NAS_BACKUP_ROOT:-documents/IT/Repo-Hidden-Files-Backups}"
+# The live private half, on the same share the backups go to. The render host
+# mounts this at /mnt/reelsmith. Kept in step with sync-private.sh, which reads
+# the same path under the same name.
+NAS_PRIVATE_ROOT="${NAS_PRIVATE_ROOT:-media/reelsmith}"
 NAS_DIR="${NAS_DIR:-}"
 KEEP="${KEEP:-14}"
 
@@ -155,6 +159,35 @@ fi
 if (( ${#missing[@]} )); then for f in "${missing[@]}"; do warn "$f not found"; done; fi
 (( ${#present[@]} )) || die "nothing to back up — manifest matched no existing files"
 
+# --- Resolve the destination: a share you mounted yourself, or mount it -----
+# A function because it has to run before the bundle, not after it: the live
+# copies of the render host's files are on this same share.
+resolve_base() {
+  if [[ -n "$NAS_DIR" ]]; then
+    [[ -d "$NAS_DIR" ]] || die "NAS_DIR '$NAS_DIR' is not a directory (is the share mounted?)"
+    BASE="$NAS_DIR"
+  else
+    NAS_USER=""
+    while [[ -z "$NAS_USER" ]]; do read -r -p "NAS username: " NAS_USER </dev/tty; done
+    # macOS refuses to mount the same SMB share twice ("File exists"). If it's
+    # already mounted (Finder, or a prior run), reuse it instead of failing — and
+    # don't unmount it on exit, since we didn't open it.
+    existing="$(/sbin/mount | awk -v sh="/$NAS_SHARE" '/\(smbfs/ && $1 ~ sh"$" {print $3; exit}')"
+    if [[ -n "$existing" ]]; then
+      log "//$NAS_HOST/$NAS_SHARE already mounted at $existing — reusing it"
+      BASE="$existing"
+    else
+      MNT="$(mktemp -d)"
+      log "Mounting //$NAS_USER@$NAS_HOST/$NAS_SHARE — enter the NAS password when asked"
+      # mount_smbfs prompts for the password itself; no sudo, nothing on disk.
+      mount_smbfs "//${NAS_USER}@${NAS_HOST}/${NAS_SHARE}" "$MNT" \
+        || die "SMB mount failed — check the username/password, that SMB is enabled on the NAS, and that '$NAS_USER' can access '$NAS_SHARE'"
+      MOUNTED=true
+      BASE="$MNT"
+    fi
+  fi
+}
+
 # --- Build the archive -----------------------------------------------------
 STAMP="$(date +%Y%m%d-%H%M%S)"
 ARCHIVE="${REPO}-$(hostname -s)-${STAMP}.zip"
@@ -174,11 +207,46 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# accounts/*/data/*.json is written by the render host every night and the copy
+# on the share is the live one. This laptop's is whatever it last happened to
+# hold, which on 2026-08-26 was a used_repos.json nine days behind and a
+# star_history.json two. sync-private.sh refuses to push these files for the
+# same reason; taking them from here would archive the stale side of exactly
+# that split, and star history is the half no gateway can reconstruct.
+#
+# So mount before bundling rather than after, and stage the files rather than
+# zipping them in place. Every file says where it came from, because a count of
+# 45 with no provenance is what made the stale copies look backed up.
+BASE=""
+if [[ "$MODE" == run ]]; then
+  resolve_base
+fi
+
+STAGE="$TMP/stage"
 log "Bundling ${#present[@]} files → $ARCHIVE"
-for f in "${present[@]}"; do printf '  \033[0;32m•\033[0m %s\n' "$f"; done
-# Paths are repo-relative (we cd'd to the repo root), so the zip restores into
-# the same tree on extract.
-zip -q "$TMP/$ARCHIVE" "${present[@]}"
+for f in "${present[@]}"; do
+  src="$f"
+  note=""
+  case "$f" in
+    accounts/*/data/*.json)
+      live="$BASE/$NAS_PRIVATE_ROOT/$f"
+      if [[ -n "$BASE" && -f "$live" ]]; then
+        src="$live"
+        note=" \033[0;34m(live, from the share)\033[0m"
+      elif [[ -n "$BASE" ]]; then
+        note=" \033[0;33m(local only — not on the share)\033[0m"
+      else
+        note=" \033[0;33m(local copy — share not mounted)\033[0m"
+      fi
+      ;;
+  esac
+  mkdir -p "$STAGE/$(dirname "$f")"
+  cp "$src" "$STAGE/$f"
+  printf "  \033[0;32m•\033[0m %s%b\n" "$f" "$note"
+done
+# Paths are repo-relative and the stage mirrors them, so the zip still restores
+# into the same tree on extract.
+( cd "$STAGE" && zip -q "$TMP/$ARCHIVE" "${present[@]}" )
 log "Archive size: $(du -h "$TMP/$ARCHIVE" | cut -f1)"
 
 if [[ "$MODE" == dry ]]; then
@@ -188,30 +256,6 @@ if [[ "$MODE" == dry ]]; then
   exit 0
 fi
 
-# --- Resolve the destination: a share you mounted yourself, or mount it -----
-if [[ -n "$NAS_DIR" ]]; then
-  [[ -d "$NAS_DIR" ]] || die "NAS_DIR '$NAS_DIR' is not a directory (is the share mounted?)"
-  BASE="$NAS_DIR"
-else
-  NAS_USER=""
-  while [[ -z "$NAS_USER" ]]; do read -r -p "NAS username: " NAS_USER </dev/tty; done
-  # macOS refuses to mount the same SMB share twice ("File exists"). If it's
-  # already mounted (Finder, or a prior run), reuse it instead of failing — and
-  # don't unmount it on exit, since we didn't open it.
-  existing="$(/sbin/mount | awk -v sh="/$NAS_SHARE" '/\(smbfs/ && $1 ~ sh"$" {print $3; exit}')"
-  if [[ -n "$existing" ]]; then
-    log "//$NAS_HOST/$NAS_SHARE already mounted at $existing — reusing it"
-    BASE="$existing"
-  else
-    MNT="$(mktemp -d)"
-    log "Mounting //$NAS_USER@$NAS_HOST/$NAS_SHARE — enter the NAS password when asked"
-    # mount_smbfs prompts for the password itself; no sudo, nothing on disk.
-    mount_smbfs "//${NAS_USER}@${NAS_HOST}/${NAS_SHARE}" "$MNT" \
-      || die "SMB mount failed — check the username/password, that SMB is enabled on the NAS, and that '$NAS_USER' can access '$NAS_SHARE'"
-    MOUNTED=true
-    BASE="$MNT"
-  fi
-fi
 
 # --- Copy, verify, prune ---------------------------------------------------
 DEST="$BASE/$NAS_SUBDIR"
