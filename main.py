@@ -227,6 +227,10 @@ def run(
             help="Plan the move of the single account layout into accounts/<name>/",
         ),
     ] = None,
+    new_account: Annotated[
+        str | None,
+        typer.Option("--new-account", help="Create an empty accounts/<name>/ profile"),
+    ] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
 ) -> None:
     _setup_logging(verbose)
@@ -236,6 +240,8 @@ def run(
     # whole of `--account`: bind the process, and no stage signature changes.
     if migrate_account:
         return _migrate_account(migrate_account, apply=yes)
+    if new_account:
+        return _new_account(new_account)
     try:
         cfg = select_account(resolve_account(account))
     except ConfigError as exc:
@@ -1715,6 +1721,39 @@ def _migrate_account(name: str, *, apply: bool) -> None:
         "[dim]The root .env was copied rather than moved, because it also holds "
         "the global half. Delete the per account lines from it by hand, then set "
         f"REELSMITH_ACCOUNT={name} there or pass --account {name}.[/]"
+    )
+
+
+def _new_account(name: str) -> None:
+    """Create an empty profile, and say what is left to do by hand.
+
+    No `--yes`, unlike `--migrate-account`. That one moves the only copy of a
+    cloned voice and a month of run folders; this one makes three directories
+    and a file of comments and cannot lose anything.
+
+    What it deliberately does not do is fill anything in. Every line of the
+    template is commented out, because a profile with a blank `IG_USER_ID`
+    looks configured and fails at the first publish, where one with nothing set
+    fails at `require_instagram` and says what is missing.
+    """
+    home, made = migrate.create(name)
+    if made:
+        console.print(f"[bold green]Created accounts/{name}/[/]")
+        for path in made:
+            console.print(f"  [green]+[/] {path.relative_to(ROOT)}")
+    else:
+        console.print(f"[yellow]accounts/{name}/ already exists.[/] [dim]Nothing changed.[/]")
+
+    console.print(
+        f"\n[dim]Left to do by hand, because none of it can be guessed:\n"
+        f"  - fill in accounts/{name}/.env\n"
+        f"  - record accounts/{name}/ref/voice.wav, 25 seconds, from\n"
+        f"    tools/chatterbox/ref/RECORD-THIS.txt. Sharing account 1's voice is\n"
+        f"    the strongest link there is between two accounts meant to look\n"
+        f"    unrelated.\n"
+        f"  - add a section for it to PROFILE.md, copying the template at the\n"
+        f"    bottom and overriding only what differs.\n"
+        f"Then: python main.py --account {name} --candidates[/]"
     )
 
 
