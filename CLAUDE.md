@@ -200,14 +200,16 @@ three docs are `docs/tiktok-api-setup.md`, `docs/multi-destination-audit.md` and
   and the render host is pulled by hand, so the side that lags is always the one
   sending the old name, and refusing it would turn a rename with no behaviour
   into discovery reading every account's commitments as its own.
-- **The whole publish fork is one `if` in `scheduler.publish_queued`.**
+- **The whole publish fork is one lookup in `scheduler.publish_queued`.**
   Everything above it is written about a queue that publishes something on a
   timetable and never looks at what. That is why a platform costs a module and a
-  branch rather than a subsystem. **Instagram is the fallthrough of that `if`**,
-  so a row for a platform with no branch is handed to Meta's publisher rather
-  than failing. That is the opposite of `db.active_accounts`, which defaults to
-  Instagram precisely so a missed call site is inert, and it is worth fixing in
-  the same change that adds a third platform.
+  branch rather than a subsystem. **Instagram used to be the fallthrough**, so a
+  row for a platform with no branch was handed to Meta's publisher: a Reels
+  container against a TikTok open id with an empty token, on a live account.
+  That was the opposite of `db.active_accounts`, which defaults to Instagram
+  precisely so a missed call site is inert. It matches on the platform now and
+  fails the row rather than the tick, so one misconfigured account cannot stop
+  the other two publishing. F1.
 - **The scriptwriter learns from Instagram alone, and this is not a gap to
   close.** `skip_rate` is the share who scrolled past inside three seconds and
   it is the one number the loop turns on. YouTube's `averageViewPercentage`

@@ -16,7 +16,7 @@
 <h2 class="board {{ _platform }}">
   <span class="platform {{ _platform }}">
     {{ platform_icon(_platform) }}
-    {{ 'YouTube' if _platform == 'youtube' else 'Instagram' }}
+    {{ {'youtube': 'YouTube', 'tiktok': 'TikTok'}.get(_platform, 'Instagram') }}
   </span>
   {{ account['username'] or account['account_id'] }}
   {% if not account['active'] %}<span class="tag failed">paused</span>{% endif %}

@@ -14,7 +14,7 @@ import pytest
 
 from gateway import api, db
 from gateway.app import create_app
-from tests.gateway_harness import ACCOUNT, API_TOKEN, FakeMeta, settings
+from tests.gateway_harness import ACCOUNT, API_TOKEN, CHANNEL, FakeMeta, settings
 
 AUTH = {"authorization": f"Bearer {API_TOKEN}"}
 LINK = "https://github.com/DietrichGebert/ponytail"
@@ -365,18 +365,36 @@ async def test_the_metrics_endpoint_publishes_the_queue_depth(client):
 
     body = (await http.get("/metrics")).text
 
-    assert 'reelsmith_queue_depth{state="draft"} 1.0' in body
+    assert f'reelsmith_queue_depth{{account="{ACCOUNT}",state="draft"}} 1.0' in body
 
 
 async def test_every_state_is_published_even_at_zero(client):
     """A gauge that only reports what exists leaves a series at its last
-    non-zero value forever, so the alert that fired never resolves."""
-    http, _ = client
+    non-zero value forever, so the alert that fired never resolves.
+
+    Per account since the label was added, so a registered account with an
+    empty queue reports zeroes rather than nothing.
+    """
+    http, app = client
+    await db.upsert_account(app.state.db, account_id=ACCOUNT, access_token="tok")
 
     body = (await http.get("/metrics")).text
 
     for state in db.QUEUE_STATES:
-        assert f'reelsmith_queue_depth{{state="{state}"}} 0.0' in body
+        assert f'reelsmith_queue_depth{{account="{ACCOUNT}",state="{state}"}} 0.0' in body
+
+
+async def test_an_account_that_has_never_queued_anything_still_gets_a_series(client):
+    """A destination sitting at zero is exactly what "it stopped publishing
+    three days ago" looks like, so it has to be reported rather than absent."""
+    http, app = client
+    await db.upsert_account(
+        app.state.db, account_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
+    )
+
+    body = (await http.get("/metrics")).text
+
+    assert f'reelsmith_queue_depth{{account="{CHANNEL}",state="approved"}} 0.0' in body
 
 
 async def test_a_row_leaving_failed_takes_the_gauge_back_down(client):
@@ -387,7 +405,8 @@ async def test_a_row_leaving_failed_takes_the_gauge_back_down(client):
         approved=False,
     )
     await db.set_queue_state(app.state.db, queued_id, db.QUEUE_FAILED)
-    assert 'reelsmith_queue_depth{state="failed"} 1.0' in (await http.get("/metrics")).text
+    failed = f'reelsmith_queue_depth{{account="{ACCOUNT}",state="failed"}}'
+    assert f"{failed} 1.0" in (await http.get("/metrics")).text
 
     await db.set_queue_state(app.state.db, queued_id, db.QUEUE_CANCELLED)
-    assert 'reelsmith_queue_depth{state="failed"} 0.0' in (await http.get("/metrics")).text
+    assert f"{failed} 0.0" in (await http.get("/metrics")).text

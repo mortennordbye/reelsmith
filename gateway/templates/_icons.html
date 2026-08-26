@@ -10,8 +10,7 @@
    badge or the switcher entry it sits in and there is one colour to change.
 
    The word is always rendered next to these. Colour and shape are a finding
-   aid, never the only thing distinguishing an Instagram board from a YouTube
-   one. #}
+   aid, never the only thing distinguishing one board from another. #}
 
 {% macro platform_icon(platform, size=13) -%}
   {%- if platform == 'youtube' -%}
@@ -20,6 +19,16 @@
       <rect x="2" y="5" width="20" height="14" rx="4"
             stroke="currentColor" stroke-width="2"/>
       <path d="M10.5 9.2v5.6l5-2.8z" fill="currentColor"/>
+    </svg>
+  {%- elif platform == 'tiktok' -%}
+    {# A quaver, which is the shape the eye finds at this size. The official
+       mark is two offset copies in two colours, which at 13px reads as a
+       smudge and cannot be drawn in currentColor. #}
+    <svg viewBox="0 0 24 24" width="{{ size }}" height="{{ size }}" fill="none"
+         aria-hidden="true" focusable="false" style="vertical-align:-2px">
+      <path d="M10 17.5V5.5l7 2.2" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="7.5" cy="17.5" r="2.6" stroke="currentColor" stroke-width="2"/>
     </svg>
   {%- else -%}
     <svg viewBox="0 0 24 24" width="{{ size }}" height="{{ size }}" fill="none"

@@ -87,6 +87,18 @@ class GatewaySettings(BaseSettings):
     # private account, so the inbox is the only thing that actually publishes
     # before then.
     tiktok_direct_post: bool = False
+    # Has to be one of the options `creator_info` returns or the post fails
+    # `privacy_level_option_mismatch`. SELF_ONLY until audited, so the pre-audit
+    # behaviour is chosen rather than discovered, exactly as
+    # `youtube_privacy_status` was.
+    tiktok_privacy_level: str = "SELF_ONLY"
+    # The same question `containsSyntheticMedia` asks on YouTube, and answered
+    # the same way for the same reason: the voice is a clone of a real person
+    # reading a script that person commissioned. They move together or not at
+    # all, so changing one without the other is the bug to look for.
+    tiktok_is_aigc: bool = False
+    tiktok_publish_timeout_s: int = 300
+    tiktok_poll_interval_s: int = 5
 
     # --- Insights ------------------------------------------------------------
     # Reads how published Reels are doing. Read only against Meta: it creates

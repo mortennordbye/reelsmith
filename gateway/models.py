@@ -112,6 +112,49 @@ class YouTubeAccountRegistration(BaseModel):
         return v
 
 
+class TikTokAccountRegistration(BaseModel):
+    """A TikTok account this gateway publishes to.
+
+    Its own model for the same reason the YouTube one is: three platforms with
+    three credential shapes, and one model covering all of them would be mostly
+    optional and would validate none of them.
+
+    The difference from YouTube's is the expiry. Google's refresh token has no
+    clock; this one lasts a year, rotates on every use, and is rewritten by the
+    refresher loop from the moment it is stored. `refresh_expires_in` is what
+    the OAuth response returned, so the first deadline is recorded rather than
+    guessed.
+    """
+
+    open_id: str = Field(min_length=1)
+    client_key: str = Field(min_length=1)
+    client_secret: str = Field(min_length=1)
+    refresh_token: str = Field(min_length=1)
+    # 31,536,000 seconds when it comes straight from the token endpoint. Left
+    # off it is stored blank, which the refresher reads as "no deadline known"
+    # and refreshes anyway, since it refreshes daily regardless.
+    refresh_expires_in: int | None = None
+    # The @handle, for the admin UI. Same column as an Instagram username.
+    username: str = ""
+
+    @field_validator("open_id")
+    @classmethod
+    def _not_a_handle(cls, v: str) -> str:
+        """Catch the handle-instead-of-open-id paste.
+
+        There is no prefix to check the way `UC` guards a channel id, so this
+        catches only the obvious mistake. An `@handle` or a URL would otherwise
+        register cleanly and fail at the first publish, weeks later and nowhere
+        near the cause.
+        """
+        v = v.strip()
+        if v.startswith("@") or "/" in v:
+            raise ValueError(
+                "open_id must be the open id from the OAuth response, not a handle or URL"
+            )
+        return v
+
+
 class QueueSubmission(BaseModel):
     """A rendered Reel the gateway should publish on the next due slot.
 
