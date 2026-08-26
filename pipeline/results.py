@@ -74,8 +74,20 @@ def recipe(cfg: Settings) -> str:
     and two with different ones are not, which is the whole claim.
 
     The commit is most of it, because the prompt lives in git. The digest
-    covers what git cannot see: an uncommitted edit mid-session, and the `.env`
-    knobs that change the output without changing a tracked file.
+    covers what git cannot see: an uncommitted edit mid-session, a checkout
+    where `git rev-parse` finds nothing, and the `.env` knobs that change the
+    output without changing a tracked file.
+
+    **The digest reads `scriptwriter.prompt_source`, not `SYSTEM_PROMPT`.**
+    It hashed the system prompt alone until 2026-08-26, which is roughly a
+    third of what the model is shown: the research rule, the whole hook
+    specification, the caption rules and the benchmark the results block
+    argues from are all in `_build_prompt` and `_results_block`, and editing
+    any of them left the fingerprint unchanged. That is the half most often
+    edited, so the digest was blind in exactly the direction it was built to
+    see. Every post published before this carries `0ec3237b` and is comparable
+    to nothing written after it, which is the honest answer rather than a
+    regression.
     """
     knobs = "|".join(
         str(x)
@@ -88,9 +100,10 @@ def recipe(cfg: Settings) -> str:
             cfg.tts_backend,
         )
     )
-    from pipeline.scriptwriter import SYSTEM_PROMPT
+    from pipeline import scriptwriter
 
-    digest = hashlib.sha256(f"{SYSTEM_PROMPT}\n{knobs}".encode()).hexdigest()[:8]
+    prompt = scriptwriter.prompt_source()
+    digest = hashlib.sha256(f"{prompt}\n{knobs}".encode()).hexdigest()[:8]
     return f"{_git_commit()}.{digest}"
 
 
