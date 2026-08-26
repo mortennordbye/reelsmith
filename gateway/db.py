@@ -28,7 +28,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -448,6 +448,25 @@ _MIGRATIONS: tuple[str, ...] = (
         refreshed_at       TEXT NOT NULL DEFAULT '',
         created_at         TEXT NOT NULL
     );
+    """,
+    # 17. Which platform a reading came from.
+    #
+    # The `insights` columns are Meta's REELS metric names and the sweep was
+    # Instagram only, so a YouTube post has never appeared in this table and a
+    # TikTok one never could. Storing them is worth doing; feeding them to the
+    # scriptwriter is not, and this column is what keeps those two questions
+    # apart. F5.
+    #
+    # `views`, `likes`, `comments` and `shares` fit what `/v2/video/query/`
+    # returns. `reach`, `saved`, `avg_watch_ms`, `total_watch_ms` and
+    # `skip_rate` stay 0 and mean "not measured on this platform", which is the
+    # same distinction `PastPost` already draws by carrying saves and shares as
+    # None rather than 0.
+    #
+    # Defaulted rather than backfilled: every row that already exists is
+    # Instagram's, because nothing else could ever have written one.
+    """
+    ALTER TABLE insights ADD COLUMN platform TEXT NOT NULL DEFAULT 'instagram';
     """,
 )
 
@@ -1309,6 +1328,47 @@ async def mark_queue_published(
     await conn.commit()
 
 
+async def resolve_media_id(
+    conn: aiosqlite.Connection, queued_id: int, *, media_id: str, permalink: str
+) -> None:
+    """Replace a published row's placeholder id with the real one.
+
+    Only TikTok needs this. Meta hands back a media id at publish time and
+    Google hands back a video id, so on those two the id stored at publish is
+    the id everything afterwards uses. TikTok's `status/fetch` reports the post
+    finished and returns neither an id nor a URL, so the row carries its
+    `publish_id` until the insights sweep lists the account's videos and works
+    out which one it became.
+
+    The `publish_id` is not lost: `container_id` still holds it, which is where
+    it was written before the publish was even attempted.
+    """
+    await conn.execute(
+        "UPDATE queued_posts SET media_id = ?, permalink = ? WHERE id = ?",
+        (media_id, permalink, queued_id),
+    )
+    await conn.commit()
+
+
+async def published_on(
+    conn: aiosqlite.Connection, account_id: str, limit: int = 40
+) -> list[Any]:
+    """One account's published queue rows, newest first.
+
+    For a sweep that has to work out which of the account's videos each row
+    became, which is a question only TikTok asks.
+    """
+    return await _all(
+        conn,
+        """
+        SELECT * FROM queued_posts
+        WHERE account_id = ? AND state = ?
+        ORDER BY published_at DESC LIMIT ?
+        """,
+        (account_id, QUEUE_PUBLISHED, limit),
+    )
+
+
 async def set_container(conn: aiosqlite.Connection, queued_id: int, container_id: str) -> None:
     """Record the container before waiting on it.
 
@@ -1555,12 +1615,18 @@ async def record_insights(
     metrics: Mapping[str, float],
     on: str | None = None,
     moment: datetime | None = None,
+    platform: str = PLATFORM_INSTAGRAM,
 ) -> None:
-    """Store today's reading for one Reel, replacing an earlier one same day.
+    """Store today's reading for one post, replacing an earlier one same day.
 
     Upsert rather than insert, so a manual refresh an hour after the daily
     sweep updates today's row instead of failing on the primary key or
     inventing a second reading for the same date.
+
+    `platform` decides what the zeroes mean. On an Instagram row every column
+    is measured. On a TikTok row `reach`, `saved`, `avg_watch_ms`,
+    `total_watch_ms` and `skip_rate` are 0 because that platform exposes none
+    of them, and nothing downstream may read those as a result.
     """
     moment = moment or now()
     await conn.execute(
@@ -1568,8 +1634,8 @@ async def record_insights(
         INSERT INTO insights
             (media_id, account_id, fetched_on, views, reach, likes, comments,
              saved, shares, avg_watch_ms, total_watch_ms, skip_rate,
-             fetched_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             fetched_at, platform)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (media_id, fetched_on) DO UPDATE SET
             views = excluded.views, reach = excluded.reach,
             likes = excluded.likes, comments = excluded.comments,
@@ -1577,7 +1643,8 @@ async def record_insights(
             avg_watch_ms = excluded.avg_watch_ms,
             total_watch_ms = excluded.total_watch_ms,
             skip_rate = excluded.skip_rate,
-            fetched_at = excluded.fetched_at
+            fetched_at = excluded.fetched_at,
+            platform = excluded.platform
         """,
         (
             media_id,
@@ -1593,13 +1660,33 @@ async def record_insights(
             int(metrics.get("total_watch_ms", 0)),
             float(metrics.get("skip_rate", 0.0)),
             moment.isoformat(),
+            platform,
         ),
     )
     await conn.commit()
 
 
+def _insights_where(account_id: str | None, platform: str | None) -> tuple[str, list[Any]]:
+    """The two filters every reader of `insights` wants, in one place.
+
+    `platform` exists so a caller that means "Instagram's numbers" can say so
+    rather than relying on a column no other platform happens to fill, which is
+    a rule that holds by accident until it does not.
+    """
+    clauses, args = [], []
+    if account_id:
+        clauses.append("account_id = ?")
+        args.append(account_id)
+    if platform:
+        clauses.append("platform = ?")
+        args.append(platform)
+    return (f"WHERE {' AND '.join(clauses)}" if clauses else ""), args
+
+
 async def reading_counts(
-    conn: aiosqlite.Connection, account_id: str | None = None
+    conn: aiosqlite.Connection,
+    account_id: str | None = None,
+    platform: str | None = None,
 ) -> dict[str, int]:
     """How many daily readings each post has, which is how settled it is.
 
@@ -1608,7 +1695,7 @@ async def reading_counts(
     the Mac so `--cohorts` there can hold back the same posts the panel does;
     two views of one question disagreeing is worse than either being wrong.
     """
-    where, args = ("WHERE account_id = ?", (account_id,)) if account_id else ("", ())
+    where, args = _insights_where(account_id, platform)
     rows = await _all(
         conn,
         f"SELECT media_id, COUNT(*) AS readings FROM insights {where} GROUP BY media_id",
@@ -1618,7 +1705,9 @@ async def reading_counts(
 
 
 async def insights_series(
-    conn: aiosqlite.Connection, account_id: str | None = None
+    conn: aiosqlite.Connection,
+    account_id: str | None = None,
+    platform: str | None = None,
 ) -> dict[str, list[Any]]:
     """Every reading ever taken, grouped by media and in date order.
 
@@ -1632,7 +1721,7 @@ async def insights_series(
     from last week, and the warning was written from intuition rather than from
     this table, which knows exactly how long a Reel takes to stop moving.
     """
-    where, args = ("WHERE account_id = ?", (account_id,)) if account_id else ("", ())
+    where, args = _insights_where(account_id, platform)
     rows = await _all(
         conn,
         f"""
@@ -1649,15 +1738,21 @@ async def insights_series(
 
 
 async def latest_insights(
-    conn: aiosqlite.Connection, account_id: str | None = None
+    conn: aiosqlite.Connection,
+    account_id: str | None = None,
+    platform: str | None = None,
 ) -> dict[str, Any]:
     """The most recent reading per media, keyed by media id.
 
     A Reel's numbers climb for days, so "latest" is the honest answer to how it
     is doing. The per-date history stays in the table for the questions this
     cannot answer, such as whether an evening slot outperforms a morning one.
+
+    `platform` is how a caller says "Instagram's numbers" out loud. Left off it
+    answers for every platform, which is what the Posts page wants and what
+    `/api/results` must not have.
     """
-    where, args = ("WHERE account_id = ?", (account_id,)) if account_id else ("", ())
+    where, args = _insights_where(account_id, platform)
     rows = await _all(
         conn,
         f"""

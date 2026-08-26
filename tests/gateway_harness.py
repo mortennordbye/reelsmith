@@ -124,6 +124,9 @@ class FakeTikTok:
     # stored the last one it was given.
     refresh_tokens_seen: list[str] = field(default_factory=list)
     polls: int = 0
+    # What `/v2/video/list/` and `/v2/video/query/` report. Raw dicts rather
+    # than a dataclass, because the parsing is part of what is under test.
+    videos: list[dict[str, Any]] = field(default_factory=list)
 
     def handle(self, request: httpx.Request) -> httpx.Response | None:
         """Answer if this is ours, otherwise None so the others get a look."""
@@ -182,6 +185,21 @@ class FakeTikTok:
             return httpx.Response(
                 200,
                 json={"data": {"publish_id": self.publish_id}, "error": {"code": "ok"}},
+            )
+
+        # The path, not the whole URL: both of these carry a `fields` query.
+        path = request.url.path
+        if path in ("/v2/video/list/", "/v2/video/query/"):
+            if self.error_code:
+                return httpx.Response(200, json=self._error())
+            wanted = self.videos
+            if path == "/v2/video/query/":
+                ids = set(
+                    (json.loads(request.content).get("filters") or {}).get("video_ids") or []
+                )
+                wanted = [v for v in self.videos if v.get("id") in ids]
+            return httpx.Response(
+                200, json={"data": {"videos": wanted}, "error": {"code": "ok"}}
             )
 
         if url.endswith("/status/fetch/"):

@@ -359,10 +359,11 @@ async def posts_page(request: Request) -> Any:
         readings = await db.latest_insights(conn, account_id)
         funnels = await db.per_post_funnel(conn, account_id)
 
-        posts, totals = [], dict.fromkeys(
-            ("views", "reach", "likes", "comments", "saved", "shares",
-             "comments_seen", "links_sent"), 0
-        )
+        # Which numbers this platform actually has. A TikTok row rendered with
+        # Instagram's column set is a post that got zero reach and zero saves,
+        # which is a claim rather than an absence.
+        columns = analysis.measured_columns(account["platform"])
+        posts, totals = [], dict.fromkeys((*columns, "comments_seen", "links_sent"), 0)
         for row in rows:
             seen = funnels.get(row["media_id"], {})
             reading = readings.get(row["media_id"])
@@ -381,7 +382,7 @@ async def posts_page(request: Request) -> Any:
                     ),
                 }
             )
-            for key in ("views", "reach", "likes", "comments", "saved", "shares"):
+            for key in columns:
                 totals[key] += int(reading[key]) if reading else 0
             for key in ("comments_seen", "links_sent"):
                 totals[key] += seen.get(key, 0)
@@ -398,6 +399,7 @@ async def posts_page(request: Request) -> Any:
                 "account": account,
                 "posts": posts,
                 "totals": totals,
+                "columns": columns,
                 # An average is the only fair way to compare a Reel published
                 # this morning with one from last week.
                 "avg_views": totals["views"] // len(posts) if posts else 0,
@@ -444,9 +446,21 @@ async def insights_page(request: Request) -> Any:
 
     boards = []
     for account in scope["visible"]:
+        # **Instagram only, and structurally.** Every comparison on this page
+        # is built on `skip_rate`, which is the share who scrolled past inside
+        # three seconds. YouTube's `averageViewPercentage` scores a whole video
+        # and TikTok exposes no retention metric at all, so a board for either
+        # would be a page of empty tables that reads as broken rather than as
+        # not applicable. The filters below say so rather than relying on those
+        # platforms happening to leave the column at zero, which is a rule that
+        # holds by accident. F5.
+        if account["platform"] != db.PLATFORM_INSTAGRAM:
+            continue
         account_id = account["account_id"]
         rows = await db.published_media(conn, account_id)
-        readings = await db.latest_insights(conn, account_id)
+        readings = await db.latest_insights(
+            conn, account_id, platform=db.PLATFORM_INSTAGRAM
+        )
         # One flat row per post, so the analysis never has to know that the
         # numbers and the hook arrive from two different tables.
         merged = [
@@ -458,7 +472,9 @@ async def insights_page(request: Request) -> Any:
         # How long a Reel takes to stop moving, recomputed from this account's
         # own history rather than asserted. It decides which posts the cohorts
         # may count, so it is measured on the same page that applies it.
-        settling = analysis.maturity(await db.insights_series(conn, account_id))
+        settling = analysis.maturity(
+            await db.insights_series(conn, account_id, platform=db.PLATFORM_INSTAGRAM)
+        )
         by_slot = analysis.cohorts(
             merged, key=analysis.slot_of, settled=settling["settled"]
         )

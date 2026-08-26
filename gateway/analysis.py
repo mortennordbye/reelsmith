@@ -36,6 +36,29 @@ from typing import Any
 # posts: those under it took a median 909 views against 122 for those over 70
 # percent. It is not a benchmark from anywhere else and it is not a round
 # number chosen for looking tidy.
+# Which numbers a platform actually reports, in the order they are shown.
+#
+# Instagram's set is Meta's REELS metrics. TikTok's `/v2/video/query/` returns
+# four counts and nothing else: no reach, no saves, and nothing about watch
+# time, completion or anything a three second skip could be computed from. A
+# TikTok row rendered with Instagram's set is a post that got zero reach and
+# zero saves, which is a claim rather than an absence. F5.
+_MEASURED = {
+    "instagram": ("views", "reach", "likes", "comments", "saved", "shares"),
+    "tiktok": ("views", "likes", "comments", "shares"),
+}
+
+
+def measured_columns(platform: str | None) -> tuple[str, ...]:
+    """The metrics one platform has, defaulting to Instagram's.
+
+    Defaulting rather than raising, for the same reason the account readers
+    default to Instagram: a platform nobody has taught this function about
+    should render the set that has always been rendered, not an empty board.
+    """
+    return _MEASURED.get(str(platform or ""), _MEASURED["instagram"])
+
+
 SKIP_THRESHOLD = 60.0
 
 # What counts as a post that actually reached anybody. Eight of the first 58

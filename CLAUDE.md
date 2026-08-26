@@ -213,10 +213,24 @@ three docs are `docs/tiktok-api-setup.md`, `docs/multi-destination-audit.md` and
 - **The scriptwriter learns from Instagram alone, and this is not a gap to
   close.** `skip_rate` is the share who scrolled past inside three seconds and
   it is the one number the loop turns on. YouTube's `averageViewPercentage`
-  scores a whole video and TikTok exposes no retention metric at all. Other
-  platforms' numbers belong in the insights table with a platform column and on
-  the Posts page; feeding them to `_results_block` would corrupt the single
-  measurement everything else is argued from.
+  scores a whole video and TikTok exposes no retention metric at all. So
+  `insights` carries a `platform` column, TikTok's four counts are stored and
+  shown on the Posts page, and `/api/results` and the Insights page both filter
+  to Instagram **explicitly** rather than relying on nothing else filling the
+  `skip_rate` column, which is a rule that holds by accident. Feeding anything
+  else to `_results_block` would corrupt the single measurement everything else
+  is argued from.
+- **On a TikTok row the unmeasured columns are 0 and the platform column is
+  what says so.** `reach`, `saved`, `avg_watch_ms`, `total_watch_ms` and
+  `skip_rate` are absences rather than results, and the Posts page renders the
+  column set for the platform so a TikTok post is not shown as one that got
+  zero reach and zero saves.
+- **The publish id is not a video id**, which is a shape Meta never had.
+  `status/fetch` reports the post finished and returns neither an id nor a URL,
+  so the row carries its `publish_id` until the insights sweep lists the
+  account's recent videos and matches on the title this service wrote. The
+  publish id stays in `container_id`, where it was written before the publish
+  was attempted.
 - **TikTok's gate is not YouTube's gate.** YouTube's private lock turned out not
   to apply here. TikTok's is enforced by a documented error code, and the audit
   that lifts it reviews a posting screen this repo does not have and rejects
