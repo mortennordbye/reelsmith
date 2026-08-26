@@ -894,7 +894,25 @@ and for every security update, and holds routine majors back for a human.
   An unreachable gateway is refusal, not zero: the two are opposite answers and
   guessing wrong costs a batch. `--recover` honours the same ceiling and makes
   the same refusal, because it runs after something has already gone wrong.
-- **This repo is public.** `PROFILE.md`, `PLAN.md`, `.env`, `data/` and the
+- **This repo is public.** `PROFILE.md`, `PLAN.md`, `.env`, `accounts/` and the
   voice recording are gitignored and hold the private half. Before adding a
   file, decide which half it belongs to. `scripts/backup-secrets.sh` backs up
   the private half, driven by the `# backup:start` block in `.gitignore`.
+- **The laptop and the render host read the same share, and
+  `scripts/sync-private.sh` is what moves anything between them.**
+  `/mnt/reelsmith` on the render host is
+  `nas.local.bigd.no:/volume1/shared-data` at subPath `media/reelsmith`, and
+  this laptop mounts that share over SMB the way `backup-secrets.sh` already
+  does. There was never a network gap between them, only two names for the same
+  bytes and no command that said so, which is how the copy on the share reached
+  eighteen days stale while the nightly wrote copy against it.
+- **The private half splits by who writes it, and that split is the whole
+  safety property.** `PROFILE.md`, `accounts/*/.env` and `accounts/*/ref/*` are
+  authored here and pushed. `accounts/*/data/*.json` is written by the render
+  host nightly and is **refused**, not skipped: its `used_repos.json` and
+  `star_history.json` are the live ones, and pushing from here hands the
+  nightly a cooldown list missing a month of repos. Those two are not meant to
+  be file-synced at all, because `_sync_covered` folds `GET /api/covered` in
+  before every discovery run and the gateway is what reconciles them. The root
+  `.env` is refused as host specific, and the thinking documents because they
+  are written on both sides.
