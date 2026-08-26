@@ -736,6 +736,64 @@ def test_the_youtube_description_survives_a_caption_with_no_hashtags():
     assert out == "One line and nothing else.\n\nRepo: https://example.test/x"
 
 
+# --- The TikTok title -------------------------------------------------------
+
+
+def test_the_tiktok_title_keeps_the_ask_where_youtube_drops_it():
+    """The difference between the two, and it is a decision rather than an
+    oversight. The ask comes out of a YouTube description because a surface
+    that calls following "subscribing" reads wrong. TikTok is a feed like
+    Instagram's and the word is the same word."""
+    caption = (
+        "tf.lite is being removed from future TensorFlow packages.\n"
+        "\n"
+        "#tensorflow #mlops"
+    )
+
+    out = gateway.tiktok_title(caption, "https://github.com/tensorflow/tensorflow")
+
+    assert gateway.CAPTION_CTA in out
+    assert "Repo: https://github.com/tensorflow/tensorflow" in out
+    assert out.endswith("#tensorflow #mlops")
+
+
+def test_the_model_s_own_ask_still_comes_out():
+    """Ours is the only one on every channel. Fixing two of three is how a
+    video shipped asking for two different things in one breath."""
+    caption = (
+        "tf.lite is going away.\n"
+        "\n"
+        "Comment TENSORFLOW if you want the link.\n"
+        "\n"
+        "#tensorflow"
+    )
+
+    out = gateway.tiktok_title(caption, "https://example.test/x")
+
+    assert "Comment TENSORFLOW" not in out
+    assert out.count(gateway.CAPTION_CTA) == 1
+
+
+def test_a_title_over_the_limit_drops_the_tags_then_the_link():
+    """The prose and the ask are what the viewer reads. A truncated URL is
+    worse than no URL and half a hashtag is a tell."""
+    long_prose = "word " * 500
+
+    out = gateway.tiktok_title(f"{long_prose}\n\n#a #b", "https://example.test/x")
+
+    assert len(out) <= gateway._TIKTOK_TITLE_LIMIT
+    assert gateway.CAPTION_CTA in out
+    assert "#a #b" not in out
+
+
+def test_a_title_that_fits_is_left_whole():
+    out = gateway.tiktok_title("One line.", "https://example.test/x")
+
+    assert out == (
+        f"One line.\n\n{gateway.CAPTION_CTA}\n\nRepo: https://example.test/x"
+    )
+
+
 # --- Choosing a destination -------------------------------------------------
 
 

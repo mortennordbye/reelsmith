@@ -140,6 +140,16 @@ class Settings(BaseSettings):
     # does not surface until the first upload.
     youtube_channel_id: str = ""
 
+    # --- TikTok (optional) --------------------------------------------------
+    # The open id only, and nothing else. The credentials live on the gateway,
+    # which is what publishes, so no TikTok secret reaches the machine that
+    # renders. Same shape as the YouTube channel id above and for the same
+    # reason: this host needs to know where a row is going, not how to get in.
+    #
+    # Without it the fan-out skips TikTok silently and only the Reel and the
+    # Short are queued, which is the behaviour every render had before this.
+    tiktok_open_id: str = ""
+
     # --- DM gateway (optional) ---------------------------------------------
     # The self-hosted service that answers comments and DMs, and hosts the
     # cover image Meta fetches. Leaving gateway_url empty disables both calls,
