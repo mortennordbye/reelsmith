@@ -1264,8 +1264,13 @@ async def add_slot(
 
 async def sync_config_slots(
     conn: aiosqlite.Connection, ig_user_id: str, specs: Iterable[Any]
-) -> int:
+) -> tuple[int, int]:
     """Make the config-declared slots for one account match the config exactly.
+
+    Returns how many slots the account now has and how many rows were deleted
+    to get there. The deletion count is what the caller logs: this function
+    replacing three working slots with nothing is a real event and reporting
+    it only as "applied 0" is how it hid for a fortnight.
 
     Replace rather than merge, because the config file is the truth for these
     and a slot deleted from it has to disappear. Slots added in the UI carry a
@@ -1294,9 +1299,11 @@ async def sync_config_slots(
     }
     keep = {shape(row) for row in existing} & set(wanted)
 
+    removed = 0
     for row in existing:
         if shape(row) not in keep:
             await conn.execute("DELETE FROM schedule_slots WHERE id = ?", (row["id"],))
+            removed += 1
     for key, spec in wanted.items():
         if key in keep:
             continue
@@ -1311,7 +1318,7 @@ async def sync_config_slots(
             source=SLOT_SOURCE_CONFIG,
         )
     await conn.commit()
-    return len(specs)
+    return len(specs), removed
 
 
 async def config_slot_accounts(conn: aiosqlite.Connection) -> list[str]:

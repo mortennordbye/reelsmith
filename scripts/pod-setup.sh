@@ -20,8 +20,11 @@
 #     GATEWAY_TOKEN, CHATTERBOX_DEVICE=cpu. IG_ACCESS_TOKEN and IG_USER_ID are
 #     deliberately not among them; the gateway owns publishing and refreshes
 #     its own token, so a render host never needs an Instagram credential.
-#   - populate PRIVATE_DIR. Copy PROFILE.md, ref/morten.wav and data/ there by
-#     hand, once.
+#   - populate PRIVATE_DIR. Copy PROFILE.md and one accounts/<name>/ directory
+#     there by hand, once. `python main.py --migrate-account <name>` builds that
+#     directory out of the single account layout this repo used before.
+#   - set REELSMITH_ACCOUNT=<name> in .env. There is no default and a run
+#     without one fails at startup rather than guessing.
 
 set -euo pipefail
 
@@ -89,9 +92,17 @@ if [[ "$CHECK_ONLY" == 1 ]]; then
   have_browser
   have .env                                ".env (write by hand, holds secrets)"
   have "$PRIVATE_DIR/PROFILE.md"           "PROFILE.md on $PRIVATE_DIR"
-  have "$PRIVATE_DIR/ref/morten.wav"       "voice recording on $PRIVATE_DIR"
-  have "$PRIVATE_DIR/data"                 "data store on $PRIVATE_DIR"
-  have data                                "data symlink in the repo"
+  have "$PRIVATE_DIR/accounts"             "accounts on $PRIVATE_DIR"
+  have accounts                            "accounts symlinks in the repo"
+  # Which account tonight's batch is for. There is no default: a run without
+  # one fails at startup rather than guessing, so a MISS here is a batch that
+  # will not start.
+  if grep -qs '^REELSMITH_ACCOUNT=' .env; then
+    printf '  ok    REELSMITH_ACCOUNT in .env (%s)\n' \
+      "$(grep -m1 '^REELSMITH_ACCOUNT=' .env | cut -d= -f2)"
+  else
+    printf '  MISS  REELSMITH_ACCOUNT in .env; every run needs --account without it\n'
+  fi
   echo
   exit 0
 fi
@@ -180,16 +191,42 @@ say "4/5  chromium for the README screenshot"
 .venv/bin/python -m playwright install chromium
 
 # --- 5. The private half ----------------------------------------------------
-# config.py resolves data/ and PROFILE.md relative to the repo root and offers
-# no override, so the mount is linked into place rather than pointed at.
+# config.py resolves accounts/ and PROFILE.md relative to the repo root and
+# offers no override, so the mount is linked into place rather than pointed at.
 #
-# `data` is a directory symlink, never per-file: StarHistory.save() writes a
-# temp file and renames it over the target, and that rename would replace a
-# file symlink with a real file, silently writing to local disk instead of the
-# share. morten.wav is read-only input, so a file symlink is safe there.
+# One link per account directory, because an account owns its `.env`, its data
+# store and its voice recording, and the whole point of `accounts/<name>/` is
+# that those three travel together. PROFILE.md stays one file at the root: it
+# carries its shared rules at the top and one section per account, and
+# splitting it would duplicate the shared half.
+#
+# Each `accounts/<name>` is a *directory* symlink, never per-file:
+# StarHistory.save() writes a temp file and renames it over the target, and
+# that rename would replace a file symlink with a real file, silently writing
+# to local disk instead of the share.
 say "5/5  linking the private half from $PRIVATE_DIR"
 if [[ -d "$PRIVATE_DIR" ]]; then
   [[ -e "$PRIVATE_DIR/PROFILE.md" ]] && ln -sfn "$PRIVATE_DIR/PROFILE.md" PROFILE.md
+
+  if [[ -d "$PRIVATE_DIR/accounts" ]]; then
+    mkdir -p accounts
+    for home in "$PRIVATE_DIR"/accounts/*/; do
+      [[ -d "$home" ]] || continue
+      name="$(basename "$home")"
+      ln -sfn "${home%/}" "accounts/$name"
+      printf '  linked account %s\n' "$name"
+    done
+    grep -qxF "/accounts" .git/info/exclude 2>/dev/null ||
+      echo "/accounts" >> .git/info/exclude
+  else
+    printf '  %s/accounts is empty. Run\n' "$PRIVATE_DIR"
+    printf '    python main.py --migrate-account <name>\n'
+    printf '  on the machine that has the single account layout, then copy the\n'
+    printf '  resulting accounts/<name>/ onto the share.\n'
+  fi
+
+  # The pre-accounts layout, still linked while a host is mid migration. Delete
+  # this block once every host reports its accounts under $PRIVATE_DIR/accounts.
   [[ -e "$PRIVATE_DIR/ref/morten.wav" ]] &&
     ln -sfn "$PRIVATE_DIR/ref/morten.wav" tools/chatterbox/ref/morten.wav
   if [[ -d "$PRIVATE_DIR/data" && ! -L data ]]; then
@@ -201,10 +238,12 @@ if [[ -d "$PRIVATE_DIR" ]]; then
     git update-index --skip-worktree data/.gitkeep 2>/dev/null || true
     grep -qxF "/data" .git/info/exclude 2>/dev/null || echo "/data" >> .git/info/exclude
   fi
-  printf '  linked\n'
 else
   printf '  %s is not mounted; skipping. The pipeline will not find the voice\n' "$PRIVATE_DIR"
   printf '  or the profile until it is.\n'
 fi
 
-say "Done. Remaining manual step: .env, if ./scripts/pod-setup.sh --check says MISS."
+say "Done. Remaining manual steps:"
+printf '  - .env, if ./scripts/pod-setup.sh --check says MISS.\n'
+printf '  - REELSMITH_ACCOUNT=<name> in .env, or --account on every call. There\n'
+printf '    is no default and a run without one fails at startup.\n'

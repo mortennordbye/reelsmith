@@ -38,6 +38,19 @@ data/used_repos.json
 data/ig_token.json
 tools/chatterbox/ref/morten.wav
 tools/chatterbox/ref/morten.m4a
+# One directory per account, holding the machine readable half of an identity:
+# the per account .env, the cooldown store and the live token under data/, and
+# the voice recording under ref/. The editorial half is PROFILE.md, above.
+#
+# The directory entry keeps git out. The globs below it are what the backup can
+# actually take, since backup-secrets.sh only archives files a glob matches,
+# which is the exact trap that left the spinoff work on one disk. Add a glob
+# here for anything new that lands under accounts/.
+accounts/
+accounts/*/.env
+accounts/*/data/*.json
+accounts/*/ref/*.wav
+accounts/*/ref/*.m4a
 # Six candidate spinoff accounts with frame mockups, drawn up 2026-08-25.
 # Private for the same reason as IDEAS.md: every score in it is argued from this
 # account's own numbers. The directory entry is what keeps git out, including the

@@ -40,7 +40,19 @@ cd video && npm install && cd ..
 
 # Credentials
 cp .env.example .env      # then add your GITHUB_TOKEN
+
+# Which account this checkout is for. One checkout serves several; an account
+# is a directory holding its own .env, data/ store and ref/ voice recording.
+mkdir -p accounts/nightlybuild
+echo "REELSMITH_ACCOUNT=nightlybuild" >> .env
 ```
+
+There is no default account and no resolving one by counting. Without
+`REELSMITH_ACCOUNT` or `--account <name>`, every run fails at startup naming the
+accounts it can see. Guessing wrong publishes to the wrong audience and nothing
+later undoes it. Upgrading a checkout that predates this is
+`python main.py --migrate-account <name>`, which prints the plan and moves
+nothing until it is given `--yes`.
 
 A classic GitHub PAT with **no scopes** is enough for public repos:
 <https://github.com/settings/tokens>. Without one you get 10 search requests
@@ -153,16 +165,21 @@ python main.py --snapshot     # two search requests, a couple of seconds
 comment has the install commands. From day two onward every ranking uses
 measured deltas.
 
-Every stage writes to `build/<date>/<owner-repo>/` before the next one runs,
-and re-uses what is already there. A failure at render time never costs you the
-scrape, the script, or the transcription.
+Every stage writes to `build/<account>/<date>/<owner-repo>/` before the next one
+runs, and re-uses what is already there. A failure at render time never costs
+you the scrape, the script, or the transcription.
 
 ```
 build/
-  2026-07-30/
-    astral-sh-uv/
-    charmbracelet-crush/
+  nightlybuild/
+    2026-07-30/
+      astral-sh-uv/
+      charmbracelet-crush/
 ```
+
+The `<date>/<owner-repo>` arguments to `--resume`, `--publish` and `--enqueue`
+are resolved under the selected account, so they keep the shape they always had
+and gain the account from `--account` rather than from the path.
 
 | Artifact | Written by |
 |---|---|
@@ -185,7 +202,8 @@ Rendering to check a font size is miserable. Use the Studio instead:
 cd video && npm run studio
 ```
 
-Then load `build/<date>-<slug>/video.json` as props. Hot reload, ~1s feedback.
+Then load `build/<account>/<date>/<slug>/video.json` as props. Hot reload, ~1s
+feedback.
 
 ---
 
@@ -371,7 +389,9 @@ rather than failing the run.
   matches *nothing*. All license and topic filtering happens client-side in
   `pipeline/scraper.py` for this reason.
 - **The cooldown store is what makes this runnable daily.** Star velocity is
-  sticky; without `data/used_repos.json` the same three repos win all month.
+  sticky; without `accounts/<name>/data/used_repos.json` the same three repos
+  win all month, and it is per account because a cooldown is a fact about one
+  audience rather than about the repo.
   It is written by `--posted`, not by the render, so rejected videos cost
   nothing. `--unmark` is the escape hatch, and `--covered` prints the list.
 - **A covered repo is dropped during discovery, not scored to zero.** Same

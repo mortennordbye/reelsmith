@@ -67,6 +67,7 @@ async def _apply_config_slots(conn: aiosqlite.Connection, cfg: GatewaySettings) 
         by_account.setdefault(spec.account, []).append(spec)
 
     unnamed = [s for s in specs if not s.account]
+    unresolved = False
     if unnamed:
         account = cfg.slots_account.strip()
         if not account:
@@ -82,8 +83,10 @@ async def _apply_config_slots(conn: aiosqlite.Connection, cfg: GatewaySettings) 
             # Only the ambiguous lines are dropped. The ones naming an account
             # are not ambiguous and applying them is strictly better than
             # applying nothing.
-            log.warning(
-                "%d slot line(s) name no account and it could not be resolved. "
+            unresolved = True
+            log.error(
+                "%d slot line(s) name no account and it could not be resolved, so "
+                "the schedule is frozen at whatever is already in the database. "
                 "Set GATEWAY_SLOTS_ACCOUNT, or add account=<id> to those lines.",
                 len(unnamed),
             )
@@ -91,12 +94,37 @@ async def _apply_config_slots(conn: aiosqlite.Connection, cfg: GatewaySettings) 
     # An account whose lines were all removed from config keeps its rows unless
     # it is visited with an empty list, and would go on publishing on a
     # schedule nobody can see any more.
-    for account in await db.config_slot_accounts(conn):
-        by_account.setdefault(account, [])
+    #
+    # **Not while a line is unresolved.** The sweep reads an account's absence
+    # from the config as an instruction to delete its slots, and an unresolved
+    # line is an account this function could not name rather than an account
+    # nobody named. Registering a second Instagram account is enough to make
+    # the difference: the resolve-by-count above stops firing, the unnamed
+    # lines are dropped, and then account 1 is visited with an empty list and
+    # its three slots are deleted at boot. The pod comes up healthy and the
+    # feed stops, which is the loudest thing here failing the quietest way.
+    # Reproduced on 2026-08-26 and written up as F0 in
+    # docs/multi-destination-audit.md.
+    #
+    # Freezing is the conservative half of the trade and it is not free: an
+    # account whose lines really were deleted keeps posting until the config is
+    # fixed. That is recoverable and visible in the panel, where deleting a
+    # working schedule is neither.
+    if not unresolved:
+        for account in await db.config_slot_accounts(conn):
+            by_account.setdefault(account, [])
 
     for account, group in by_account.items():
-        count = await db.sync_config_slots(conn, account, group)
-        log.info("Applied %d slot(s) from config for %s", count, account)
+        applied, removed = await db.sync_config_slots(conn, account, group)
+        # The deletion said "Applied 0 slot(s)" at INFO, next to a warning
+        # describing a different symptom, which is how it went unnoticed. It
+        # says what it did now.
+        if removed:
+            log.warning(
+                "Removed %d config slot(s) for %s, which GATEWAY_SLOTS no longer declares.",
+                removed, account,
+            )
+        log.info("Applied %d slot(s) from config for %s", applied, account)
 
 
 def _configure_logging(cfg: GatewaySettings) -> None:
