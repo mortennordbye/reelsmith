@@ -11,7 +11,7 @@ is non-commercial CPML. Same reason this repo runs Kokoro. It also clones
 zero-shot, so there is no training step -- 15 seconds of reference audio is the
 whole input.
 
-    python clone.py --ref ref/morten.m4a --sweep
+    python clone.py --ref ../../accounts/<name>/ref/voice.m4a --sweep
 
 Non-wav references are converted with afconvert, which ships with macOS, so
 there is no ffmpeg dependency.

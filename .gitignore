@@ -33,14 +33,15 @@ HANDOVER.md
 # .claude/skills/reel-council; only the evidence and the decisions are not.
 IDEAS.md
 .env
-data/star_history.json
-data/used_repos.json
-data/ig_token.json
-tools/chatterbox/ref/morten.wav
-tools/chatterbox/ref/morten.m4a
 # One directory per account, holding the machine readable half of an identity:
 # the per account .env, the cooldown store and the live token under data/, and
 # the voice recording under ref/. The editorial half is PROFILE.md, above.
+#
+# These replaced `data/*.json` and `tools/chatterbox/ref/morten.*`, which are
+# where the same files lived before `accounts/` existed. Those entries are gone
+# rather than kept alongside: `--list` reported them as missing on every
+# migrated host, and a backup list that always prints five failures is one
+# nobody reads the failures in.
 #
 # The directory entry keeps git out. The globs below it are what the backup can
 # actually take, since backup-secrets.sh only archives files a glob matches,
