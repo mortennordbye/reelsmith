@@ -570,6 +570,18 @@ What this repo owes that arrangement is metrics that move:
   never asks Meta for anything and for a while it was also the only failure
   Prometheus could not see, so a post dying for want of a file was invisible to
   `ReelsmithPublishFailing` while every other failure fired it.
+- **A claim nobody finished is a terminal failure that never reached one.**
+  `claimed` is held for one publish attempt and is deliberately never swept back
+  automatically, because Meta may have accepted the post. But a process dying
+  between the container and `media_publish` leaves the row there with no
+  `failure`, so the admin UI showed it as an ordinary recent post, `cancel`
+  refused it as mid-flight, and nothing alerted. Row 55 sat that way for nine
+  days with its container already in ERROR at Meta. `claimed_at` (schema 18)
+  is what makes a claim held for ninety seconds distinguishable from one held
+  for nine days; `CLAIM_STALE_AFTER` is an hour, and past it the row reaches
+  `reelsmith_stale_claims` and becomes cancellable from the panel. Still
+  nothing automatic: the gauge and the button only make the decision available,
+  because only the account can say whether the post went out.
 - **`queue_depth` is filled in at scrape time**, in the `/metrics` route rather
   than from the scheduler tick. It is a gauge describing a table, so the honest
   value is what the table says now; and the scheduler is off by default, which

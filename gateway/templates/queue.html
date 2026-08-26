@@ -194,6 +194,23 @@
                       action="{{ url_for('cancel', queued_id=row['id']) }}">
                   <button class="link">Give up</button>
                 </form>
+              {% elif row['id'] in board.stale %}
+                {# Claimed and never finished. It carries no failure of its own,
+                   which is exactly why it has to be called out here rather than
+                   sitting in this table looking like an ordinary recent post. #}
+                <span style="color:var(--bad)">claimed, never finished</span>
+                <form class="inline" method="post"
+                      action="{{ url_for('approve', queued_id=row['id']) }}">
+                  <button {% if row['container_id'] %}
+                    title="Meta had already accepted a container for this one, so check the account for a duplicate before retrying"
+                  {% endif %}>
+                    Retry{% if row['container_id'] %} &#9888;{% endif %}
+                  </button>
+                </form>
+                <form class="inline" method="post"
+                      action="{{ url_for('cancel', queued_id=row['id']) }}">
+                  <button class="link">Give up</button>
+                </form>
               {% else %}
                 <span class="muted">{{ row['media_id'] or '' }}</span>
               {% endif %}

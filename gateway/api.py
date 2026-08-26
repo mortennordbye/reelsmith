@@ -117,7 +117,7 @@ async def metrics(request: Request) -> Response:
     gauge empty on exactly the deployments where a stuck post is least likely
     to be noticed by a person.
 
-    One grouped count over a table with tens of rows, every 30 seconds.
+    Two grouped counts over a table with tens of rows, every 30 seconds.
     """
     await _refresh_queue_depth(request.app.state.db, request.app.state.metrics)
     return Response(
@@ -138,11 +138,16 @@ async def _refresh_queue_depth(conn: Any, metrics: Any) -> None:
     # Plus any account that owns rows but no longer has a row of its own, which
     # is a queue nothing will drain and the last thing to hide from a gauge.
     accounts |= {account for account, _ in depth}
+    # A claim nothing finished. Read here for the same reason as the depth
+    # above, and published for every account including the zeroes, so the
+    # alert that fires on it can resolve.
+    stale = await db.stale_claims_by_account(conn)
     for account in sorted(accounts):
         for state in db.QUEUE_STATES:
             metrics.queue_depth.labels(state=state, account=account).set(
                 depth.get((account, state), 0)
             )
+        metrics.stale_claims.labels(account=account).set(stale.get(account, 0))
 
 
 @router.post("/api/posts", response_model=Registered, dependencies=[Depends(require_token)])

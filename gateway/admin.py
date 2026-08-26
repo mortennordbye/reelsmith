@@ -294,6 +294,10 @@ async def queue_page(request: Request) -> Any:
                 "recent": list(reversed(recent)),
                 "made": await _rendered_at(conn, [row for row, _ in rows] + recent),
                 "has_slots": bool(slots),
+                # A claim nothing finished needs the same decision a failure
+                # does, so the row has to say so rather than looking ordinary.
+                "stale": {int(r["id"]) for r in recent if r["state"] == db.QUEUE_CLAIMED
+                          and _claim_is_stale(r, moment=moment)},
             }
         )
 
@@ -666,12 +670,29 @@ async def hold(request: Request, queued_id: int) -> Any:
     return _back(request)
 
 
+def _claim_is_stale(row: Any, *, moment: Any = None) -> bool:
+    """Whether a `claimed` row has been held past any real publish attempt.
+
+    Mirrors `db.stale_claims` so the button and the gauge agree about which
+    rows are abandoned. `claimed_at` is null before schema 18, so `created_at`
+    stands in, the same fallback and for the same reason.
+    """
+    held = db.parse_iso(row["claimed_at"] or row["created_at"])
+    if held is None:
+        return False
+    return (moment or db.now()) - held >= db.CLAIM_STALE_AFTER
+
+
 @router.post("/queue/{queued_id}/cancel")
 async def cancel(request: Request, queued_id: int) -> Any:
     row = await _require_row(request, queued_id)
-    if row["state"] in (db.QUEUE_PUBLISHED, db.QUEUE_CLAIMED):
-        # A published post is not cancellable from here, and a claimed one is
-        # mid-flight. Deleting either would only make the record wrong.
+    if row["state"] == db.QUEUE_PUBLISHED:
+        # Cancelling a post that went out would only make the record wrong.
+        return _back(request)
+    if row["state"] == db.QUEUE_CLAIMED and not _claim_is_stale(row):
+        # A fresh claim is mid-flight and cancelling it races the publish. An
+        # old one is a process that died holding it, and refusing that left
+        # row 55 stuck for nine days with no way to resolve it from here.
         return _back(request)
     await db.set_queue_state(request.app.state.db, queued_id, db.QUEUE_CANCELLED)
     log.info("Queue %d cancelled from the admin UI", queued_id)

@@ -10,6 +10,7 @@ be publicly reachable for Meta to fetch media from it.
 from __future__ import annotations
 
 import re
+from datetime import timedelta
 from pathlib import Path
 
 import httpx
@@ -481,6 +482,50 @@ async def test_a_published_post_cannot_be_cancelled(client):
 
     await http.post(f"/admin/queue/{queued_id}/cancel")
     assert (await db.get_queued(app.state.db, queued_id))["state"] == db.QUEUE_PUBLISHED
+
+
+async def test_a_fresh_claim_cannot_be_cancelled(client):
+    """It is mid-flight, and cancelling it races the publish that holds it."""
+    http, app = client
+    queued_id = (await queue(http))["id"]
+    await http.post(f"/admin/queue/{queued_id}/approve")
+    assert await db.claim_queued(app.state.db, queued_id) is True
+
+    await http.post(f"/admin/queue/{queued_id}/cancel")
+    assert (await db.get_queued(app.state.db, queued_id))["state"] == db.QUEUE_CLAIMED
+
+
+async def test_an_abandoned_claim_can_be_cancelled(client):
+    """A process that died holding a claim left row 55 stuck for nine days."""
+    http, app = client
+    queued_id = (await queue(http))["id"]
+    await http.post(f"/admin/queue/{queued_id}/approve")
+    await db.claim_queued(app.state.db, queued_id)
+    stale = db.iso(db.now() - db.CLAIM_STALE_AFTER - timedelta(minutes=1))
+    await app.state.db.execute(
+        "UPDATE queued_posts SET claimed_at = ? WHERE id = ?", (stale, queued_id)
+    )
+    await app.state.db.commit()
+
+    await http.post(f"/admin/queue/{queued_id}/cancel")
+    assert (await db.get_queued(app.state.db, queued_id))["state"] == db.QUEUE_CANCELLED
+
+
+async def test_a_claim_from_before_the_column_falls_back_to_created_at(client):
+    """Rows predating schema 18 have no claimed_at and must still be resolvable."""
+    http, app = client
+    queued_id = (await queue(http))["id"]
+    await http.post(f"/admin/queue/{queued_id}/approve")
+    await db.claim_queued(app.state.db, queued_id)
+    old = db.iso(db.now() - timedelta(days=9))
+    await app.state.db.execute(
+        "UPDATE queued_posts SET claimed_at = NULL, created_at = ? WHERE id = ?",
+        (old, queued_id),
+    )
+    await app.state.db.commit()
+
+    await http.post(f"/admin/queue/{queued_id}/cancel")
+    assert (await db.get_queued(app.state.db, queued_id))["state"] == db.QUEUE_CANCELLED
 
 
 async def test_approving_a_failed_post_clears_its_reason(client):

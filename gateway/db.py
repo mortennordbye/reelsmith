@@ -28,7 +28,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -468,6 +468,27 @@ _MIGRATIONS: tuple[str, ...] = (
     """
     ALTER TABLE insights ADD COLUMN platform TEXT NOT NULL DEFAULT 'instagram';
     """,
+    # 18. When a row was claimed, so a claim that never finished can be seen.
+    #
+    # `claimed` is held for one publish attempt and is deliberately never swept
+    # back automatically, because Meta may have accepted the post. That is still
+    # right. What was missing is any way to tell a claim held for ninety seconds
+    # from one held for nine days: the state carries no time of its own, and
+    # `created_at` is when the row was enqueued, which for a queue meant to sit
+    # three days deep says nothing about the attempt.
+    #
+    # A process death between creating the container and `media_publish` leaves
+    # the row here with no `failure`, so the admin UI showed it as an ordinary
+    # recent post, `cancel` refused it as mid-flight, and no counter moved, so
+    # `ReelsmithPublishFailing` stayed quiet. Queue row 55 sat that way for nine
+    # days with its container already in ERROR at Meta.
+    #
+    # Null on every row that already exists. Those pre-date the column and
+    # cannot have their claim time recovered, so the readers fall back to
+    # `created_at`, which for a row old enough to matter errs towards showing it.
+    """
+    ALTER TABLE queued_posts ADD COLUMN claimed_at TEXT;
+    """,
 )
 
 # Which service an account row publishes to. `account_id` holds a Meta user id
@@ -503,6 +524,13 @@ QUEUE_CANCELLED = "cancelled"
 # The states whose media files must survive the retention sweep, and which the
 # admin UI shows as still in the line.
 QUEUE_LIVE_STATES = (QUEUE_DRAFT, QUEUE_APPROVED, QUEUE_CLAIMED, QUEUE_FAILED)
+
+# How long a claim may be held before it is treated as abandoned rather than in
+# flight. A publish is one upload and a poll while Meta transcodes, minutes at
+# the outside, so an hour is generous by an order of magnitude and still catches
+# the same evening. It is not a timeout: nothing acts on it by itself, it only
+# decides what a person and a gauge get shown.
+CLAIM_STALE_AFTER = timedelta(hours=1)
 
 # Every state, in the order a post moves through them. The metrics endpoint
 # publishes a series per state including the empty ones, because a gauge that
@@ -1271,8 +1299,9 @@ async def claim_queued(conn: aiosqlite.Connection, queued_id: int) -> bool:
     caller that quietly does nothing.
     """
     async with conn.execute(
-        "UPDATE queued_posts SET state = ?, attempts = attempts + 1 WHERE id = ? AND state = ?",
-        (QUEUE_CLAIMED, queued_id, QUEUE_APPROVED),
+        "UPDATE queued_posts SET state = ?, attempts = attempts + 1, claimed_at = ? "
+        "WHERE id = ? AND state = ?",
+        (QUEUE_CLAIMED, iso(now()), queued_id, QUEUE_APPROVED),
     ) as cur:
         won = cur.rowcount == 1
     await conn.commit()
@@ -1435,6 +1464,54 @@ async def queue_depth_by_account(
         "SELECT account_id, state, COUNT(*) FROM queued_posts GROUP BY account_id, state",
     )
     return {(str(row[0]), str(row[1])): int(row[2]) for row in rows}
+
+
+async def stale_claims(
+    conn: aiosqlite.Connection, *, moment: datetime | None = None
+) -> list[Any]:
+    """Rows still `claimed` long after any real publish attempt would have ended.
+
+    A claim is held for one attempt. A row still holding one an hour later is a
+    process that died between creating the container and `media_publish`, and
+    it is the one queue state that says nothing about itself: no `failure` for
+    the admin UI to show, no counter for Prometheus to alert on, and `cancel`
+    refusing it as mid-flight. Row 55 sat there nine days.
+
+    Nothing here resolves anything. That stays a person's decision, because
+    Meta may have accepted the post and only the account can say. This is only
+    what makes the decision available to be made.
+
+    `claimed_at` is null on rows predating schema 18, so `created_at` stands in.
+    It is the wrong question for a fresh row and the right one for an old one,
+    and only rows already past the cutoff reach this at all.
+    """
+    cutoff = iso((moment or now()) - CLAIM_STALE_AFTER)
+    return await _all(
+        conn,
+        """
+        SELECT * FROM queued_posts
+        WHERE state = ? AND COALESCE(claimed_at, created_at) < ?
+        ORDER BY COALESCE(claimed_at, created_at)
+        """,
+        (QUEUE_CLAIMED, cutoff),
+    )
+
+
+async def stale_claims_by_account(
+    conn: aiosqlite.Connection, *, moment: datetime | None = None
+) -> dict[str, int]:
+    """The same rows counted per account, for the gauge."""
+    cutoff = iso((moment or now()) - CLAIM_STALE_AFTER)
+    rows = await _all(
+        conn,
+        """
+        SELECT account_id, COUNT(*) FROM queued_posts
+        WHERE state = ? AND COALESCE(claimed_at, created_at) < ?
+        GROUP BY account_id
+        """,
+        (QUEUE_CLAIMED, cutoff),
+    )
+    return {str(row[0]): int(row[1]) for row in rows}
 
 
 # --------------------------------------------------------------------------
