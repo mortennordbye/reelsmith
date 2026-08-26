@@ -176,6 +176,57 @@ be a local path. Without it the thumbnail comes from `thumb_offset` at
 `COVER_FRAME`, which is the same moment `cover.png` renders, so the fallback
 loses the hook band and nothing else.
 
+### Three destinations, and what is shared between them
+
+Instagram and YouTube publish today. TikTok is researched and not built, and the
+three docs are `docs/tiktok-api-setup.md`, `docs/multi-destination-audit.md` and
+`docs/tiktok-publishing-plan.md`.
+
+- **A destination is an `accounts` row, not a table.** `accounts.platform` says
+  which service and `ig_user_id` is an opaque account key holding a Meta user id
+  on one platform and a channel id on another. Credentials live in a table per
+  platform, because Meta's shape is a token plus an expiry and Google's is a
+  client pair plus a refresh token, and one table holding both is half null on
+  every row. The name `ig_user_id` is wrong on every non Instagram row and the
+  rename to `account_id` is mechanical and deliberately deferred.
+- **The whole publish fork is one `if` in `scheduler.publish_queued`.**
+  Everything above it is written about a queue that publishes something on a
+  timetable and never looks at what. That is why a platform costs a module and a
+  branch rather than a subsystem. **Instagram is the fallthrough of that `if`**,
+  so a row for a platform with no branch is handed to Meta's publisher rather
+  than failing. That is the opposite of `db.active_accounts`, which defaults to
+  Instagram precisely so a missed call site is inert, and it is worth fixing in
+  the same change that adds a third platform.
+- **The scriptwriter learns from Instagram alone, and this is not a gap to
+  close.** `skip_rate` is the share who scrolled past inside three seconds and
+  it is the one number the loop turns on. YouTube's `averageViewPercentage`
+  scores a whole video and TikTok exposes no retention metric at all. Other
+  platforms' numbers belong in the insights table with a platform column and on
+  the Posts page; feeding them to `_results_block` would corrupt the single
+  measurement everything else is argued from.
+- **TikTok's gate is not YouTube's gate.** YouTube's private lock turned out not
+  to apply here. TikTok's is enforced by a documented error code, and the audit
+  that lifts it reviews a posting screen this repo does not have and rejects
+  apps "designed for private/personal use only". So there is no publisher yet on
+  purpose, and the plan builds one serving both the audited and the unaudited
+  path so a refusal costs a flag.
+
+### Two accounts is a pipeline problem, not a gateway one
+
+`--account` does not exist and everything about a second account waits on it.
+The gateway is already most of the way there; the pipeline is one flat
+`Settings` over one `.env`, one `data/used_repos.json`, one `PROFILE.md` and one
+cloned voice.
+
+**Registering a second Instagram account deletes the first one's schedule.**
+`_apply_config_slots` resolves an unnamed `GATEWAY_SLOTS` line to the single
+registered Instagram account when there is exactly one. A second one makes that
+ambiguous, the unnamed lines are dropped with a warning, and then every account
+holding config slots is visited with an empty list and `sync_config_slots`
+replaces rather than merges. The pod boots healthy and Instagram stops posting.
+Put an explicit `account=` on every slot line before a second account exists
+anywhere, and see F0 in `docs/multi-destination-audit.md`.
+
 ### The nightly run is not in this repo
 
 `launchd/` is the Mac story and drives nothing on the Linux host. There the

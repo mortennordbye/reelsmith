@@ -254,13 +254,26 @@ allocation remains as a fallback for when the transcript can't be matched.
 The total is pinned to the **measured** audio duration, so the video can never
 outrun its own soundtrack.
 
-`gateway/` is a separate service, not a pipeline stage. It turns "comment SEND
-and I will DM you the link" into something that actually happens: it polls the
-comments on published posts, sends the one private reply Meta allows per
-comment, gates the link behind a follow, and hosts the cover image that
-publishing wants a public URL for. It runs in the homelab cluster, imports
-nothing from `pipeline/` or `config.py`, and the pipeline works with it down.
-See `gateway/README.md`.
+`gateway/` is a separate service, not a pipeline stage. It holds the scheduled
+queue that publishes finished videos over the following days, hosts the MP4 and
+the cover image that publishing wants a public URL for, sweeps each post's
+insights, and serves the admin panel. It also carries the comment to DM
+mechanic, which is wired but dormant because nothing advertises the keyword any
+more. It runs in the homelab cluster, imports nothing from `pipeline/` or
+`config.py`, and the pipeline works with it down. See `gateway/README.md`.
+
+**A destination is a row, not a service.** Instagram and YouTube publish today
+from the same queue, the same slots and the same claims; the entire difference
+is one branch in `scheduler.publish_queued` and a credentials table per
+platform. TikTok is researched and not built, and the reason is an audit rather
+than an engineering cost: `docs/tiktok-api-setup.md`,
+`docs/multi-destination-audit.md` and `docs/tiktok-publishing-plan.md`. One
+render feeds every destination it is enqueued to, uploaded once, because
+`/api/media` is content addressed.
+
+**One account, for now.** The gateway is written for several and the pipeline is
+not. `--account` does not exist, so a second account today means a second
+checkout. What that would cost is audited in `docs/multi-destination-audit.md`.
 
 ---
 
@@ -403,20 +416,30 @@ reach for:
 ## Tests
 
 ```bash
-pip install -e ".[dev]" && pytest
+uvx ruff check . && uv run --with pytest pytest
 ```
 
-Covers the deterministic logic only — scene allocation, caption alignment,
-scoring, the star-history and cooldown stores, caption gap repair. No network,
-no fixtures. The stages that call GitHub, Claude, Whisper, or Remotion are not
-tested here; `--stop-after` is how you inspect those.
+Two suites in one directory. The pipeline half is synchronous and pure: scene
+allocation, caption alignment, scoring, the star-history and cooldown stores,
+caption gap repair. The gateway half is async and drives the real ASGI app
+against a real SQLite file and an `httpx.MockTransport` standing in for Meta and
+Google, so it tests the seams rather than the functions.
+
+No network and no fixture files anywhere. The stages that call GitHub, Claude,
+Whisper or Remotion are not tested; `--stop-after` is how you inspect those.
+
+The gateway suite needs `fastapi` and `aiosqlite`, which the pipeline venv
+deliberately lacks, so on a render host it is
+`pytest --ignore-glob="tests/test_gateway_*"`. CI runs the whole thing.
 
 ## Not built yet
 
-An admin UI, so the whole thing can be driven and approved from a phone rather
-than a terminal, and the job queue plus Mac-side agent that would need. Anything
-that reads the account's own insights and feeds performance back into repo
-selection. A second render backend.
+TikTok, which is the third destination and is blocked on a compliance audit
+rather than on code. `--account`, without which a second account means a second
+checkout. A second render backend.
+
+The admin UI, the scheduled queue and the insights feedback loop all used to be
+listed here and all three shipped.
 
 The largest open question is how much of the pipeline could move off the laptop
 entirely. Research and publishing would move easily; script generation would

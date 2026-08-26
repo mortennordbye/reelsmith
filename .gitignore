@@ -38,6 +38,34 @@ data/used_repos.json
 data/ig_token.json
 tools/chatterbox/ref/morten.wav
 tools/chatterbox/ref/morten.m4a
+# Six candidate spinoff accounts with frame mockups, drawn up 2026-08-25.
+# Private for the same reason as IDEAS.md: every score in it is argued from this
+# account's own numbers. The directory entry is what keeps git out, including the
+# throwaway generator under tools/; the two globs below it are what the backup
+# script can actually take, since it only archives files a glob matches.
+SPINOFFS.md
+notes/spinoffs/
+video/src/spinoff/
+tools/spinoff/
+notes/spinoffs/*.png
+notes/spinoffs/*.html
+# The Chapter and Verse episodes, which are the only copy of about a day's work
+# and existed nowhere but this laptop's disk until 2026-08-26. The directory
+# entries above keep git out; only a glob is actually archived, so the source
+# was ignored by both git and the backup at once. That is the failure mode this
+# whole block exists to prevent, so the globs are listed by extension rather
+# than by directory.
+video/src/spinoff/*.tsx
+tools/spinoff/*.py
+notes/spinoffs/*.mp4
+notes/spinoffs/tools/*.py
+notes/spinoffs/tools/*.html
+# The artefacts and voice tracks the episodes render from. Scans and public
+# domain images, fetched once and not trivially re-fetchable now that Darwin
+# Online sits behind a frameset and gutendex has started answering 503.
+video/public/cv-*.jpg
+video/public/cv-*.png
+video/public/cv-*.wav
 # backup:end
 
 # --- Secrets ---------------------------------------------------------------
