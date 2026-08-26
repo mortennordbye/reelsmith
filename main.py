@@ -23,8 +23,17 @@
     python main.py --posted astral-sh/uv    start the 30-day cooldown
     python main.py --unmark astral-sh/uv    undo that
 
-Every stage writes its output to build/<date>/<owner-repo>/ before the next
-one starts, so a failure late in the pipeline never costs you the earlier work.
+    python main.py --migrate-account nightlybuild   plan the move into accounts/
+
+Every run belongs to one account. Pass `--account <name>`, or set
+REELSMITH_ACCOUNT in .env; there is no default, and a run without one fails at
+startup naming the accounts it can see. An account is a directory under
+accounts/<name>/ holding its own .env, data/ store and ref/ voice recording.
+
+Every stage writes its output to build/<account>/<date>/<owner-repo>/ before the
+next one starts, so a failure late in the pipeline never costs you the earlier
+work. The <date>/<owner-repo> arguments to --resume, --publish and --enqueue are
+resolved under the selected account, so they keep the shape they always had.
 """
 
 from __future__ import annotations
@@ -43,16 +52,19 @@ from rich.console import Console
 from rich.logging import RichHandler
 
 from config import (
+    ROOT,
     ConfigError,
     Settings,
     get_settings,
     require_github_token,
     require_instagram,
+    resolve_account,
     resolve_claude_cli,
+    select_account,
 )
 from pipeline import backfill as backfill_mod
 from pipeline import captions as captions_mod
-from pipeline import gateway, publisher, renderer, scraper, screenshot, tts
+from pipeline import gateway, migrate, publisher, renderer, scraper, screenshot, tts
 from pipeline import results as results_mod
 from pipeline import spec as spec_mod
 from pipeline.models import Caption, RepoCandidate, VideoScript, VideoSpec
@@ -204,10 +216,33 @@ def run(
         bool,
         typer.Option("--preview-voice", help="Synthesize one sample line and exit"),
     ] = False,
+    account: Annotated[
+        str | None,
+        typer.Option("--account", help="Which account under accounts/ this run is for"),
+    ] = None,
+    migrate_account: Annotated[
+        str | None,
+        typer.Option(
+            "--migrate-account",
+            help="Plan the move of the single account layout into accounts/<name>/",
+        ),
+    ] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
 ) -> None:
     _setup_logging(verbose)
-    cfg = get_settings()
+
+    # Before anything reads a Settings, because `get_settings()` is cached and
+    # every stage downstream reads whichever one it hands back. This is the
+    # whole of `--account`: bind the process, and no stage signature changes.
+    if migrate_account:
+        return _migrate_account(migrate_account, apply=yes)
+    try:
+        cfg = select_account(resolve_account(account))
+    except ConfigError as exc:
+        console.print(f"[bold red]Setup problem[/]\n{exc}")
+        raise typer.Exit(1) from exc
+    log.debug("Account %s, build dir %s", cfg.account, cfg.build_dir)
+
     if no_research:
         cfg.claude_research = False
 
@@ -1559,6 +1594,45 @@ def _enqueue_youtube(
         f"[dim]({result.get('detail')})[/]"
     )
     return result
+
+
+def _migrate_account(name: str, *, apply: bool) -> None:
+    """Move the single account layout into `accounts/<name>/`.
+
+    Prints the plan and does nothing, unless `--yes` is also given. The files
+    involved are the only copy of a cloned voice and every run folder the
+    feedback loop reads its hooks out of, so this is one of the few things here
+    worth asking twice about.
+    """
+    moves = migrate.plan(name)
+    console.print(f"[bold]Moving this checkout into accounts/{name}/[/]\n")
+    for move in moves:
+        why = move.blocked
+        mark = "[dim]·[/]" if why else "[green]→[/]"
+        tail = f"  [dim]{why}[/]" if why else ""
+        console.print(
+            f"  {mark} {move.source.relative_to(ROOT)}  →  "
+            f"{move.target.relative_to(ROOT)}  [dim]{move.what}[/]{tail}"
+        )
+
+    doable = [m for m in moves if not m.blocked]
+    if not doable:
+        console.print("\n[yellow]Nothing to move.[/]")
+        return
+    if not apply:
+        console.print(
+            f"\n[dim]{len(doable)} of {len(moves)} would move. "
+            f"Re-run with --yes to do it.[/]"
+        )
+        return
+
+    done = migrate.apply(doable)
+    console.print(f"\n[bold green]Moved {len(done)} item(s).[/]")
+    console.print(
+        "[dim]The root .env was copied rather than moved, because it also holds "
+        "the global half. Delete the per account lines from it by hand, then set "
+        f"REELSMITH_ACCOUNT={name} there or pass --account {name}.[/]"
+    )
 
 
 def _finish(run_dir: Path | None) -> None:

@@ -102,6 +102,64 @@ def test_nothing_is_uploaded_when_the_gateway_is_not_configured(off, tmp_path):
 # --- Covered repos ----------------------------------------------------------
 
 
+def test_every_read_says_which_account_is_asking(cfg):
+    """F8, and it is wrong in the expensive direction rather than merely absent.
+
+    Unscoped, account 2's discovery reads account 1's commitments as its own
+    and drops those repos, and the two starve each other out of the top of a
+    stars-sorted result set. CLAUDE.md already records that failure killing two
+    nights of batches with only one account doing it to itself.
+
+    All five reads together, because the gap was that none of them sent it and
+    a test per endpoint would let the next one be added without.
+    """
+    seen: list[tuple[str, str | None]] = []
+
+    def handler(request):
+        seen.append((request.url.path, request.url.params.get("ig_user_id")))
+        return httpx.Response(200, json={
+            "covered": [], "rendered": [], "results": [], "queue": [],
+        })
+
+    # A client each, because these close the one they are handed.
+    gateway.fetch_covered(cfg, client=_client(handler))
+    gateway.fetch_rendered(cfg, client=_client(handler))
+    gateway.fetch_results(cfg, client=_client(handler))
+    gateway.fetch_queue(cfg, client=_client(handler))
+    gateway.fetch_pending_count(cfg, client=_client(handler))
+
+    assert seen == [
+        ("/api/covered", "17841400000000000"),
+        ("/api/rendered", "17841400000000000"),
+        ("/api/results", "17841400000000000"),
+        ("/api/queue", "17841400000000000"),
+        ("/api/queue", "17841400000000000"),
+    ]
+
+
+def test_an_account_with_no_instagram_id_asks_the_question_it_always_asked(cfg):
+    """A checkout mid migration is not a third behaviour to reason about: no id
+    means no parameter, which is the call this code made before F8."""
+    unpublished = cfg.model_copy(update={"ig_user_id": ""})
+
+    def handler(request):
+        assert "ig_user_id" not in request.url.params
+        return httpx.Response(200, json={"covered": []})
+
+    assert gateway.fetch_covered(unpublished, client=_client(handler)) == {}
+
+
+def test_forgetting_a_render_is_scoped_to_the_account_too(cfg):
+    """`--unmark` on account 2 must not clear account 1's record of the same
+    repo. The gateway matches `IN (?, '')`, so a render that predates the
+    account being configured is still reachable."""
+    def handler(request):
+        assert request.url.params.get("ig_user_id") == "17841400000000000"
+        return httpx.Response(200, json={"detail": "gone"})
+
+    assert gateway.forget_rendered("a/b", cfg, client=_client(handler)) is True
+
+
 def test_covered_repos_come_back_keyed_by_name(cfg):
     def handler(request):
         assert request.url.path == "/api/covered"

@@ -1,22 +1,62 @@
-"""Central configuration.
+"""Central configuration, and which account a run belongs to.
 
 Everything tunable lives here so no stage has to reach for an env var directly.
 Import `get_settings()` rather than constructing `Settings` yourself -- it is
 cached, so the `.env` file is read exactly once per process.
+
+## Accounts
+
+One checkout serves several accounts. An account is a directory,
+`accounts/<name>/`, holding the machine readable half of an identity:
+
+    accounts/nightlybuild/.env      the per account overrides
+    accounts/nightlybuild/data/     the cooldown store, star history, token
+    accounts/nightlybuild/ref/      the voice recording the clone is built from
+
+and the run folders it produces live under `build/<name>/<date>/<slug>/`.
+
+The editorial half stays in one root `PROFILE.md`, which already carries its
+shared rules at the top and one section per account. Splitting it per directory
+would either duplicate the shared half, which is the drift this repo refuses
+everywhere else, or invent an include mechanism for a markdown file.
+
+**Nothing resolves an account by counting.** `--account` or `REELSMITH_ACCOUNT`,
+and neither one means the run fails naming what it found. The gateway's
+resolve-when-there-is-exactly-one is precisely what deleted a working schedule
+the first time a second account existed (F0 in docs/multi-destination-audit.md),
+and repeating that pattern here would be repeating a known bug on purpose. A run
+that fails at startup costs a night; a run that posts account 1's video to
+account 2 cannot be taken back.
+
+The split between what an account owns and what the checkout owns was measured
+rather than guessed, and it is F4 in the same document. Credentials, the
+editorial register, the voice, the cooldown store and the build subtree are per
+account. The GitHub token, the model knobs, the validators, the frame size, the
+Remotion project and the gateway URL are not.
 """
 
 from __future__ import annotations
 
+import logging
 import shutil
 import sys
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+log = logging.getLogger(__name__)
+
 ROOT = Path(__file__).parent.resolve()
+ACCOUNTS_DIR = ROOT / "accounts"
+
+# Where the single account layout kept things, and where an account that has
+# not been migrated yet still has them. Both are read only fallbacks: nothing
+# writes to either once an account is selected and its directory exists.
+LEGACY_DATA_DIR = ROOT / "data"
+LEGACY_VOICE_REF = ROOT / "tools/chatterbox/ref/morten.wav"
 
 
 def _default_torch_device() -> str:
@@ -34,7 +74,22 @@ class Settings(BaseSettings):
         env_file=ROOT / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # So `Settings(account="x")` works alongside REELSMITH_ACCOUNT. The
+        # alias exists because ACCOUNT, which is what pydantic would derive,
+        # is far too general a name to put in a shared host environment.
+        populate_by_name=True,
     )
+
+    # --- Which account this run belongs to ---------------------------------
+    # Empty is the checkout with no account selected: the global half of these
+    # settings is still correct, and every per account path falls back to the
+    # single account layout this repo had before `accounts/` existed. That is
+    # what keeps `pipeline/models.py` importable, since it reads the validator
+    # limits at import time, long before a CLI flag has been parsed.
+    #
+    # It is *not* a default account. `main.py` refuses to do per account work
+    # without one, and says which accounts it can see.
+    account: str = Field(default="", validation_alias="REELSMITH_ACCOUNT")
 
     # --- Credentials -------------------------------------------------------
     # Script generation uses the Claude Code CLI's existing subscription auth,
@@ -200,9 +255,14 @@ class Settings(BaseSettings):
     # compilation, which took ~200s more than a warm one when measured. A run
     # that hangs past this is broken, not slow.
     chatterbox_timeout_s: int = 900
-    # Recording of my voice the clone is built from. Gitignored, so a fresh
+    # Recording of the voice the clone is built from. Gitignored, so a fresh
     # checkout has to re-record it (tools/chatterbox/ref/RECORD-THIS.txt).
-    chatterbox_ref: Path = ROOT / "tools/chatterbox/ref/morten.wav"
+    #
+    # Left unset it resolves to the selected account's own `ref/voice.wav`,
+    # because PROFILE.md is explicit that sharing one cloned voice across two
+    # accounts meant to look unrelated is the strongest link between them.
+    # See `_resolve_account_paths`.
+    chatterbox_ref: Path = Field(default=LEGACY_VOICE_REF)
 
     # --- Captions ----------------------------------------------------------
     whisper_model: str = "small.en"
@@ -229,17 +289,91 @@ class Settings(BaseSettings):
             raise ValueError(f"tts_backend must be one of {sorted(allowed)}, got {v!r}")
         return v
 
+    @model_validator(mode="after")
+    def _resolve_account_paths(self) -> Settings:
+        """Point the voice reference at the selected account, unless told not to.
+
+        Done here rather than as a property because `chatterbox_ref` is a
+        settable field that `tools/chatterbox/synth.py` is handed directly, and
+        a machine with one account and an existing recording should keep
+        working while `accounts/` is still being populated.
+
+        `model_fields_set` is what makes "unless told not to" honest: a value
+        that arrived from `CHATTERBOX_REF` in either `.env` counts as chosen
+        and is never second guessed.
+        """
+        if self.account and "chatterbox_ref" not in self.model_fields_set:
+            own = self.account_dir / "ref" / "voice.wav"
+            if own.exists():
+                self.chatterbox_ref = own
+            elif LEGACY_VOICE_REF.exists():
+                # The migration has not been run yet. Loud enough to notice,
+                # quiet enough that a batch still speaks tonight. Two accounts
+                # sharing one voice is a real problem and it is the operator's
+                # to fix, not this function's to fail over.
+                log.info(
+                    "No voice recording at %s; falling back to %s. "
+                    "scripts/migrate-to-accounts.py moves it into place.",
+                    own, LEGACY_VOICE_REF,
+                )
+            else:
+                self.chatterbox_ref = own
+        return self
+
     # --- Derived paths -----------------------------------------------------
     @property
+    def account_dir(self) -> Path:
+        """This account's own half of the checkout.
+
+        Never created on access, unlike the directories below it. An account is
+        something the operator declares by making the directory and putting an
+        `.env` in it, and a typo in `--account` that silently created an empty
+        profile would be a run against no credentials rather than an error.
+        """
+        if not self.account:
+            raise ConfigError(
+                "No account is selected, so there is no account directory.\n"
+                "Pass --account <name>, or set REELSMITH_ACCOUNT in .env."
+            )
+        return ACCOUNTS_DIR / self.account
+
+    @property
     def data_dir(self) -> Path:
-        p = ROOT / "data"
+        """The cooldown store, the star history and the live Instagram token.
+
+        Per account and not shareable: `data/used_repos.json` holds a 30 day
+        cooldown per repo, and a second account pointed at the same file
+        inherits every repo the first one ever covered. F9.
+
+        Falls back to the pre `accounts/` location while an account directory
+        has no `data/` yet, so a checkout mid migration reads the store it
+        already has rather than starting an empty one. `data` has to stay a
+        *directory* symlink on a host that keeps it on a share, because
+        `StarHistory.save()` renames a temp file over the target and that
+        rename replaces a file symlink with a real file.
+        """
+        if self.account:
+            own = self.account_dir / "data"
+            if own.exists() or not LEGACY_DATA_DIR.exists():
+                own.mkdir(parents=True, exist_ok=True)
+                return own
+            return LEGACY_DATA_DIR
+        p = LEGACY_DATA_DIR
         p.mkdir(exist_ok=True)
         return p
 
     @property
     def build_dir(self) -> Path:
-        p = ROOT / "build"
-        p.mkdir(exist_ok=True)
+        """Where this account's run folders live: `build/<account>/`.
+
+        Everything that takes a `<date>/<slug>` argument -- `--resume`,
+        `--publish`, `--enqueue` -- is resolved against this, so those arguments
+        keep their old shape and gain the account from `--account` rather than
+        from the path. `--recover` scans this too, which is why it needs no
+        account level of its own.
+        """
+        p = ROOT / "build" / self.account if self.account else ROOT / "build"
+        p.mkdir(parents=True, exist_ok=True)
         return p
 
     @property
@@ -303,9 +437,91 @@ class ConfigError(RuntimeError):
     """Raised at startup for a problem the user must fix before anything runs."""
 
 
+_selected_account: str = ""
+
+
+def available_accounts() -> list[str]:
+    """Every account this checkout can see, sorted.
+
+    A directory under `accounts/` holding an `.env`. The `.env` is what makes
+    it an account rather than a leftover: `accounts/nightlybuild/data/` can
+    survive a profile being deleted, and offering it back as a name would be
+    offering a run with no credentials.
+    """
+    if not ACCOUNTS_DIR.is_dir():
+        return []
+    return sorted(
+        p.name for p in ACCOUNTS_DIR.iterdir() if p.is_dir() and (p / ".env").is_file()
+    )
+
+
+def resolve_account(explicit: str | None = None) -> str:
+    """Which account this process is for, or fail saying what it could see.
+
+    Order is `--account`, then `REELSMITH_ACCOUNT` from the environment or the
+    root `.env`. There is deliberately no third rule. Resolving by "there is
+    only one" is how the gateway lost a working schedule the first time a
+    second account existed, and the pipeline's version of that mistake posts a
+    video to the wrong audience, which no amount of noticing afterwards undoes.
+
+    The bootstrap `Settings()` here reads the root `.env` alone, which is the
+    only file that can name an account without already being one.
+    """
+    name = (explicit or "").strip() or Settings().account.strip()
+    known = available_accounts()
+    if not name:
+        raise ConfigError(
+            "No account selected.\n"
+            f"{_accounts_line(known)}\n"
+            "Pass --account <name>, or set REELSMITH_ACCOUNT in .env.\n"
+            "There is no default: one checkout serves several accounts and "
+            "guessing wrong publishes to the wrong audience."
+        )
+    if name not in known:
+        raise ConfigError(
+            f"No account directory at accounts/{name}/ with an .env in it.\n"
+            f"{_accounts_line(known)}\n"
+            "scripts/migrate-to-accounts.py builds one from the single account "
+            "layout this repo used before."
+        )
+    return name
+
+
+def _accounts_line(known: list[str]) -> str:
+    if not known:
+        return "This checkout has no accounts/ directory yet."
+    return f"Accounts in this checkout: {', '.join(known)}."
+
+
+def select_account(name: str) -> Settings:
+    """Bind this process to one account, and hand back its settings.
+
+    Called once, from `main.py`, before any stage runs. Every stage already
+    reads a single `Settings`, so binding here is what keeps `--account` from
+    becoming a parameter on twenty signatures.
+    """
+    global _selected_account
+    _selected_account = name
+    get_settings.cache_clear()
+    return get_settings()
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    return Settings()
+    """The settings for the selected account, or the account-less checkout.
+
+    Two `.env` files, root first and the account's own second, so the account
+    overrides the checkout and anything it does not mention is inherited. That
+    is the whole of what "a profile is an `.env` fragment plus a data
+    directory" means, and it is why no stage signature changes.
+    """
+    if not _selected_account:
+        return Settings()
+    fragment = ACCOUNTS_DIR / _selected_account / ".env"
+    return Settings(
+        _env_file=(ROOT / ".env", fragment),
+        account=_selected_account,
+    )
 
 
 def resolve_claude_cli() -> str:

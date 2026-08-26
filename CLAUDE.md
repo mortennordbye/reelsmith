@@ -211,21 +211,61 @@ three docs are `docs/tiktok-api-setup.md`, `docs/multi-destination-audit.md` and
   purpose, and the plan builds one serving both the audited and the unaudited
   path so a refusal costs a flag.
 
-### Two accounts is a pipeline problem, not a gateway one
+### An account is a directory, and it is never guessed
 
-`--account` does not exist and everything about a second account waits on it.
-The gateway is already most of the way there; the pipeline is one flat
-`Settings` over one `.env`, one `data/used_repos.json`, one `PROFILE.md` and one
-cloned voice.
+`accounts/<name>/` holds the machine readable half of an identity: the per
+account `.env`, `data/` for the cooldown store and the live token, and `ref/`
+for the voice recording the clone is built from. Its run folders live under
+`build/<name>/<date>/<slug>/`. `--account <name>` binds the process before
+`get_settings()` is built, and since every stage already reads one `Settings`,
+no stage signature changes.
 
-**Registering a second Instagram account deletes the first one's schedule.**
-`_apply_config_slots` resolves an unnamed `GATEWAY_SLOTS` line to the single
-registered Instagram account when there is exactly one. A second one makes that
-ambiguous, the unnamed lines are dropped with a warning, and then every account
-holding config slots is visited with an empty list and `sync_config_slots`
-replaces rather than merges. The pod boots healthy and Instagram stops posting.
-Put an explicit `account=` on every slot line before a second account exists
-anywhere, and see F0 in `docs/multi-destination-audit.md`.
+- **There is no default and no resolve by count.** `--account`, or
+  `REELSMITH_ACCOUNT` in the host `.env`, and neither one fails the run naming
+  the accounts it could see. The gateway resolves an unnamed slot line to the
+  single registered Instagram account, and a second account registering was
+  enough to delete a working schedule at boot; that is F0, and the pipeline's
+  version of the same shortcut publishes to the wrong audience, which nothing
+  later undoes. A run that fails at startup costs a night.
+- **The editorial half stays in one root `PROFILE.md`.** It already carries the
+  shared rules at the top and one section per account, and its own template
+  says everything not overridden inherits them. A file per directory would
+  either duplicate the shared half, which is the drift this repo refuses
+  everywhere else, or invent an include mechanism for markdown.
+- **A `<date>/<slug>` argument keeps its shape.** `--resume`, `--publish` and
+  `--enqueue` are resolved against `cfg.build_dir`, so they gain the account
+  from `--account` rather than from the path, and `--recover` scans the same
+  subtree and needs no account level of its own.
+- **The cooldown store and the voice are per account and cannot be shared.**
+  One `used_repos.json` between two accounts hands the second one a 30 day
+  exclusion on every repo the first ever covered (F9). One cloned voice across
+  two accounts meant to look unrelated is, per `PROFILE.md`, the strongest link
+  between them.
+- **Every gateway read says which account is asking.** `fetch_covered`,
+  `fetch_rendered`, `fetch_results`, `fetch_queue` and `forget_rendered` all
+  send `ig_user_id` now (F8). Unscoped they answered for every account, which
+  was harmless while the Instagram row and the YouTube row were the same video,
+  and with two accounts starves both out of the top of a stars-sorted result
+  set.
+- **`accounts/<name>` has to be a *directory* symlink on a host that keeps it
+  on a share**, for the reason `data` always did: `StarHistory.save()` renames
+  a temp file over its target, and that rename replaces a file symlink with a
+  real file. `scripts/pod-setup.sh` links one per account.
+- **`python main.py --migrate-account <name>` moves a single account checkout
+  into the new layout.** It prints the plan and moves nothing until it is given
+  `--yes`. The root `.env` is copied rather than moved, because it also holds
+  the global half and which lines are global is a judgement rather than a rule.
+  Until it is run, `data_dir` and the voice reference fall back to where they
+  were, so a checkout mid migration reads the store it already has rather than
+  starting an empty one.
+
+**Registering a second Instagram account used to delete the first one's
+schedule**, at boot, with one warning line describing a different symptom. Fixed
+2026-08-26: the config slot sweep no longer runs while any slot line is
+unresolved, because an account's absence from the config means "delete its rows"
+and an unresolved line means "I could not work out whose these are". Put an
+explicit `account=` on every `GATEWAY_SLOTS` line anyway, which is never
+ambiguous and so is never subject to any of it. F0.
 
 ### The nightly run is not in this repo
 
@@ -236,6 +276,12 @@ and editing this checkout cannot change what fires tonight. Anything about it
 that is worth knowing has to be written down here instead, which is what this
 section is.
 
+- **It has to name its account.** `REELSMITH_ACCOUNT` in the render host's
+  `.env` is the one line version and is what the 02:00 and 05:00 sessions rely
+  on, since a scheduled prompt held outside git cannot easily gain a flag.
+  Without it every run fails at startup naming the accounts it could see, which
+  is the trade that was chosen: a night lost is recoverable and a Reel posted to
+  the wrong audience is not.
 - **It arms what it renders.** The nightly enqueues with `--approve`, so a
   finished Reel goes straight into the gateway's schedule and the next free
   slot publishes it. The alternative was a draft, which waits for somebody to
@@ -366,7 +412,8 @@ go out and the prompt changes underneath them.
   any script runs.
 - **The Repos page is the cooldown list, made visible.** It is what decides
   whether tonight's batch may pick a repo, and it existed as
-  `data/used_repos.json` on the machine that renders plus two gateway tables
+  `accounts/<name>/data/used_repos.json` on the machine that renders plus two
+  gateway tables
   nothing displayed, so "have we already done this one" was a question you
   answered by running a command on the right machine. It joins `covered_repos`,
   `rendered_repos` and the queue's publish dates, keeps the three
@@ -435,8 +482,10 @@ What this repo owes that arrangement is metrics that move:
 
 ## The cooldown list, on both sides
 
-`data/used_repos.json` is what discovery reads, and it is one JSON file on one
-laptop, outside git and outside every backup here. `GET /api/covered` hands the
+`accounts/<name>/data/used_repos.json` is what discovery reads, and it is one
+JSON file on one laptop, outside git and outside every backup here. It is per
+account because a 30 day cooldown is a fact about one audience, and a second
+account pointed at the same file inherits every repo the first ever covered. `GET /api/covered` hands the
 same list back from the gateway, whose volume gets `VACUUM INTO` every six
 hours. `_sync_covered` in `pipeline/scraper.py` folds it in before the first
 Search call, so a repo recovered this way costs no query slot and no README
@@ -493,7 +542,7 @@ that morning. The window into it was.
 `GET /api/rendered` is the repos a video already exists for, and it is
 deliberately not part of `/api/covered`. A commitment is irreversible and starts
 a 30 day cooldown; a render is neither, and folding the two together would merge
-"I built this and have not watched it yet" into `data/used_repos.json` and block
+"I built this and have not watched it yet" into the cooldown store and block
 the repo for a month. So `fetch_rendered` is read next to `fetch_covered` before
 the first Search call and its repos are dropped for that run only, never written
 down.
@@ -710,7 +759,8 @@ and for every security update, and holds routine majors back for a human.
   the cooldown store, `GET /api/rendered` and the queue's publish dates, so it
   answers "have we talked about this and when did it go out". It merges the
   gateway's covered list in memory rather than writing it back, since a listing
-  command has no business editing `data/used_repos.json`, and it takes publish
+  command has no business editing the account's cooldown store, and it takes
+  publish
   dates from the queue rather than `/api/results`, which omits a post until it
   has a retention reading and would report this afternoon's Reel as never
   posted. Made and Posted are separate columns because the gap between them is
