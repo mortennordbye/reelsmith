@@ -22,6 +22,7 @@ Two things to know before editing this file:
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import subprocess
@@ -386,6 +387,44 @@ caption_text
     The first two are real captions from this account that reached about 150
     accounts each. The third is a real one that reached 1173.
 """
+
+
+def prompt_source() -> str:
+    """Every piece of prompt text this module can send, as source text.
+
+    `results.recipe` fingerprints a run so that "did the hook change work" has
+    an answer, and the digest half of that fingerprint is there to cover what
+    git cannot see: an uncommitted edit mid-session, and a checkout where
+    `git rev-parse` finds nothing at all. It hashed `SYSTEM_PROMPT` alone,
+    which is the smaller half. The research rule, the hook specification, the
+    caption rules and the benchmark the results block argues from all live in
+    the two functions below, and none of it moved the digest, so two runs with
+    different hook rules and the same dirty tree were reported as comparable.
+
+    The source rather than the rendered text, deliberately. `_results_block`
+    renders this account's own numbers, which change every night without any
+    rule changing, and a fingerprint that moved on its inputs would put every
+    run in a cohort of one. The source is the rule; the numbers are the data.
+
+    **Anything added to this module that reaches the model belongs in this
+    list.** The repair prompt inside `write_script` deliberately does not: it
+    fires only after a validator rejection and asks for a minimal fix to an
+    answer the rules above already produced, so folding it in would move the
+    digest on an edit to a logging line.
+    """
+    parts = [SYSTEM_PROMPT]
+    for fn in (_results_block, _build_prompt):
+        try:
+            parts.append(inspect.getsource(fn))
+        except (OSError, TypeError):
+            # No source on disk, which a checkout always has and a frozen
+            # build does not. Say so in the digest rather than quietly
+            # narrowing what it covers, so the run is marked incomparable
+            # instead of being compared against runs that were fingerprinted
+            # properly.
+            log.warning("No source for %s; the recipe cannot cover it.", fn.__name__)
+            parts.append(f"<unavailable:{fn.__name__}>")
+    return "\n".join(parts)
 
 
 def _run_claude(prompt: str, schema: dict[str, Any], cfg: Settings) -> dict[str, Any]:

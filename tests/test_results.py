@@ -18,7 +18,7 @@ import pytest
 from conftest import candidate
 
 from config import Settings
-from pipeline import results
+from pipeline import results, scriptwriter
 from pipeline.results import PastPost
 from pipeline.scriptwriter import _build_prompt, _results_block
 
@@ -192,6 +192,77 @@ def test_the_recipe_changes_when_a_setting_that_changes_the_output_changes(cfg):
 
 def test_the_recipe_is_stable_across_calls(cfg):
     assert results.recipe(cfg) == results.recipe(cfg)
+
+
+def test_the_recipe_moves_when_the_hook_specification_changes(cfg, monkeypatch):
+    """The test the defect would have failed.
+
+    `recipe()` hashed `SYSTEM_PROMPT` and nothing else until 2026-08-26, so
+    every rule in `_build_prompt` -- the research rule, the whole hook
+    specification, the caption rules -- could be rewritten without moving the
+    fingerprint. An uncommitted edit to the half of the prompt that gets
+    edited most left two runs looking comparable, which is the one claim a
+    recipe makes.
+    """
+    before = results.recipe(cfg)
+
+    def _rewritten(repo, cfg, past=None):
+        return "a completely different set of rules"
+
+    monkeypatch.setattr(scriptwriter, "_build_prompt", _rewritten)
+
+    assert results.recipe(cfg) != before
+
+
+def test_the_recipe_moves_when_the_benchmark_changes(cfg, monkeypatch):
+    """`_results_block` states the benchmark and derives its verdict from it,
+    and CLAUDE.md calls that verdict load bearing: it decides whether the
+    model is told to copy the top of the list or to disregard all of it."""
+    before = results.recipe(cfg)
+
+    def _rewritten(past):
+        return "## Ignore everything this account has ever done"
+
+    monkeypatch.setattr(scriptwriter, "_results_block", _rewritten)
+
+    assert results.recipe(cfg) != before
+
+
+def test_the_recipe_does_not_move_when_only_the_past_numbers_change(cfg):
+    """The source is the rule and the numbers are the data.
+
+    `_results_block` renders this account's own skip rates, which change every
+    night without any rule changing. Hashing what it returns rather than what
+    it is would put every run in a cohort of one and the recipe would compare
+    nothing to nothing.
+    """
+    lean = scriptwriter._results_block([])
+    fed = scriptwriter._results_block(
+        [
+            results.PastPost(
+                repo_full_name="a/one", hook="a hook", skip_rate=40.0,
+                avg_watch_s=3.0, views=900,
+            )
+        ]
+    )
+
+    assert lean != fed
+    assert results.recipe(cfg) == results.recipe(cfg)
+
+
+def test_the_prompt_digest_covers_what_the_model_is_actually_shown(cfg):
+    """A guard on the seam rather than on the digest.
+
+    The failure this file exists to prevent is prompt text living somewhere
+    `recipe()` does not read, and a hash is opaque about which. Naming three
+    sentences that reach the model, one from each source, fails loudly and
+    says where when one of them stops being covered.
+    """
+    covered = scriptwriter.prompt_source()
+
+    assert scriptwriter.SYSTEM_PROMPT in covered
+    assert "would the hook still be true if" in covered
+    assert "Educational videos in this format" in covered
 
 
 def test_a_setting_that_cannot_change_the_script_does_not_change_the_recipe(cfg):
