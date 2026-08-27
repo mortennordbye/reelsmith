@@ -7,6 +7,7 @@
   What goes out next, and when. Times are the slot's local time, jitter
   included, so what is shown is what will happen.
 </p>
+{% if quip_for(page) %}<p class="quip">{{ quip_for(page) }}</p>{% endif %}
 
 {% for board in boards %}
   {% set account = board.account %}

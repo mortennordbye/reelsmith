@@ -1,0 +1,353 @@
+{# The landing page, and the one that answers "is the machine running and what
+   has it done".
+
+   Queue and Posts list things and Insights compares them. None of the three
+   answers that, and until this existed the answer was three tabs and some
+   arithmetic. Everything here is a call one of those pages already makes, so
+   this page cannot disagree with the page it summarises.
+
+   The layout is a summary followed by detail, because a dashboard is scanned
+   and not read: what needs attention is a lit pill at the top, and the numbers
+   underneath explain it. #}
+{% extends "base.html" %}
+{% from "_icons.html" import platform_icon, platform_name %}
+{% block title %}reelsmith dashboard{% endblock %}
+
+{% block style %}
+    /* The Manager, and the one place on the panel with a photograph in it. */
+    .boss {
+      display: flex; gap: 18px; align-items: center; background: var(--panel);
+      border: 2px solid var(--accent); border-radius: 14px;
+      padding: 16px 20px; margin-bottom: 14px;
+    }
+    .boss .pfp {
+      width: 96px; height: 96px; flex: none; border-radius: 10px;
+      border: 2px solid var(--line-2); background-size: cover;
+      background-position: center;
+    }
+    .boss .role {
+      font-family: var(--mono); font-size: 9.5px; font-weight: 700;
+      letter-spacing: .15em; text-transform: uppercase; color: var(--accent);
+    }
+    .boss h1 { font-family: var(--sans); font-size: 24px; font-weight: 700;
+      letter-spacing: -.015em; line-height: 1.2; margin: 9px 0 7px; }
+    .boss p { margin: 0; font-size: 13px; color: var(--dim); }
+    @media (max-width: 640px) { .boss { flex-direction: column; align-items: flex-start; } }
+
+    /* Status, as lit or unlit. Form as well as number, so what needs attention
+       reads before anything is actually read. */
+    .pills { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+    .pill {
+      display: flex; align-items: center; gap: 8px; background: var(--panel);
+      border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 13px 6px 10px;
+    }
+    .pill .d { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--faint); }
+    .pill .d.go { background: var(--good); }
+    .pill .d.warn { background: var(--warn); }
+    .pill .d.bad { background: var(--bad); }
+    .pill .l {
+      font-family: var(--mono); font-size: 9.5px; letter-spacing: .13em;
+      text-transform: uppercase; color: var(--faint);
+    }
+    .pill .v { font-size: 12.5px; font-weight: 600; }
+
+    .grid { display: grid; gap: 14px; margin-bottom: 14px; }
+    .g2 { grid-template-columns: 1.35fr 1fr; }
+    .g4 { grid-template-columns: repeat(4, 1fr); }
+    /* A grid item defaults to `min-width: auto`, so a track refuses to shrink
+       below its widest child and the station strip pushed the whole page
+       sideways on a phone instead of scrolling inside its own panel. This is
+       what lets the `overflow-x` below actually engage. */
+    .grid > * { min-width: 0; }
+    @media (max-width: 920px) { .g2, .g4 { grid-template-columns: 1fr; } }
+
+    .panel { background: var(--panel); border: 1px solid var(--line-2);
+      border-radius: 12px; padding: 17px 19px 19px; }
+    .panel.lit { border-color: var(--accent); }
+    .panel > h2 {
+      font-family: var(--sans); font-size: 10.5px; font-weight: 700;
+      letter-spacing: .17em; text-transform: uppercase; color: var(--faint);
+      margin: 0 0 15px;
+    }
+    .huge {
+      font-size: 58px; font-weight: 700; letter-spacing: -.04em; line-height: 1;
+      font-variant-numeric: tabular-nums; color: var(--accent-soft);
+    }
+    .big { font-size: 38px; font-weight: 700; letter-spacing: -.035em; line-height: 1;
+      font-variant-numeric: tabular-nums; display: block; }
+    .cap { display: block; font-size: 12.5px; color: var(--dim); margin-top: 9px; }
+
+    /* One card per destination, in that platform's own hue. */
+    .q { background: var(--panel); border: 2px solid var(--line-2);
+      border-radius: 12px; padding: 15px 17px 17px; }
+    .q.instagram { border-color: #4d3a63; } .q.youtube { border-color: #6b2b24; }
+    .q.tiktok { border-color: #24575e; } .q.facebook { border-color: #29406b; }
+    .q .handle {
+      display: block; font-family: var(--mono); font-size: 11px;
+      color: var(--faint); margin-top: 9px; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap;
+    }
+    .q .big { margin-top: 9px; }
+    .q.instagram .big { color: #c98ae0; } .q.youtube .big { color: #ff6b5e; }
+    .q.tiktok .big { color: #4fd1c5; } .q.facebook .big { color: #7aa2f7; }
+    /* How full the line is, as segments rather than a smooth bar: the queue is
+       a count of posts and a fraction of a post is not a thing. */
+    .bar { display: flex; gap: 3px; margin-top: 13px; }
+    .bar i { flex: 1; height: 8px; border-radius: 2px; background: var(--panel-2); }
+    .q.instagram .bar i.f { background: #c98ae0; } .q.youtube .bar i.f { background: #ff6b5e; }
+    .q.tiktok .bar i.f { background: #4fd1c5; } .q.facebook .bar i.f { background: #7aa2f7; }
+
+    .chain { display: flex; align-items: center; gap: 7px; overflow-x: auto; padding-bottom: 3px; }
+    .st { flex: 1; min-width: 102px; text-align: center; background: var(--panel-2);
+      border: 1px solid var(--line); border-radius: 10px; padding: 12px 8px; }
+    .st .sn { display: block; font-size: 20px; font-weight: 700; letter-spacing: -.03em;
+      font-variant-numeric: tabular-nums; }
+    .st .sl { display: block; font-family: var(--mono); font-size: 9px; letter-spacing: .13em;
+      text-transform: uppercase; color: var(--faint); margin-top: 6px; }
+    .st.out { border-color: var(--good); } .st.out .sn { color: var(--good); }
+    .link { color: var(--line-2); font-weight: 700; flex: none; }
+
+    .odo { display: flex; gap: 30px; flex-wrap: wrap; }
+    .odo .big { font-size: 30px; }
+    .odo .cap { font-family: var(--mono); font-size: 9.5px; letter-spacing: .13em;
+      text-transform: uppercase; color: var(--faint); margin-top: 8px; }
+    .num { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+{% endblock %}
+
+{% block body %}
+
+<div class="boss">
+  <span class="pfp" style="background-image:url('{{ url_for('asset', name='boss-avatar.jpg') }}')"></span>
+  <div>
+    <span class="role">Manager &middot; AI Slopengine</span>
+    <h1>Hi Boss. {{ greeting }}</h1>
+    <p>
+      {{ upcoming_count }} waiting across {{ boards | length }}
+      destination{{ '' if boards | length == 1 else 's' }},
+      {{ machine.published }} published since the first night.
+    </p>
+  </div>
+</div>
+
+{# Lit or unlit, and the label is always beside the light: colour alone is a
+   finding aid here the same way it is on a platform badge. #}
+<div class="pills">
+  <span class="pill">
+    <i class="d {{ 'go' if cfg.scheduler_enabled else 'bad' }}"></i>
+    <span class="l">Scheduler</span>
+    <span class="v">{{ 'armed' if cfg.scheduler_enabled else 'off' }}</span>
+  </span>
+  <span class="pill">
+    <i class="d {{ 'go' if scheduler_last else 'warn' }}"></i>
+    <span class="l">Last tick</span><span class="v">{{ scheduler_last | ago }}</span>
+  </span>
+  <span class="pill">
+    <i class="d {{ 'go' if poller_last else 'warn' }}"></i>
+    <span class="l">Poller</span><span class="v">{{ poller_last | ago }}</span>
+  </span>
+  <span class="pill">
+    <i class="d {{ 'go' if insights_last else 'warn' }}"></i>
+    <span class="l">Insights</span><span class="v">{{ insights_last | ago }}</span>
+  </span>
+  {% set stale = boards | sum(attribute='stale') %}
+  <span class="pill">
+    <i class="d {{ 'bad' if stale else 'go' }}"></i>
+    <span class="l">Stuck</span><span class="v">{{ stale }}</span>
+  </span>
+</div>
+
+<div class="grid g2">
+  <div class="panel lit">
+    <h2>Next out</h2>
+    {% if next_out %}
+      {# The exact instant, jitter included, which is what the queue page
+         already shows and the only honest answer: the offset is derived from
+         the slot id and the date, so it is known in advance rather than rolled
+         when the slot fires. #}
+      <div class="huge">{{ next_out.when | clock(next_out.tz) }}</div>
+      <span class="cap">
+        {{ next_out.when | until }} &middot; {{ next_out.when | fmt(next_out.tz) }}
+        &middot; {{ next_out.tz }}, jitter included
+      </span>
+      <p style="margin:15px 0 0">
+        <span class="platform {{ next_out.account['platform'] or 'instagram' }}">
+          {{ platform_icon(next_out.account['platform'] or 'instagram') }}
+          {{ platform_name(next_out.account['platform']) }}
+        </span>
+      </p>
+      {% if next_out.row['hook'] %}<p class="hook">{{ next_out.row['hook'] }}</p>{% endif %}
+      <p class="mono muted" style="margin:6px 0 0">
+        {{ next_out.row['repo_full_name'] or next_out.row['video_name'] }}
+        {% set when_made = made.get(next_out.row['id']) %}
+        {% if when_made %}&middot; made {{ when_made | fmt(cfg.default_timezone) }}{% endif %}
+      </p>
+    {% else %}
+      <p class="empty">Nothing scheduled. Either the queue is empty or no slot is active.</p>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <h2>Runway</h2>
+    {% set runway = boards | map(attribute='runway_days') | reject('none') | list %}
+    {% if runway %}
+      <span class="big" style="color:var(--good)">{{ runway | min | round(1) }}</span>
+      <span class="cap">
+        days of posting already stocked, at the thinnest destination
+      </span>
+    {% else %}
+      <span class="big muted">&mdash;</span>
+      <span class="cap">no active slot, so nothing drains the queue</span>
+    {% endif %}
+    <table style="margin-top:15px">
+      <tr><td>Repos committed</td><td class="num">{{ machine.covered }}</td></tr>
+      <tr><td>Videos rendered</td><td class="num">{{ machine.rendered }}</td></tr>
+      <tr><td>Waiting in the queue</td><td class="num">{{ machine.queued }}</td></tr>
+      <tr>
+        <td>Reviewed by a human</td>
+        {# Not a joke that costs anything: nothing reads a script before it goes
+           live, and cancelling before the slot fires is the only veto. #}
+        <td class="num">0</td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+<div class="grid g4">
+  {% for board in boards %}
+    {% set platform = board.row['platform'] or 'instagram' %}
+    <div class="q {{ platform }}">
+      <span class="platform {{ platform }}">
+        {{ platform_icon(platform) }} {{ platform_name(board.row['platform']) }}
+      </span>
+      {# Which account this queue belongs to. The switcher is hidden at one
+         identity, so without the handle here the card would name a platform
+         and never say whose. #}
+      <span class="handle">{{ board.row['username'] or board.row['account_id'] }}</span>
+      <span class="big">{{ board.approved }}</span>
+      <span class="cap">
+        approved
+        {%- if board.runway_days is not none %} &middot; {{ board.runway_days | round(1) }} days
+        {%- else %} &middot; no slot{% endif %}
+        {%- if board.draft %} &middot; {{ board.draft }} draft{{ '' if board.draft == 1 else 's' }}{% endif %}
+      </span>
+      {# Eight segments is a week and a day of posting, which is the depth the
+         nightly is aiming at rather than an arbitrary bar length. #}
+      <div class="bar">
+        {% for n in range(8) %}<i class="{{ 'f' if n < board.approved }}"></i>{% endfor %}
+      </div>
+      {% if board.failed %}
+        <p class="small" style="color:var(--bad);margin:10px 0 0">
+          {{ board.failed }} failed
+        </p>
+      {% endif %}
+    </div>
+  {% else %}
+    <p class="empty">No accounts registered.</p>
+  {% endfor %}
+</div>
+
+<div class="panel" style="margin-bottom:14px">
+  <h2>The machine</h2>
+  {# Starts at the first step this service has a record of. Discovery matches
+     thousands of repositories a night and ranks them down to a handful, and
+     both of those numbers live on the machine that renders and never reach
+     here, so putting them on this strip would be putting a number on the page
+     that nothing could check. #}
+  <div class="chain">
+    <div class="st"><span class="sn">{{ machine.covered }}</span><span class="sl">Committed</span></div>
+    <span class="link">&rsaquo;</span>
+    <div class="st"><span class="sn">{{ machine.rendered }}</span><span class="sl">Rendered</span></div>
+    <span class="link">&rsaquo;</span>
+    <div class="st"><span class="sn">{{ machine.queued }}</span><span class="sl">Queued</span></div>
+    <span class="link">&rsaquo;</span>
+    <div class="st"><span class="sn">{{ machine.published }}</span><span class="sl">Published</span></div>
+    <span class="link">&rsaquo;</span>
+    <div class="st out">
+      <span class="sn">{{ machine.destinations }}</span><span class="sl">Destinations</span>
+    </div>
+  </div>
+  <p class="small muted" style="margin:13px 0 0">
+    Discovery ranks a few thousand repositories a night to get here. That
+    happens on the machine that renders, so this strip starts where the gateway
+    starts.
+  </p>
+</div>
+
+{% if retention %}
+  <div class="grid g2">
+    <div class="panel">
+      <h2>Opening retention &middot; Instagram only</h2>
+      {% if retention.chart %}
+        {% set c = retention.chart %}
+        <div class="scroll-x">
+        <svg class="chart" viewBox="0 0 {{ c.w }} {{ c.h }}" role="img"
+             aria-label="Skip rate per post over time">
+          <line x1="{{ c.left }}" y1="{{ c.threshold_y }}" x2="{{ c.w - c.right }}"
+                y2="{{ c.threshold_y }}" stroke="var(--line-2)" stroke-width="1"
+                stroke-dasharray="4 4"/>
+          <text class="axis accent" x="{{ c.left }}" y="{{ c.threshold_y - 6 }}">
+            {{ retention.threshold | round(0) | int }}% threshold
+          </text>
+          <polyline fill="none" stroke="var(--accent-soft)" stroke-width="2"
+                    stroke-linejoin="round" points="{{ c.trend }}"/>
+          {% for dot in c.dots %}
+            <circle cx="{{ dot.x }}" cy="{{ dot.y }}" r="3.5"
+                    fill="{{ 'var(--accent)' if dot.good else 'none' }}"
+                    stroke="var(--accent)" stroke-width="1.5"><title>{{ dot.hook }}
+              &mdash; {{ dot.skip | round(1) }}% skipped, {{ dot.views }} views</title></circle>
+          {% endfor %}
+        </svg>
+        </div>
+      {% endif %}
+      <div class="odo" style="margin-top:15px">
+        <div>
+          <span class="big" style="color:var(--good)">
+            {{ retention.best[0].skip_rate | round(1) }}%
+          </span>
+          <span class="cap">Best skip</span>
+        </div>
+        <div>
+          <span class="big">{{ retention.median_skip | round(1) }}%</span>
+          <span class="cap">Median skip</span>
+        </div>
+        <div>
+          <span class="big">{{ retention.median_views | round(0) | int }}</span>
+          <span class="cap">Median views</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Openings that worked</h2>
+      <table>
+        <tr><th>Hook</th><th class="num">Skip</th></tr>
+        {% for post in retention.best %}
+          <tr>
+            <td>{{ post.hook }}</td>
+            <td class="num {{ 'good' if post.skip_rate < retention.threshold }}"
+                style="{{ 'color:var(--good)' if post.skip_rate < retention.threshold }}">
+              {{ post.skip_rate | round(1) }}%
+            </td>
+          </tr>
+        {% endfor %}
+      </table>
+      <p class="small muted" style="margin:13px 0 0">
+        Lower is better: it is the share who scrolled past inside three seconds,
+        so it scores the opening line and nothing after it. Measured on
+        {{ retention.n }} post{{ '' if retention.n == 1 else 's' }}.
+      </p>
+    </div>
+  </div>
+{% endif %}
+
+<div class="panel">
+  <h2>Since the first night</h2>
+  <div class="odo">
+    <div><span class="big">{{ machine.rendered }}</span><span class="cap">Videos rendered</span></div>
+    <div><span class="big">{{ machine.published }}</span><span class="cap">Posts published</span></div>
+    <div><span class="big">{{ machine.covered }}</span><span class="cap">Repos consumed</span></div>
+    <div><span class="big">{{ machine.nights }}</span><span class="cap">Nights that produced one</span></div>
+  </div>
+</div>
+
+{% endblock %}

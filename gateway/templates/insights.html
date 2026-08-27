@@ -8,6 +8,7 @@
   which kinds of them did better, which is the only form the answer can take
   while posts go out on a timetable and the prompt changes underneath them.
 </p>
+{% if quip_for(page) %}<p class="quip">{{ quip_for(page) }}</p>{% endif %}
 
 {% for board in boards %}
   {% set account = board.account %}
