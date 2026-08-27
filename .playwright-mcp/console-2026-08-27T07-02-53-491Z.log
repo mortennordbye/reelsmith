@@ -1,0 +1,24 @@
+[     624ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://mon.tiktokv.com/monitor_web/settings/browser-settings?bid=tiktok_4d_webapp&store=1:0
+[    1064ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://mcs-ie2.tiktokw.eu/v1/list:0
+[    1064ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://mcs-ie2.tiktokw.eu/v1/list:0
+[    1064ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://mcs-ie2.tiktokw.eu/v1/list:0
+[    1474ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://mon-va.byteoversea.com/monitor_web/settings/browser-settings?bid=tt4d_ai_bot&store=1:0
+[    1485ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://maliva-mcs.byteoversea.com/list:0
+[    1498ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://maliva-mcs.byteoversea.com/list:0
+[    3012ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://mon.tiktokv.com/monitor_browser/collect/batch/:0
+[    3012ms] Uncaught (in promise) TypeError: Network request failed, status: 0
+    at <anonymous> (https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/web/tt4d_ai_bot/tt4d-chat-sdk/0.0.3-beta.9/libs/oversea/index.js:14:950816)
+[    3561ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://mon.tiktokv.com/monitor_browser/collect/batch/?bid=tiktok_pns_web_runtime:0
+[  114516ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://mon.tiktokv.com/monitor_browser/collect/batch/?bid=tiktok_pns_web_runtime:0
+[  262018ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://mon.tiktokv.com/monitor_web/settings/browser-settings?bid=tiktok_4d_webapp&store=1:0
+[  262482ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://mcs-ie2.tiktokw.eu/v1/list:0
+[  262484ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://mcs-ie2.tiktokw.eu/v1/list:0
+[  262484ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://mcs-ie2.tiktokw.eu/v1/list:0
+[  263107ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://mon-va.byteoversea.com/monitor_web/settings/browser-settings?bid=tt4d_ai_bot&store=1:0
+[  263125ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://maliva-mcs.byteoversea.com/list:0
+[  263132ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://maliva-mcs.byteoversea.com/list:0
+[  264706ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://mon.tiktokv.com/monitor_browser/collect/batch/:0
+[  264706ms] Uncaught (in promise) TypeError: Network request failed, status: 0
+    at <anonymous> (https://sf16-website-login.neutral.ttwstatic.com/obj/tiktok_web_login_static/tiktok/web/tt4d_ai_bot/tt4d-chat-sdk/0.0.3-beta.9/libs/oversea/index.js:14:950816)
+[  265160ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://mon.tiktokv.com/monitor_browser/collect/batch/?bid=tiktok_pns_web_runtime:0
+[  376002ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://mon.tiktokv.com/monitor_browser/collect/batch/?bid=tiktok_pns_web_runtime:0
