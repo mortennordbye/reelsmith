@@ -1,0 +1,38 @@
+{% extends "public_base.html" %}
+{% block title %}The Nightly Build{% endblock %}
+{% block content %}
+<h1>The Nightly Build</h1>
+<p class="dateline">A daily short video about an open source developer tool.</p>
+
+<p class="lede">Every night this service picks a trending open source repository,
+writes a short script about it, narrates it, renders a vertical video and posts
+it. Roughly 45 seconds, no hype, aimed at people who write software for a
+living.</p>
+
+<h2>Where it posts</h2>
+<ul>
+  <li><a href="https://www.instagram.com/thenightlybuild/">Instagram</a></li>
+  <li><a href="https://www.youtube.com/@thenightlybuild">YouTube</a></li>
+  <li><a href="https://www.tiktok.com/@thenightlybuild">TikTok</a></li>
+</ul>
+
+<h2>How it works</h2>
+<p>A scheduled job ranks candidate repositories by how fast they are gaining
+stars, writes and renders a video, and adds it to a queue. This service holds
+that queue and publishes from it on a timetable. Anything queued can be
+cancelled before its slot fires.</p>
+
+<p>The whole thing is open source, including this page. You can read exactly
+what it does in <a href="https://github.com/mortennordbye/reelsmith">the
+repository</a>.</p>
+
+<h2>Nobody signs up for this</h2>
+<p>It is one operator's publishing tool for accounts that operator owns. There
+is no account to create and no way to connect your own social media to it. The
+<a href="/privacy">privacy policy</a> and <a href="/terms">terms</a> exist
+because the platforms require them for any application using their APIs,
+including one whose only user is the person who wrote it.</p>
+
+<h2>Contact</h2>
+<p><a href="mailto:thenightlybuild@nordbye.it">thenightlybuild@nordbye.it</a></p>
+{% endblock %}
