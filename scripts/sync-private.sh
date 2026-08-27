@@ -308,9 +308,22 @@ case "$TRANSPORT" in
     ;;
 esac
 
-# macOS md5 and coreutils md5sum print the same hex, which is what lets the
-# two sides be compared without caring which one ran.
-sum_local() { [[ -f "$1" ]] && md5 -q "$1" 2>/dev/null || echo "-"; }
+# macOS md5 and coreutils md5sum print the same hex, which is what lets the two
+# sides be compared without caring which one ran.
+#
+# **Missing is fatal rather than "-".** This read `md5 -q` alone until
+# 2026-08-27, so on a host without it every checksum came back "-", every file
+# compared equal to every other, and the script reported "Nothing differs" and
+# copied nothing, with a zero exit. That was survivable while SMB pinned it to
+# a Mac. The pod route runs anywhere, and a sync whose failure mode is
+# "cheerfully did nothing" is worse than one that will not start.
+if command -v md5sum >/dev/null 2>&1; then
+  sum_local() { if [[ -f "$1" ]]; then md5sum "$1" | cut -d' ' -f1; else echo "-"; fi; }
+elif command -v md5 >/dev/null 2>&1; then
+  sum_local() { if [[ -f "$1" ]]; then md5 -q "$1"; else echo "-"; fi; }
+else
+  die "neither md5sum nor md5 is on PATH, so the two sides cannot be compared"
+fi
 
 far_sum() {
   if [[ "$TRANSPORT" == pod ]]; then
