@@ -561,7 +561,7 @@ correctly.
 - **Access token 24 hours, refresh token 365 days, and the refresh token
   rotates.** Store what comes back, not what you sent.
 - **Rate limits are per user access token**: 6 a minute on init, 20 on
-  `creator_info`, 30 on `status/fetch`. Not a constraint at three posts a day.
+  `creator_info`, 30 on `status/fetch`. Not a constraint at one post a day.
 - **Daily caps are the real limit.** Unaudited, five posting users per 24 hours
   and everything private. Audited, a creator cap set by the audit application and
   reported as roughly 15 posts per creator per day. The inbox path allows five
