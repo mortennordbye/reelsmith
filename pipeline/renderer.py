@@ -260,6 +260,47 @@ def _scenes_ending_on_hero(spec: VideoSpec) -> list[Scene]:
     return truncated
 
 
+def restage_spec_assets(spec: VideoSpec, run_dir: Path, cfg: Settings) -> int:
+    """Put a finished spec's assets back in public/ so it can render again.
+
+    `main.py` stages into public/ during a run and prunes every other slug on
+    the way in, so staging survives exactly until the next video renders. That
+    is fine for the run that stages, and wrong for every later render of an
+    older `video.json`: `render_without_cta` runs at enqueue time, after the
+    rest of the batch has rendered, and finds its screenshot and its voiceover
+    gone.
+
+    It failed quietly. `render_without_cta` treats a `RenderError` as "no
+    trimmed version" and the caller falls back to the full video, so on
+    2026-08-27 the first two Shorts of a three video batch went to YouTube
+    carrying an Instagram follow ask and only the last one, still staged
+    because it rendered last, got the cut this function exists to make.
+
+    The names come from the spec rather than from the slug, because the spec is
+    what Remotion will ask for. Missing sources are skipped: the render then
+    fails the same way it did before, which is the honest outcome when the run
+    folder no longer holds the asset either.
+    """
+    wanted = {spec.audioSrc}
+    wanted.update(s.imageSrc for s in spec.scenes if s.imageSrc)
+
+    public = cfg.video_dir / "public"
+    restaged = 0
+    for name in sorted(wanted):
+        if (public / name).exists():
+            continue
+        source = run_dir / name.removeprefix(f"{spec.slug}-")
+        if not source.is_file():
+            log.warning("Cannot restage %s: %s is gone", name, source)
+            continue
+        stage_asset(source, cfg.video_dir, spec.slug)
+        restaged += 1
+
+    if restaged:
+        log.info("Restaged %d asset(s) for %s", restaged, spec.slug)
+    return restaged
+
+
 def render_without_cta(spec: VideoSpec, out_dir: Path, cfg: Settings) -> Path | None:
     """Render the same video with no ask in it. Returns the path, or None.
 
@@ -299,6 +340,10 @@ def render_without_cta(spec: VideoSpec, out_dir: Path, cfg: Settings) -> Path | 
             "scenes": _scenes_ending_on_hero(spec),
         }
     )
+    # Whatever staged this spec's assets did so before the rest of the batch
+    # rendered, and each of those pruned everything that was not its own.
+    restage_spec_assets(spec, out_dir, cfg)
+
     out_path = out_dir / NO_CTA_NAME
     try:
         render(without, out_path, cfg)

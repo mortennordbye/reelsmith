@@ -402,6 +402,17 @@ section is.
   Instagram's and the word is the same word. The caption follows the same
   split: `youtube_description` takes the ask out and `tiktok_title` keeps it.
   Say so in the code rather than letting it be whichever variable was nearest.
+- **The cut for YouTube is a second render, so it has to restage its own
+  assets.** `video/public/` is staging, and a run prunes every other slug on
+  its way in, so a spec's screenshot and voiceover survive exactly until the
+  next video renders. `render_without_cta` runs at enqueue, after the whole
+  batch, and `renderer.restage_spec_assets` is what puts them back. Without it
+  the failure is silent and shaped like a partial success: a `RenderError`
+  means "no trimmed version", the caller falls back to the full video, and on
+  2026-08-27 the first two Shorts of a three video batch went out carrying an
+  Instagram follow ask while the third, still staged because it rendered last,
+  got the cut. Anything else that re-renders a finished `video.json` needs the
+  same call.
 - **`--max-queue` counts the Instagram queue only.** YouTube drains one a day
   against Instagram's three, so its queue grows by design, and a third queue
   draining at its own rate does not change that reasoning. Counted in the

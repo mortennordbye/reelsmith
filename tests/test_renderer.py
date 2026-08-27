@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 
 from pipeline import renderer
 from pipeline.models import CueKind, RepoMeta, Scene, VideoSpec
@@ -110,3 +111,65 @@ def test_no_second_render_when_the_video_carries_no_ask():
     of it.
     """
     assert renderer.render_without_cta(_spec(showFollowCta=False), Path("/nope"), None) is None
+
+
+# --- Restaging, which is what makes the second render possible --------------
+
+
+def _staged(tmp_path):
+    """A run folder holding the real files, and an empty public/.
+
+    The state after a batch: this video rendered, then the next one pruned
+    everything that was not its own on its way in.
+    """
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "voice.wav").write_text("audio")
+    (run_dir / "repo.png").write_text("image")
+    video_dir = tmp_path / "video"
+    (video_dir / "public").mkdir(parents=True)
+    return run_dir, SimpleNamespace(video_dir=video_dir)
+
+
+def test_a_specs_assets_are_put_back_before_it_renders_again(tmp_path):
+    """`main.py` prunes every other slug on its way in, so staging survives
+    until the next video renders. `render_without_cta` runs after the whole
+    batch, which is exactly when it is gone."""
+    run_dir, cfg = _staged(tmp_path)
+
+    assert renderer.restage_spec_assets(_spec(), run_dir, cfg) == 2
+    assert {p.name for p in (cfg.video_dir / "public").iterdir()} == {
+        "a-b-voice.wav", "a-b-repo.png",
+    }
+
+
+def test_restaging_covers_everything_the_spec_asks_remotion_for(tmp_path):
+    """Missing one is not a smaller version of the bug. A spec whose audio is
+    absent does not render at all, and one whose screenshot is absent renders
+    the Short without the asset the format is built around."""
+    run_dir, cfg = _staged(tmp_path)
+    spec = _spec()
+
+    renderer.restage_spec_assets(spec, run_dir, cfg)
+
+    wanted = {spec.audioSrc} | {s.imageSrc for s in spec.scenes if s.imageSrc}
+    for name in wanted:
+        assert (cfg.video_dir / "public" / name).is_file()
+
+
+def test_an_already_staged_asset_is_not_copied_again(tmp_path):
+    run_dir, cfg = _staged(tmp_path)
+    (cfg.video_dir / "public" / "a-b-voice.wav").write_text("already here")
+
+    assert renderer.restage_spec_assets(_spec(), run_dir, cfg) == 1
+    assert (cfg.video_dir / "public" / "a-b-voice.wav").read_text() == "already here"
+
+
+def test_a_source_that_is_gone_is_skipped_rather_than_raising(tmp_path):
+    """The run folder is the only place a staged copy can come from. When it no
+    longer holds the file either, the render fails the way it did before this
+    existed, which is the honest answer."""
+    run_dir, cfg = _staged(tmp_path)
+    (run_dir / "repo.png").unlink()
+
+    assert renderer.restage_spec_assets(_spec(), run_dir, cfg) == 1
