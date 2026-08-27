@@ -136,6 +136,12 @@ pattern rather than any single video, and three a day of an identical layout is
 the shape reviewers are hunting even when each video is original. It is config,
 so it moves without a code deploy.
 
+**This is the one paragraph above that did not survive.** Instagram went to one
+post a day on 2026-08-27 and all three destinations now fire in the same 08:10
+Europe/Oslo slot, so YouTube runs at exactly Instagram's cadence and there is no
+lower one left to start below. The reasoning about the pattern still holds; the
+lever does not. See `docs/youtube-api-setup.md`.
+
 ## Two things that will otherwise bite
 
 **The refresh token does not belong in `data/yt_token.json`.**

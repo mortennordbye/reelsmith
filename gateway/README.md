@@ -1,7 +1,7 @@
 # The DM gateway
 
-The Reel says "comment SEND and I will DM you the link". This is the service
-that makes that true.
+The Reel used to say "comment SEND and I will DM you the link". This is the
+service that makes that true, and it still works exactly like this:
 
 ```
 comment "SEND" on the Reel
@@ -14,12 +14,20 @@ comment "SEND" on the Reel
               └─ no  ─► nudge, re-check on the next message
 ```
 
-It also holds the **scheduled queue**: the Mac renders a batch of Reels, pushes
-them here, and this service publishes them on a schedule. The laptop is only
-needed while rendering.
+**Nothing advertises the keyword any more, so the DM half is dormant.** The ask
+ran for the account's first 53 posts and drew two comments, both from people who
+unfollowed once the link arrived. All three channels ask for a follow instead,
+in `SPOKEN_CTA` and `CAPTION_CTA` in `pipeline/gateway.py`. The mechanic is left
+wired rather than deleted, and nobody can guess an unadvertised keyword, so
+everything above runs and never fires. Putting it back is a change to those two
+constants and the end card, and it should take numbers beating a follow ask.
+
+It also holds the **scheduled queue**: the render host builds a batch of Reels,
+pushes them here, and this service publishes them on a schedule. Nothing on the
+machine that rendered is needed once the video is uploaded.
 
 It runs in the homelab cluster. The pipeline, the voice and the rendering stay
-on the Mac, and nothing here could reproduce the voice.
+on the render host, and nothing here could reproduce the voice.
 
 **Deployed since 2026-07-31.** Manifests live in the Homelab repo under
 `k8s/talos/apps/reelsmith/`, promoted by Kargo from the `0.0.<run>` tags this
@@ -58,7 +66,7 @@ uv pip install -e ".[dev,gateway]"
 
 export GATEWAY_APP_SECRET=...      # Meta app secret, signs the webhooks
 export GATEWAY_VERIFY_TOKEN=...    # any random string, must match the dashboard
-export GATEWAY_API_TOKEN=...       # what the Mac presents on /api/*
+export GATEWAY_API_TOKEN=...       # what the render host presents on /api/*
 uvicorn gateway.app:app --reload
 ```
 
@@ -362,7 +370,8 @@ post-redirect-get when it points back here, so none of these controls can be
 turned into an open redirect.
 
 `/webhook`, `/covers/*`, `/media/*` and the bearer-token `/api/*` routes are
-deliberately outside all of this, because neither Meta nor the Mac can log in.
+deliberately outside all of this, because neither Meta nor the render host can
+log in.
 
 One consequence worth knowing: **`/media/<name>` is public**, which is what lets
 Meta fetch a video, and therefore an unpublished queued Reel is readable by

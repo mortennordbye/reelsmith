@@ -1,9 +1,12 @@
 """The comment to DM gateway.
 
-A Reel says "comment SEND and I will DM you the link". This service is what
-makes that true: it watches the comments on published posts, sends each
+A Reel used to say "comment SEND and I will DM you the link". This service is
+what makes that true: it watches the comments on published posts, sends each
 commenter the one private reply Meta allows, asks them to follow, and sends the
-link once they have.
+link once they have. Nothing advertises the keyword any more, so that half is
+wired and dormant rather than deleted; `SPOKEN_CTA` and `CAPTION_CTA` in
+`pipeline/gateway.py` ask for a follow instead. It also holds the scheduled
+queue, which is not dormant and is what publishes every post.
 
 It runs in the homelab cluster rather than on the laptop, and it deliberately
 holds nothing that could reproduce the voice. The pipeline can run with this

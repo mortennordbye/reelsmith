@@ -167,12 +167,17 @@ aloud, the voice is a clone rather than stock text to speech, and the visuals
 are a custom render rather than a stock slideshow.
 
 The exposure is the pattern, not the content. Reviewers assess channel themes,
-metadata and overall content patterns rather than single videos, and three a day
-of an identical layout about trending GitHub repos is the shape of the thing
-they are hunting even when each video is original. Two cheap mitigations, both
-configuration rather than code: run YouTube at a lower cadence than Instagram to
-start, since slots are per account in the gateway, and let the scene mix vary
-visibly across a week.
+metadata and overall content patterns rather than single videos, and a daily
+video of an identical layout about trending GitHub repos is the shape of the
+thing they are hunting even when each video is original.
+
+**The cadence mitigation this section used to recommend is no longer in place.**
+It said to run YouTube below Instagram's cadence to start, since slots are per
+account in the gateway, and that made sense while Instagram posted three a day.
+Since 2026-08-27 all three destinations fire one post a day in the same 08:10
+Europe/Oslo slot, so YouTube already runs at exactly Instagram's cadence and
+there is no lower one to drop to. The other mitigation still stands and is still
+configuration rather than code: let the scene mix vary visibly across a week.
 
 ## Sources
 

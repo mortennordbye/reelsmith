@@ -323,7 +323,7 @@ class Settings(BaseSettings):
                 # to fix, not this function's to fail over.
                 log.info(
                     "No voice recording at %s; falling back to %s. "
-                    "scripts/migrate-to-accounts.py moves it into place.",
+                    "python main.py --migrate-account <name> moves it into place.",
                     own, LEGACY_VOICE_REF,
                 )
             else:
@@ -491,8 +491,8 @@ def resolve_account(explicit: str | None = None) -> str:
         raise ConfigError(
             f"No account directory at accounts/{name}/ with an .env in it.\n"
             f"{_accounts_line(known)}\n"
-            "scripts/migrate-to-accounts.py builds one from the single account "
-            "layout this repo used before."
+            "python main.py --migrate-account <name> builds one from the "
+            "single account layout this repo used before."
         )
     return name
 

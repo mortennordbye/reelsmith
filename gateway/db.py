@@ -120,9 +120,9 @@ _MIGRATIONS: tuple[str, ...] = (
     ALTER TABLE comments_handled ADD COLUMN author_id TEXT;
     CREATE INDEX comments_by_author ON comments_handled (media_id, author_id);
     """,
-    # v4. The scheduled queue. The Mac renders a batch and pushes it here; this
-    # service publishes them on a schedule, so the laptop is only needed while
-    # rendering.
+    # v4. The scheduled queue. The render host builds a batch and pushes it
+    # here; this service publishes them on a schedule, so nothing on the machine
+    # that rendered is needed once the video is uploaded.
     #
     # `queued_posts.state` is a claim, in the same sense `comments_handled` is:
     # the move to `claimed` is committed before the first Graph call, so a crash

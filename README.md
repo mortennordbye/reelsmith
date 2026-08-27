@@ -247,10 +247,13 @@ gateway returns. A dead cluster can never block a publish. That is why
 `pipeline/gateway.py` returns rather than raises, the same rule `render_covers`
 follows and the opposite of `publish_reel`.
 
-**What the viewer sees.** The caption says "comment SEND and I will send you the
-link". The gateway's poller spots the comment, sends the one private reply Meta
-allows per comment, asks the person to follow, and sends the link once they
-have. Measured end to end on a real post: 31 seconds from comment to link.
+**What the viewer used to see.** The caption said "comment SEND and I will send
+you the link". The gateway's poller spots the comment, sends the one private
+reply Meta allows per comment, asks the person to follow, and sends the link
+once they have. Measured end to end on a real post: 31 seconds from comment to
+link. Nothing advertises the keyword now, so all of that is wired and dormant,
+and the caption asks for a follow instead. See `SPOKEN_CTA` and `CAPTION_CTA` in
+`pipeline/gateway.py`.
 
 ## Architecture
 
