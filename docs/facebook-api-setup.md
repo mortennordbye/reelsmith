@@ -77,9 +77,19 @@ recording precisely because the TikTok trip did not.
   So the order is deploy first, then run
   `scripts/facebook_authorise.py`. The consent above is already granted, which
   makes the re-run a click-through rather than a fresh authorisation.
-- **The Page username.** `facebook.com/thenightlybuild` is unclaimed, and three
-  files already link to it: `gateway/templates/index.html`, `privacy.html` and
-  `terms.html`.
+- **The Page username, and it is not merely unclaimed: the Page is not
+  eligible for one yet.** Facebook offers no username field at all on a new
+  Page. The documented bar is roughly 25 followers plus at least one post, and
+  new Pages are excluded for a few weeks regardless of that. There is no
+  username control anywhere in this Page's settings, which is the symptom
+  rather than a UI that is hard to find.
+
+  So `gateway/templates/index.html`, `privacy.html` and `terms.html` link to
+  `https://www.facebook.com/1236596692875712` instead, which is the `link` the
+  Graph API returns for the Page and works today. **Swap all three to
+  `facebook.com/thenightlybuild` once the username can be claimed**, which is
+  after the account has posted here for a while. A vanity URL written before it
+  exists is a privacy policy pointing at a 404.
 
 
 - **There was no Facebook Page, and `docs/instagram-api-setup.md` implies
