@@ -25,9 +25,19 @@
   costs nothing: no cooldown is started, and tomorrow's job picks a repo as if
   today had not happened.
 
-  Prerequisites beyond the snapshot job: Instagram configured in .env, and a
-  token that has been refreshed inside the last 60 days. The snapshot job does
-  that refresh, so install that one too or this eventually stops working.
+  Prerequisites beyond the snapshot job:
+
+    - REELSMITH_ACCOUNT set in the root .env. There is no default account and
+      nothing resolves one by counting, so without this the job fails at
+      startup naming the accounts it could see. launchd runs with
+      WorkingDirectory set to this checkout, so the root .env is what it reads.
+      Passing --account below works too; the .env line is the one that also
+      covers the snapshot job.
+    - Instagram configured in accounts/<name>/.env, and a token refreshed
+      inside the last 60 days. The snapshot job does that refresh here, on a
+      machine that holds a token, so install that one too. Note that the same
+      job is a silent no-op on a host that only enqueues; see
+      docs/instagram-api-setup.md.
 
   Install (__REPO__ becomes this checkout, __HOME__ your home directory; the
   second one is there because `claude` installs under ~/.local/bin and launchd

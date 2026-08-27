@@ -39,7 +39,7 @@ def test_the_plan_names_the_four_places_an_identity_lived(checkout):
 
 
 def test_a_run_folder_a_human_set_aside_moves_too(checkout):
-    """The dot marks a run somebody rejected, which `_hooks_by_repo` ranks below
+    """The dot marks a run somebody rejected, which `_runs_by_repo` ranks below
     its unsuffixed sibling and `--recover` skips. That meaning is per folder and
     survives the move, so leaving them behind would silently drop the losing
     half of every regenerated script."""

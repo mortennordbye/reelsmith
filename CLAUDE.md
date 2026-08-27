@@ -807,7 +807,7 @@ does the join and `_results_block` in `pipeline/scriptwriter.py` renders it.
   what makes the repo name unique enough to join on.
 - **A repo has several run folders and only one of them shipped.** Moving a run
   aside is the documented way to force a regeneration, so `.prev` and `.v2`
-  siblings are normal. `_hooks_by_repo` ranks them: an unsuffixed name first,
+  siblings are normal. `_runs_by_repo` ranks them: an unsuffixed name first,
   since `RepoCandidate.slug` turns every dot into a hyphen and a dot can only
   come from a human; then a publish receipt; then the later date. Taking the
   last folder in sorted order instead reported a rejected draft as the hook that
@@ -827,7 +827,7 @@ does the join and `_results_block` in `pipeline/scriptwriter.py` renders it.
   the caption, because the gateway appends the comment ask above the hashtags on
   one publish path and not the other, so the body is the only part written once.
   A body two run folders claim matches neither, for the same reason
-  `_hooks_by_repo` ranks them.
+  `_runs_by_repo` ranks them.
 - **A backfilled post is registered to be measured, never to be answered.**
   `poll_comments=False`, because registering is also what arms the comment
   poller and the post is days old by then. The flag is decided when the row is
@@ -981,8 +981,8 @@ and for every security update, and holds routine majors back for a human.
   README hero, which is the whole reason the cover exists. Every Linux render
   did that unnoticed until a cover was looked at. Two guards, because the
   symptom pointed nowhere near the cause: `pod-setup.sh` installs the browser
-  as a step of its own, and `--check` asks playwright which path it wants
-  rather than whether some chromium exists.
+  as a step of its own, and `pod-setup.sh --check` asks playwright which path
+  it wants rather than whether some chromium exists.
 - **`--history` is the view across all three records.** `--covered` answers
   "may discovery pick this", which is the scorer's question. `--history` joins
   the cooldown store, `GET /api/rendered` and the queue's publish dates, so it
@@ -1013,8 +1013,14 @@ and for every security update, and holds routine majors back for a human.
   than from anything about the video, so the groups are close to randomly
   assigned with respect to content, which is rare enough here to be worth using.
   Re-run `--cohorts slot` rather than trusting these numbers; they are here to
-  say what to look at, not to be the answer.
-- **`--check` reporting DRIFT is not cosmetic.** The venv it names is the one
+  say what to look at, not to be the answer. **This one was acted on**: the
+  cadence went to one post a day on 2026-08-27 and the slot that survived is
+  08:10 Europe/Oslo, which is the 06:00 UTC group above. So it is a finding
+  already spent rather than an open one, and there is no evening slot left to
+  compare anything against.
+- **`scripts/pod-setup.sh --check` reporting DRIFT is not cosmetic.** It is a
+  flag on that script rather than on `main.py`, unlike every other flag in this
+  list. The venv it names is the one
   that renders tonight, and the failure above is what drift actually looked
   like from the outside: a warning in a log nobody reads, on a run that exits
   zero. Re-run `pod-setup.sh` when it says so; it rebuilds on mismatch.

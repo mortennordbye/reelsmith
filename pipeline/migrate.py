@@ -21,7 +21,7 @@ Two rules that are not obvious:
   per file links silently send writes to local disk. Moving the directory entry
   itself keeps whatever it already was.
 - **A run folder with a dot in its name is still moved.** The dot marks a run a
-  human set aside, which `results._hooks_by_repo` ranks below an unsuffixed
+  human set aside, which `results._runs_by_repo` ranks below an unsuffixed
   sibling and which `--recover` skips. That meaning is per folder and it
   survives the move unchanged, so leaving them behind would silently drop the
   losing half of every regenerated script.

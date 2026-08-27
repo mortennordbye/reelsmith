@@ -636,18 +636,20 @@ def _run_batch(
 ) -> None:
     """Render `count` distinct repos back to back.
 
-    The gateway holds three slots a day and the launchd job renders one, so
-    without this two of three slots starve every day. Discovery runs once for
-    the whole batch: nothing marks a repo as taken until it is published or
-    queued, so ranking per video would pick the same winner every time.
+    The queue is meant to sit about three days deep, so a night that produces
+    nothing is absorbed rather than showing up as a gap on the feed. Rendering
+    one a night against one slot a day leaves no such buffer, which is what a
+    batch is for. Discovery runs once for the whole batch: nothing marks a repo
+    as taken until it is published or queued, so ranking per video would pick
+    the same winner every time.
 
-    One repo failing does not stop the others. A batch is a day's worth of
+    One repo failing does not stop the others. A batch is several days of
     posting, and losing all of it because the third script tripped the dash
     validator is worse than losing one.
     """
     # Asked before discovery, because the cheapest batch is the one that never
     # starts. A scheduled render with no ceiling fills the queue faster than
-    # three slots a day drain it, and the back of a long line goes out stale.
+    # one slot a day drains it, and the back of a long line goes out stale.
     if max_queue is not None:
         pending = gateway.fetch_pending_count(cfg)
         if pending is None:
@@ -755,7 +757,7 @@ def _recover(cfg: Settings, *, approve: bool, max_queue: int | None) -> None:
 
     # The ceiling matters more here than in a batch: recovery is the path that
     # runs when something already went wrong, and a pass that queues four days
-    # of salvage into three slots a day is its own outage.
+    # of salvage into one slot a day is its own outage.
     room: int | None = None
     if max_queue is not None:
         pending = gateway.fetch_pending_count(cfg)

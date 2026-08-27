@@ -42,7 +42,8 @@ they are the reasons people give up on this:
 
 6. **A long-lived token.** Authorise once, exchange the short-lived token for a
    long-lived one, put it in `IG_ACCESS_TOKEN`, then run
-   `python main.py --refresh-token` to move it into `data/ig_token.json`.
+   `python main.py --account <name> --refresh-token` to move it into
+   `accounts/<name>/data/ig_token.json`.
 
 7. **Your IG user ID**, a 17 digit number, into `IG_USER_ID`.
 
@@ -96,12 +97,22 @@ curl -s "https://graph.instagram.com/v23.0/me/subscribed_apps?access_token=$TOKE
 An empty `data` array means no webhook will ever arrive, which is
 indistinguishable from nobody messaging you.
 
-## Two operational facts
+## Three operational facts
 
 - **Tokens last 60 days and an expired one cannot be refreshed.** Recovering
-  means going back through the dashboard in a browser. The daily `--snapshot`
-  job refreshes automatically inside a 15 day margin, which makes that job load
-  bearing for posting and not just for scoring.
+  means going back through the dashboard in a browser, so that clock is the one
+  deadline here nothing recovers from on your behalf.
+- **Refreshing is automatic only on a machine that holds a token, and the
+  machine running the job is not one.** `--snapshot` refreshes inside a 15 day
+  margin, and the render host is where `--snapshot` actually runs nightly. That
+  host enqueues rather than publishes, so it has no `ig_token.json` and no
+  `IG_ACCESS_TOKEN`, `refresh_token_if_due` cannot load a token and returns
+  `None`, and the caller swallows the error besides. Nothing anywhere refreshes
+  the laptop's token on a schedule. `python main.py --account <name>
+  --refresh-token` there is a manual job with a 60 day clock on it, and the only
+  thing that will remind you is reading the expiry out of
+  `accounts/<name>/data/ig_token.json`. The gateway refreshes its own token
+  separately, which is why posting has never noticed.
 - **The rate limit is 100 published posts per rolling 24 hours.** Not a
   constraint at one a day.
 

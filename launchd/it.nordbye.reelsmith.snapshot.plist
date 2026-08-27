@@ -11,6 +11,16 @@
   This costs two GitHub search requests and a couple of seconds. Run it daily,
   including on days you do not make a video.
 
+  Set REELSMITH_ACCOUNT in the root .env before installing this. There is no
+  default account and nothing resolves one by counting, so without it the job
+  fails at startup naming the accounts it could see. launchd runs with
+  WorkingDirectory set to this checkout, so the root .env is what it reads.
+
+  On a machine that holds an Instagram token this job also refreshes it, inside
+  a 15 day margin, which makes it load bearing for posting and not just for
+  scoring. On a host that only enqueues there is no token to load and that half
+  is a silent no-op; docs/instagram-api-setup.md has the whole story.
+
   Install (replace __REPO__ with the absolute path to this checkout):
 
     sed "s|__REPO__|$PWD|g" launchd/it.nordbye.reelsmith.snapshot.plist \
