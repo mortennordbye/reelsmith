@@ -256,13 +256,26 @@ mount_smb() {
   # macOS refuses to mount the same share twice, so reuse an existing mount and
   # do not unmount one we did not open.
   local existing
-  existing="$(/sbin/mount | awk -v sh="/$NAS_SHARE" '/\(smbfs/ && $1 ~ sh"$" {print $3; exit}')"
+  # `|| true` because pipefail turns a missing /sbin/mount into a silent
+  # exit, and "there is no such command here" is the same answer as "nothing
+  # is mounted" for this question.
+  existing="$(/sbin/mount 2>/dev/null | awk -v sh="/$NAS_SHARE" '/\(smbfs/ && $1 ~ sh"$" {print $3; exit}' || true)"
   if [[ -n "$existing" ]]; then
     log "//$NAS_HOST/$NAS_SHARE already mounted at $existing — reusing it"
     FAR_ROOT="$existing/$NAS_PRIVATE_ROOT"
     return 0
   fi
-  local user=""
+  # mount_smbfs asks for the password on the controlling terminal itself, so
+  # this route needs one whatever the username comes from. Without it the shell
+  # dies on `/dev/tty: Device not configured`, which names a device rather than
+  # the problem and sends you looking at the mount. Checked before the prompt,
+  # so the failure arrives before anything is typed.
+  if ! (exec </dev/tty) 2>/dev/null; then
+    die "--via smb needs a terminal: mount_smbfs prompts for the password itself and
+       there is no /dev/tty here. Run it in a real shell, or use --via pod, which
+       goes through the render host and needs no password at all."
+  fi
+  local user="${NAS_USER:-}"
   while [[ -z "$user" ]]; do read -r -p "NAS username: " user </dev/tty; done
   MNT="$(mktemp -d)"
   log "Mounting //$user@$NAS_HOST/$NAS_SHARE — enter the NAS password when asked"

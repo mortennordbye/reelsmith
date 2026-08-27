@@ -205,3 +205,29 @@ def test_data_is_still_refused(world):
     run(repo, share, "--push", "--yes")
 
     assert not (share / "accounts" / "acct" / "data" / "used_repos.json").exists()
+
+
+def test_smb_says_it_needs_a_terminal(world):
+    """`mount_smbfs` asks for the password on the controlling terminal itself,
+    so `--via smb` cannot work without one. It used to die on `/dev/tty: Device
+    not configured`, which names a device rather than the problem and sends you
+    looking at the mount.
+
+    A pytest subprocess has no tty, which is what makes this testable at all.
+    NAS_SHARE is set to something that cannot be mounted so the reuse-an-
+    existing-mount path is never taken on a laptop that happens to have the real
+    share mounted.
+    """
+    repo, share = world
+    result = subprocess.run(
+        [str(SCRIPT), "--push", "--via", "smb"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "NAS_SHARE": "no-such-share-for-tests"},
+    )
+
+    assert result.returncode != 0
+    assert "needs a terminal" in result.stderr
+    assert "--via pod" in result.stderr
+    assert "Device not configured" not in result.stderr
