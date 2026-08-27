@@ -1467,6 +1467,7 @@ def _enqueue_run(cfg: Settings, run_dir: Path, *, approved: bool) -> None:
         fallback_video_name=video_url.rsplit("/", 1)[-1],
         link=repo.url if repo else "",
         caption=caption,
+        cover_name=cover_url.rsplit("/", 1)[-1] if cover_url else None,
         repo_full_name=repo.full_name if repo else None,
         approved=approved,
         recipe=recipe,
@@ -1479,6 +1480,7 @@ def _enqueue_run(cfg: Settings, run_dir: Path, *, approved: bool) -> None:
         video_name=video_url.rsplit("/", 1)[-1],
         link=repo.url if repo else "",
         caption=caption,
+        cover_name=cover_url.rsplit("/", 1)[-1] if cover_url else None,
         repo_full_name=repo.full_name if repo else None,
         approved=approved,
         recipe=recipe,
@@ -1558,6 +1560,7 @@ def _enqueue_youtube(
     fallback_video_name: str,
     link: str,
     caption: str,
+    cover_name: str | None = None,
     repo_full_name: str | None,
     approved: bool,
     recipe: str = "",
@@ -1594,7 +1597,12 @@ def _enqueue_youtube(
         link,
         cfg,
         caption=gateway.youtube_description(caption, link),
-        cover_name=None,
+        # The same still the Reel row got, uploaded once and named by its own
+        # digest, so this costs no second upload. Neither platform fetches it:
+        # YouTube takes pushed bytes and TikTok pulls the video itself. It is
+        # the panel that reads it, where a row without one is a black player
+        # and looks like a video that failed to render.
+        cover_name=cover_name,
         repo_full_name=repo_full_name,
         approved=approved,
         account=cfg.youtube_channel_id,
@@ -1624,6 +1632,7 @@ def _enqueue_tiktok(
     video_name: str,
     link: str,
     caption: str,
+    cover_name: str | None = None,
     repo_full_name: str | None,
     approved: bool,
     recipe: str = "",
@@ -1660,7 +1669,9 @@ def _enqueue_tiktok(
         link,
         cfg,
         caption=gateway.tiktok_title(caption, link),
-        cover_name=None,
+        # See the YouTube row above: one upload, three rows, and the panel is
+        # what reads it.
+        cover_name=cover_name,
         repo_full_name=repo_full_name,
         approved=approved,
         account=cfg.tiktok_open_id,

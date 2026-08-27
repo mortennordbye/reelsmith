@@ -11,6 +11,9 @@
 
 {% for board in boards %}
   {% set account = board.account %}
+  {# The board knows its identity; only the loop knows whether the board above
+     it had the same one, which is what decides where a heading goes. #}
+  {% set first_of_brand = loop.first or account['brand'] != loop.previtem.account['brand'] %}
   {% include "_account_heading.html" %}
 
   <div class="card">

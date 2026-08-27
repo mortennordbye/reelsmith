@@ -28,7 +28,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -506,6 +506,29 @@ _MIGRATIONS: tuple[str, ...] = (
     """
     ALTER TABLE insights ADD COLUMN avg_view_pct REAL NOT NULL DEFAULT 0;
     """,
+    # 20. Which original account a destination belongs to.
+    #
+    # `accounts` holds one row per platform, so one identity posting to three
+    # surfaces is three rows, and until now nothing recorded that they were the
+    # same identity. That was invisible at one identity and unusable at two: the
+    # switcher offered `thenightlybuild` three times, told apart by a 12 pixel
+    # icon, and a second identity would have made it six.
+    #
+    # `brand` is the pipeline's `--account <name>`, which is the name of the
+    # directory holding that identity's `.env`, cooldown store and voice. The
+    # two sides never talk about it, so this is a label rather than a foreign
+    # key, and a typo costs a board in the wrong group rather than a wrong post.
+    #
+    # Backfilled from the username rather than left empty, because every row
+    # that already exists is one identity's and the handle is what says so.
+    # Lowercased and stripped of the leading @, since two platforms write it
+    # with one and the third does not, and a group is a group only if the two
+    # spellings land in it.
+    """
+    ALTER TABLE accounts ADD COLUMN brand TEXT NOT NULL DEFAULT '';
+    UPDATE accounts SET brand = lower(ltrim(username, '@')) WHERE username <> '';
+    UPDATE accounts SET brand = account_id WHERE brand = '';
+    """,
 )
 
 # Which service an account row publishes to. `account_id` holds a Meta user id
@@ -514,6 +537,33 @@ PLATFORM_INSTAGRAM = "instagram"
 PLATFORM_YOUTUBE = "youtube"
 PLATFORM_TIKTOK = "tiktok"
 PLATFORMS = (PLATFORM_INSTAGRAM, PLATFORM_YOUTUBE, PLATFORM_TIKTOK)
+
+# The order boards and switcher marks are shown in, everywhere. Not
+# alphabetical and not insertion order: it is the order the fan-out writes
+# them and the order the account itself thinks in, with the surface the
+# feedback loop reads first.
+_PLATFORM_RANK = {name: rank for rank, name in enumerate(PLATFORMS)}
+
+# One expression rather than sorting in Python, so every reader of `accounts`
+# gets the same grouping without remembering to ask for it. A destination
+# nobody has taught this about sorts last rather than first.
+_ACCOUNT_ORDER = (
+    "ORDER BY brand, CASE platform "
+    + " ".join(f"WHEN '{name}' THEN {rank}" for name, rank in _PLATFORM_RANK.items())
+    + f" ELSE {len(PLATFORMS)} END, created_at"
+)
+
+
+def brand_of(username: str, account_id: str) -> str:
+    """Which original account a handle belongs to, when nobody said.
+
+    The handle, lowercased and stripped of the leading @, because Instagram
+    writes it without one and the other two write it with one, and a group is
+    only a group if both spellings land in it. Falls back to the platform id,
+    which is unique, so a destination with no username is its own group rather
+    than joining everything else in an empty one.
+    """
+    return username.strip().lstrip("@").lower() or account_id
 
 # Conversation states. `replied` means the private reply went out and we are
 # waiting for the commenter to open the messaging window by saying anything at
@@ -647,6 +697,7 @@ async def upsert_account(
     username: str = "",
     expires_at: datetime | None = None,
     platform: str = PLATFORM_INSTAGRAM,
+    brand: str = "",
 ) -> None:
     """Add or re-authorise an account, preserving its switches.
 
@@ -654,20 +705,46 @@ async def upsert_account(
     `active` and `dm_enabled` are left alone on conflict. `platform` is left
     alone too: an existing row changing destination is a mistake rather than a
     re-authorisation, and it would point a queue full of posts somewhere new.
+
+    `brand` is the original account this destination belongs to, which is the
+    pipeline's `--account <name>`. Left off, it is derived from the username,
+    which is right for an identity whose handle is the same everywhere and is
+    the only thing this service can infer. Given, it wins and it does update on
+    conflict, because regrouping a destination is a label change rather than a
+    redirection and there has to be a way to correct one.
     """
     stamp = iso(now())
     await conn.execute(
         """
         INSERT INTO accounts (account_id, username, access_token, token_expires_at,
-                              token_refreshed_at, created_at, platform)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+                              token_refreshed_at, created_at, platform, brand)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(account_id) DO UPDATE SET
             username = excluded.username,
             access_token = excluded.access_token,
             token_expires_at = excluded.token_expires_at,
-            token_refreshed_at = excluded.token_refreshed_at
+            token_refreshed_at = excluded.token_refreshed_at,
+            -- The argument as given, not the value being inserted. Those
+            -- differ exactly when nobody said: the insert falls back to the
+            -- derived brand, and a re-authorisation that says nothing has to
+            -- keep whatever grouping the row already had. Reading
+            -- `excluded.brand` here compared the fallback instead, so
+            -- re-running OAuth on a destination whose brand had been corrected
+            -- silently put it back under its handle.
+            brand = CASE WHEN ? <> '' THEN ? ELSE accounts.brand END
         """,
-        (account_id, username, access_token, iso(expires_at), stamp, stamp, platform),
+        (
+            account_id,
+            username,
+            access_token,
+            iso(expires_at),
+            stamp,
+            stamp,
+            platform,
+            brand or brand_of(username, account_id),
+            brand,
+            brand,
+        ),
     )
     await conn.commit()
 
@@ -690,9 +767,11 @@ async def active_accounts(
     conn: aiosqlite.Connection, *, platform: str | None = PLATFORM_INSTAGRAM
 ) -> list[Any]:
     if platform is None:
-        return await _all(conn, "SELECT * FROM accounts WHERE active = 1")
+        return await _all(conn, f"SELECT * FROM accounts WHERE active = 1 {_ACCOUNT_ORDER}")
     return await _all(
-        conn, "SELECT * FROM accounts WHERE active = 1 AND platform = ?", (platform,)
+        conn,
+        f"SELECT * FROM accounts WHERE active = 1 AND platform = ? {_ACCOUNT_ORDER}",
+        (platform,),
     )
 
 
@@ -700,10 +779,10 @@ async def all_accounts(
     conn: aiosqlite.Connection, *, platform: str | None = PLATFORM_INSTAGRAM
 ) -> list[Any]:
     if platform is None:
-        return await _all(conn, "SELECT * FROM accounts ORDER BY created_at")
+        return await _all(conn, f"SELECT * FROM accounts {_ACCOUNT_ORDER}")
     return await _all(
         conn,
-        "SELECT * FROM accounts WHERE platform = ? ORDER BY created_at",
+        f"SELECT * FROM accounts WHERE platform = ? {_ACCOUNT_ORDER}",
         (platform,),
     )
 

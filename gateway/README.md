@@ -378,6 +378,22 @@ Meta fetch a video, and therefore an unpublished queued Reel is readable by
 anyone who knows its filename. The name carries a 48 bit digest of the file's
 own bytes, so knowing it means already having it.
 
+## One identity is three rows
+
+`accounts` is one row per platform, so an identity publishing to Instagram,
+YouTube and TikTok is three of them. `brand` is what says they are the same
+identity, and it is the pipeline's `--account <name>`.
+
+Registration takes it explicitly and derives it from the handle when nobody
+says, stripping the leading @ and lowercasing, because two platforms store the
+handle with one and the third does not. Say it explicitly for a second identity
+or for one whose handle differs across platforms; a re-authorisation that omits
+it keeps whatever grouping the row already had.
+
+The panel is built on that: the switcher is one chip per identity with a mark
+per platform, `?brand=` scopes to an identity and `?account=` to one of its
+destinations, and every page groups its boards the same way.
+
 ## Insights
 
 `GET /admin/posts` answers the question the rest of the panel could not: did

@@ -36,6 +36,7 @@
 
 {% for item in accounts %}
   {% set account = item.row %}
+  {% set first_of_brand = loop.first or account['brand'] != loop.previtem.row['brand'] %}
   {% include "_account_heading.html" %}
   <div class="card">
     <div class="stat">

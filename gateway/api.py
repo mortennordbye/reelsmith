@@ -178,6 +178,7 @@ async def register_account(request: Request, body: AccountRegistration) -> Regis
         access_token=body.access_token,
         username=body.username,
         expires_at=expires_at,
+        brand=body.brand,
     )
 
     detail = "stored"
@@ -222,6 +223,7 @@ async def register_youtube_account(
         access_token="",
         username=body.username,
         platform=db.PLATFORM_YOUTUBE,
+        brand=body.brand,
     )
     # The channel id only. Nothing about the secret or the refresh token
     # reaches a log line, here or anywhere.
@@ -259,6 +261,7 @@ async def register_tiktok_account(
         access_token="",
         username=body.username,
         platform=db.PLATFORM_TIKTOK,
+        brand=body.brand,
     )
     # The open id only. Nothing about the secret or the refresh token reaches a
     # log line, here or anywhere.

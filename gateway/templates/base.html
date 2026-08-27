@@ -69,6 +69,19 @@
       font-family: var(--serif); font-size: 19px; font-weight: 600;
       margin: 30px 0 12px; letter-spacing: .01em;
     }
+    /* The original account, above the boards for the platforms it posts to.
+       Only rendered when there is more than one, for the same reason the
+       switcher only appears then: a heading naming the only identity there is
+       is furniture. */
+    h2.identity {
+      font-size: 17px; margin: 34px 0 10px; color: var(--dim);
+      text-transform: lowercase; letter-spacing: .02em;
+    }
+    h2.identity::before { content: "@"; opacity: .5; }
+    h3.board {
+      font-family: var(--serif); font-size: 17px; font-weight: 600;
+      margin: 20px 0 12px; letter-spacing: .01em;
+    }
     .sub { color: var(--dim); font-size: 13px; margin: 0 0 20px; }
     .card {
       background: var(--panel); border: 1px solid var(--line);
@@ -110,10 +123,10 @@
     .platform.tiktok { color: #4fd1c5; background: #10262b; border: 1px solid #24575e; }
     /* The stripe repeats the badge down the left edge, so scrolling past a
        heading does not lose which surface you are looking at. */
-    h2.board { display: flex; align-items: center; gap: 8px; padding-left: 10px; }
-    h2.board.instagram { border-left: 3px solid #4d3a63; }
-    h2.board.youtube { border-left: 3px solid #6b2b24; }
-    h2.board.tiktok { border-left: 3px solid #24575e; }
+    .board { display: flex; align-items: center; gap: 8px; padding-left: 10px; }
+    .board.instagram { border-left: 3px solid #4d3a63; }
+    .board.youtube { border-left: 3px solid #6b2b24; }
+    .board.tiktok { border-left: 3px solid #24575e; }
     button, .btn {
       font: inherit; font-size: 13px; padding: 5px 11px; border-radius: var(--r-sm);
       border: 1px solid var(--line-2); background: #1c1c1c; color: var(--ink);
@@ -147,10 +160,33 @@
     .switcher a.on { color: var(--ink); border-color: var(--line-2); background: #1c1c1c; }
     /* Same three hues as the board badges, so the picker and the heading it
        selects agree without the header growing a second word. */
-    .switcher .mark { margin-right: 5px; }
     .switcher .mark.instagram { color: #c98ae0; }
     .switcher .mark.youtube { color: #ff6b5e; }
     .switcher .mark.tiktok { color: #4fd1c5; }
+    /* One chip per original account, holding its name and one mark per
+       platform. The chip is the group; the border is what says the page is
+       inside it, so picking a single destination still shows which identity it
+       belongs to. */
+    .switcher .group {
+      display: inline-flex; align-items: center; gap: 2px;
+      padding: 2px 4px 2px 0; border-radius: 999px;
+      /* Faint even when unselected, so a name and the three marks beside it
+         read as one identity rather than as four separate choices. */
+      border: 1px solid var(--line);
+    }
+    .switcher .group.on { border-color: var(--line-2); background: #161616; }
+    .switcher .group .name { padding: 3px 8px; }
+    .switcher .group .name.on { background: #242424; }
+    /* Square-ish rather than pill, so a mark never reads as a second name. */
+    .switcher .mark {
+      display: inline-flex; padding: 4px 5px; border-radius: var(--r-sm);
+      border: 1px solid transparent; line-height: 0;
+    }
+    .switcher .mark:hover { background: #242424; }
+    .switcher .mark.on { background: #242424; border-color: var(--line-2); }
+    /* A paused destination stays visible and stops asking to be clicked. Not
+       hidden: a board that vanished would read as a bug rather than a pause. */
+    .switcher .mark.off { opacity: .4; }
     /* Per-post numbers. A fixed grid rather than a table, because the row has
        a thumbnail beside it and a table would fight the video element. */
     .metrics { display: flex; gap: 20px; flex-wrap: wrap; margin: 8px 0 0; }
@@ -268,22 +304,36 @@
       </nav>
 
       {# Only worth screen space once there is a choice to make. At one account
-         a switcher offering one option is furniture. #}
+         a switcher offering one option is furniture.
+
+         Two levels, because an identity is not a destination. One original
+         account posts to three platforms and is three `accounts` rows, so the
+         flat version of this listed `thenightlybuild` three times, told apart
+         by a twelve pixel icon, and a second identity would have made it six.
+         The name selects the identity across every platform; a mark selects
+         one of them. #}
       {% if scope and scope.accounts | length > 1 %}
         <span class="switcher small">
-          <a href="?" class="{{ 'on' if not scope.selected }}">All</a>
-          {% for a in scope.accounts %}
-            {# The platform, not just the handle. The Instagram account and the
-               YouTube channel share a username here, so a switcher listing only
-               usernames offered the same word twice and no way to tell which
-               was which. #}
-            <a href="?account={{ a['account_id'] }}"
-               class="{{ 'on' if scope.selected and scope.selected['account_id'] == a['account_id'] }}">
-              <span class="mark {{ a['platform'] or 'instagram' }}">{{
-                platform_icon(a['platform'] or 'instagram', 12) }}</span>{{
-                a['username'] or a['account_id'][:8] }}
-              {% if not a['active'] %}&#9679;{% endif %}
-            </a>
+          <a href="?" class="all {{ 'on' if not scope.selected and not scope.brand }}">All</a>
+          {% for b in scope.brands %}
+            <span class="group {{ 'on' if scope.brand == b.name }}">
+              <a href="?brand={{ b.name | urlencode }}"
+                 class="name {{ 'on' if scope.brand == b.name and not scope.selected }}">{{
+                 b.name }}</a>
+              {% for a in b.accounts %}
+                {# Icon only, and a title on every one, because three marks in a
+                   row is the whole point of the compact form and the label is
+                   what a screen reader and a hover get instead. #}
+                <a href="?account={{ a['account_id'] }}"
+                   class="mark {{ a['platform'] or 'instagram' }}
+                          {{ 'on' if scope.selected and scope.selected['account_id'] == a['account_id'] }}
+                          {{ 'off' if not a['active'] }}"
+                   title="{{ {'youtube': 'YouTube', 'tiktok': 'TikTok'}.get(a['platform'], 'Instagram') }}
+                          {{ a['username'] or a['account_id'] }}{{ ' (paused)' if not a['active'] }}">
+                  {{ platform_icon(a['platform'] or 'instagram', 12) }}
+                </a>
+              {% endfor %}
+            </span>
           {% endfor %}
         </span>
       {% endif %}

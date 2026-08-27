@@ -39,6 +39,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -209,25 +210,62 @@ async def _accounts(request: Request) -> list[Any]:
 
 
 async def _scope(request: Request) -> dict[str, Any]:
-    """Which account the page is about, from `?account=`.
+    """What the page is about: everything, one original account, or one of its
+    destinations.
 
     Every page used to stack one board per account down the screen, which reads
     fine at one account and becomes a scroll at four. The scope narrows the
-    page instead, and `visible` is what a page iterates either way, so a page
-    never has to care which mode it is in.
+    page instead, and `visible` is what a page iterates in every mode, so a
+    page never has to care which one it is in.
 
-    An unknown or removed id falls back to showing everything rather than
+    **Two levels, because an identity is not a destination.** One original
+    account posts to three platforms and is three `accounts` rows, so a flat
+    picker offered the same handle three times and would offer it nine times at
+    three identities. `?brand=` is the identity and `?account=` is one of its
+    rows, and the narrower one wins when both are given.
+
+    An unknown or removed value falls back to showing everything rather than
     404ing. A bookmark that outlived its account should still show the panel.
     """
     accounts = await db.all_accounts(request.app.state.db, platform=None)
+
+    # Grouped in the order the rows come back, which `db` already sorts by
+    # brand and then by platform, so the switcher and the boards agree without
+    # either of them sorting again.
+    groups: dict[str, dict[str, Any]] = {}
+    for account in accounts:
+        brand = account["brand"] or db.brand_of(account["username"], account["account_id"])
+        groups.setdefault(brand, {"name": brand, "accounts": []})["accounts"].append(account)
+    brands = list(groups.values())
+
     wanted = request.query_params.get("account") or ""
     selected = next((a for a in accounts if a["account_id"] == wanted), None)
+    wanted_brand = request.query_params.get("brand") or ""
+    # The destination wins. Both arriving together means a stale link rather
+    # than a contradiction, and the narrower answer is the one a person clicked.
+    brand = groups.get(selected["brand"], {}).get("name", "") if selected else ""
+    if not selected and wanted_brand in groups:
+        brand = wanted_brand
+
+    if selected:
+        visible, query = [selected], f"?account={selected['account_id']}"
+    elif brand:
+        visible, query = list(groups[brand]["accounts"]), f"?brand={quote(brand)}"
+    else:
+        visible, query = list(accounts), ""
+
     return {
         "accounts": accounts,
+        "brands": brands,
         "selected": selected,
-        "visible": [selected] if selected else accounts,
+        # Which identity the page is inside, whether that came from a brand
+        # link or from picking one of its destinations. The switcher lights the
+        # chip either way, so a YouTube board never looks like it belongs to
+        # nobody.
+        "brand": brand,
+        "visible": visible,
         # Appended to every in-panel link so the choice survives navigation.
-        "query": f"?account={selected['account_id']}" if selected else "",
+        "query": query,
     }
 
 
@@ -413,6 +451,11 @@ async def posts_page(request: Request) -> Any:
                 "posts": posts,
                 "totals": totals,
                 "columns": columns,
+                # Whether a DM funnel can exist here at all. The keyword
+                # mechanic is comments and private replies, which is one
+                # platform, so showing the row everywhere reported a mechanic
+                # that was never available as one that converted nobody.
+                "has_funnel": account["platform"] == db.PLATFORM_INSTAGRAM,
                 # An average is the only fair way to compare a Reel published
                 # this morning with one from last week.
                 "avg_views": totals["views"] // len(posts) if posts else 0,
@@ -463,11 +506,17 @@ async def insights_page(request: Request) -> Any:
         # is built on `skip_rate`, which is the share who scrolled past inside
         # three seconds. YouTube's `averageViewPercentage` scores a whole video
         # and TikTok exposes no retention metric at all, so a board for either
-        # would be a page of empty tables that reads as broken rather than as
-        # not applicable. The filters below say so rather than relying on those
-        # platforms happening to leave the column at zero, which is a rule that
-        # holds by accident. F5.
+        # would be a page of tables built on a column those platforms leave at
+        # zero. The filters below say so rather than relying on that zero, which
+        # is a rule that holds by accident. F5.
+        #
+        # It said so by rendering nothing at all until now, so selecting the
+        # YouTube account gave a page with a heading and empty space under it,
+        # which reads as a broken page rather than as a question this data
+        # cannot answer. The board is built either way and carries whether it
+        # can be compared; the template is where that becomes a sentence.
         if account["platform"] != db.PLATFORM_INSTAGRAM:
+            boards.append({"account": account, "comparable": False})
             continue
         account_id = account["account_id"]
         rows = await db.published_media(conn, account_id)
@@ -497,6 +546,7 @@ async def insights_page(request: Request) -> Any:
         boards.append(
             {
                 "account": account,
+                "comparable": True,
                 "measured": len(measured),
                 "total": len(rows),
                 # The chart keeps every post. Skip rate settles at the second
