@@ -32,11 +32,12 @@ import asyncio
 import logging
 from collections.abc import Mapping
 from dataclasses import asdict
+from datetime import timedelta
 from typing import Any
 
 import aiosqlite
 
-from gateway import db, tiktok
+from gateway import db, tiktok, youtube
 from gateway.config import GatewaySettings
 from gateway.graph import GraphClient, GraphError
 from gateway.metrics import Metrics
@@ -197,6 +198,123 @@ async def refresh_tiktok_account(
     return written
 
 
+async def refresh_youtube_account(
+    conn: aiosqlite.Connection,
+    graph: GraphClient,
+    cfg: GatewaySettings,
+    metrics: Metrics,
+    account: Mapping[str, Any],
+    *,
+    on: str | None = None,
+) -> int:
+    """Fetch today's numbers for one YouTube channel. Returns how many stored.
+
+    **The shape TikTok needed is not needed here.** A YouTube upload returns its
+    video id and its URL at publish, both of which the scheduler writes to the
+    row, so there is nothing to resolve and nothing to match on a title. The
+    whole sweep is a token and one report.
+
+    **One request for the batch, not one per video.** The Analytics report is
+    dimensioned by video and filtered to the ids being asked about, so a month
+    of posting is a single call rather than thirty.
+
+    **Six of the seven metrics land in columns that already exist.**
+    `averageViewPercentage` gets `avg_view_pct`, added for it. `reach` and
+    `saved` stay 0 because YouTube reports neither, and so does `skip_rate`:
+    that column is the share who left inside three seconds, and the nearest
+    thing here scores the whole video, so filling it would put two different
+    measurements in one column and the feedback loop reads that column.
+    """
+    moment = db.now()
+    on = on or moment.date().isoformat()
+    channel_id = account["account_id"]
+
+    stored = await db.youtube_credentials(conn, channel_id)
+    if not stored:
+        log.warning("YouTube channel %s has no credentials; skipping insights", channel_id)
+        return 0
+
+    # The same window the Meta sweep uses, and applied here rather than in SQL
+    # because `published_on` is shared with TikTok, which pages by count.
+    #
+    # `created_at` stands in where a row has no publish date. It is never later
+    # than the publish, so it can only widen the window, and widening costs
+    # nothing where a start date past the publish would report each video's
+    # numbers since then and call it a total.
+    def when(row: Any) -> Any:
+        return db.parse_iso(row["published_at"]) or db.parse_iso(row["created_at"]) or moment
+
+    cutoff = moment - timedelta(days=cfg.insights_max_age_days)
+    rows = [
+        row
+        for row in await db.published_on(conn, channel_id)
+        if str(row["media_id"] or "") and when(row) >= cutoff
+    ]
+    if not rows:
+        return 0
+
+    # From the oldest post in the batch, so one range covers every video's whole
+    # life. One request for the batch is what makes that the right trade: a
+    # per video range would be a call per video to save nothing, since the
+    # report is cumulative either way.
+    start_date = (min(when(row) for row in rows) - timedelta(days=1)).date().isoformat()
+    end_date = moment.date().isoformat()
+
+    try:
+        token = await youtube.access_token(
+            graph.http,
+            client_id=stored["client_id"],
+            client_secret=stored["client_secret"],
+            refresh_token=stored["refresh_token"],
+        )
+    except youtube.UploadError as exc:
+        # `invalid_grant` here means the refresh token is dead, which every
+        # video in the batch would hit the same way. One line, not thirty.
+        metrics.graph_errors.inc()
+        log.warning("YouTube insights for %s failed to mint a token: %s", channel_id, exc)
+        return 0
+
+    written = 0
+    ids = [str(row["media_id"]) for row in rows]
+    for offset in range(0, len(ids), youtube.ANALYTICS_BATCH):
+        batch = ids[offset : offset + youtube.ANALYTICS_BATCH]
+        try:
+            stats = await youtube.analytics(
+                graph.http,
+                token=token,
+                video_ids=batch,
+                start_date=start_date,
+                end_date=end_date,
+            )
+        except youtube.AnalyticsError as exc:
+            metrics.graph_errors.inc()
+            log.warning("YouTube insights for %s failed: %s", channel_id, exc)
+            return written
+
+        for video_id, reading in stats.items():
+            await db.record_insights(
+                conn,
+                media_id=video_id,
+                account_id=channel_id,
+                metrics={
+                    "views": reading.views,
+                    "likes": reading.likes,
+                    "comments": reading.comments,
+                    "shares": reading.shares,
+                    "avg_watch_ms": reading.avg_watch_ms,
+                    "total_watch_ms": reading.total_watch_ms,
+                    "avg_view_pct": reading.avg_view_pct,
+                },
+                on=on,
+                moment=moment,
+                platform=db.PLATFORM_YOUTUBE,
+            )
+            metrics.insights_fetched.inc()
+            written += 1
+
+    return written
+
+
 def _known(recent: list[Any], media_id: str) -> Any:
     """The video a row already resolved to, if it is still on the first page."""
     if not media_id:
@@ -212,16 +330,23 @@ async def refresh_once(
 ) -> int:
     """One sweep across every active account, on every platform that has numbers.
 
-    YouTube is deliberately absent. Its `averageViewPercentage` scores a whole
-    video rather than the opening, so it belongs in this table no more than
-    TikTok's four counts belong in `_results_block`, and nothing has asked for
-    it yet.
+    Three platforms, three shapes, and one rule they share: what is stored and
+    what the scriptwriter is shown are different questions. Everything here
+    writes to `insights` with its `platform` set, and `/api/results` still
+    filters to Instagram, because `skip_rate` is the only measurement the loop
+    turns on and only one platform reports it.
     """
     total = 0
     for account in await db.all_accounts(conn):
         if not account["active"]:
             continue
         total += await refresh_account(conn, graph, cfg, metrics, account)
+
+    if cfg.youtube_insights_enabled:
+        for account in await db.all_accounts(conn, platform=db.PLATFORM_YOUTUBE):
+            if not account["active"]:
+                continue
+            total += await refresh_youtube_account(conn, graph, cfg, metrics, account)
 
     if cfg.tiktok_enabled:
         for account in await db.all_accounts(conn, platform=db.PLATFORM_TIKTOK):

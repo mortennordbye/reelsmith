@@ -4,9 +4,9 @@
 {% block body %}
 <h1>Posts</h1>
 <p class="sub">
-  What each published Reel did, and how many people it sent a link to. Meta's
-  numbers keep climbing for days, so a post from this morning is not yet
-  comparable with one from last week.
+  What each published video did, and how many people it sent a link to. The
+  numbers keep climbing for days on every platform, so a post from this morning
+  is not yet comparable with one from last week.
 </p>
 
 {% for board in boards %}
@@ -38,9 +38,17 @@
             <span class="n">{{ '%.0f' | format(board.avg_skip) }}%</span>
             <span class="l">avg skip</span>
           </div>
+        {% endif %}
+        {% if board.avg_watch_s is not none %}
           <div>
             <span class="n">{{ '%.1f' | format(board.avg_watch_s) }}s</span>
             <span class="l">avg watch</span>
+          </div>
+        {% endif %}
+        {% if board.avg_viewed is not none %}
+          <div>
+            <span class="n">{{ '%.0f' | format(board.avg_viewed) }}%</span>
+            <span class="l">avg viewed</span>
           </div>
         {% endif %}
       </div>
@@ -51,10 +59,19 @@
           at 30 to 40 percent.
         </p>
       {% endif %}
+      {% if board.avg_viewed is not none %}
+        <p class="small muted" style="margin:10px 0 0">
+          Viewed is the share of the whole video watched on average, which is
+          what YouTube reports instead. It scores the video rather than the
+          opening, so it is not a skip rate and the two do not compare. Over
+          100 percent means the Short looped, since a replay counts.
+        </p>
+      {% endif %}
       {% if board.measured < board.posts | length %}
         <p class="small muted" style="margin:10px 0 0">
           {{ board.posts | length - board.measured }} of these have no reading yet.
-          Meta has nothing for a Reel published in the last few hours.
+          No platform reports anything for a video published in the last few
+          hours.
         </p>
       {% endif %}
     </div>
@@ -104,14 +121,28 @@
                     <span class="l">{{ {'saved': 'saves'}.get(key, key) }}</span>
                   </div>
                 {% endfor %}
+                {# Each retention tile on its own metric rather than all of them
+                   on `skip_rate`, because the three platforms report different
+                   halves of this. Instagram has the skip and the watch time,
+                   YouTube has the watch time and a percentage of the video, and
+                   TikTok has none of the three. Keyed on the reading, so a
+                   platform gets the tiles it earned and no zeroes. #}
                 {% if post.insights['skip_rate'] %}
                   <div>
                     <span class="n">{{ '%.1f' | format(post.insights['skip_rate']) }}%</span>
                     <span class="l">skipped</span>
                   </div>
+                {% endif %}
+                {% if post.insights['avg_watch_ms'] %}
                   <div>
                     <span class="n">{{ '%.1f' | format(post.insights['avg_watch_ms'] / 1000) }}s</span>
                     <span class="l">avg watch</span>
+                  </div>
+                {% endif %}
+                {% if post.insights['avg_view_pct'] %}
+                  <div>
+                    <span class="n">{{ '%.1f' | format(post.insights['avg_view_pct']) }}%</span>
+                    <span class="l">avg viewed</span>
                   </div>
                 {% endif %}
               </div>

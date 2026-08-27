@@ -28,7 +28,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -488,6 +488,23 @@ _MIGRATIONS: tuple[str, ...] = (
     # `created_at`, which for a row old enough to matter errs towards showing it.
     """
     ALTER TABLE queued_posts ADD COLUMN claimed_at TEXT;
+    """,
+    # 19. The one YouTube number that had nowhere to go.
+    #
+    # Six of its seven metrics land in columns that already exist: four counts,
+    # `averageViewDuration` into `avg_watch_ms` and `estimatedMinutesWatched`
+    # into `total_watch_ms`. `averageViewPercentage` fits none of them, and the
+    # tempting move was to write it into `skip_rate` inverted, which would be
+    # wrong in the way that is hardest to catch later: that column is the share
+    # who left inside three seconds, so it scores the opening alone, and this
+    # one scores the whole video. A hook that works and a video that keeps
+    # people are different claims and the feedback loop turns on the first.
+    #
+    # 0 everywhere else, and the `platform` column is what says whether that
+    # means "not measured here" or "nobody watched". Instagram reports no such
+    # figure and TikTok reports nothing about watching at all.
+    """
+    ALTER TABLE insights ADD COLUMN avg_view_pct REAL NOT NULL DEFAULT 0;
     """,
 )
 
@@ -1701,9 +1718,11 @@ async def record_insights(
     inventing a second reading for the same date.
 
     `platform` decides what the zeroes mean. On an Instagram row every column
-    is measured. On a TikTok row `reach`, `saved`, `avg_watch_ms`,
-    `total_watch_ms` and `skip_rate` are 0 because that platform exposes none
-    of them, and nothing downstream may read those as a result.
+    is measured except `avg_view_pct`, which Meta does not report. On a TikTok
+    row `reach`, `saved`, `avg_watch_ms`, `total_watch_ms`, `skip_rate` and
+    `avg_view_pct` are all 0 because that platform exposes none of them. On a
+    YouTube row it is `reach`, `saved` and `skip_rate`. Nothing downstream may
+    read any of those as a result.
     """
     moment = moment or now()
     await conn.execute(
@@ -1711,8 +1730,8 @@ async def record_insights(
         INSERT INTO insights
             (media_id, account_id, fetched_on, views, reach, likes, comments,
              saved, shares, avg_watch_ms, total_watch_ms, skip_rate,
-             fetched_at, platform)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             avg_view_pct, fetched_at, platform)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (media_id, fetched_on) DO UPDATE SET
             views = excluded.views, reach = excluded.reach,
             likes = excluded.likes, comments = excluded.comments,
@@ -1720,6 +1739,7 @@ async def record_insights(
             avg_watch_ms = excluded.avg_watch_ms,
             total_watch_ms = excluded.total_watch_ms,
             skip_rate = excluded.skip_rate,
+            avg_view_pct = excluded.avg_view_pct,
             fetched_at = excluded.fetched_at,
             platform = excluded.platform
         """,
@@ -1736,6 +1756,7 @@ async def record_insights(
             int(metrics.get("avg_watch_ms", 0)),
             int(metrics.get("total_watch_ms", 0)),
             float(metrics.get("skip_rate", 0.0)),
+            float(metrics.get("avg_view_pct", 0.0)),
             moment.isoformat(),
             platform,
         ),

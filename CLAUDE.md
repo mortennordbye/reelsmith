@@ -259,16 +259,37 @@ attempted*:
   precisely so a missed call site is inert. It matches on the platform now and
   fails the row rather than the tick, so one misconfigured account cannot stop
   the other two publishing. F1.
-- **The scriptwriter learns from Instagram alone, and this is not a gap to
-  close.** `skip_rate` is the share who scrolled past inside three seconds and
-  it is the one number the loop turns on. YouTube's `averageViewPercentage`
-  scores a whole video and TikTok exposes no retention metric at all. So
-  `insights` carries a `platform` column, TikTok's four counts are stored and
-  shown on the Posts page, and `/api/results` and the Insights page both filter
-  to Instagram **explicitly** rather than relying on nothing else filling the
-  `skip_rate` column, which is a rule that holds by accident. Feeding anything
-  else to `_results_block` would corrupt the single measurement everything else
-  is argued from.
+- **All three are measured and only one is learned from.** `skip_rate` is the
+  share who scrolled past inside three seconds and it is the one number the
+  loop turns on. YouTube's `averageViewPercentage` scores a whole video and
+  TikTok exposes no retention metric at all. So `insights` carries a `platform`
+  column, all three platforms' counts are stored and shown on the Posts page,
+  and `/api/results` and the Insights page both filter to Instagram
+  **explicitly** rather than relying on nothing else filling the `skip_rate`
+  column, which is a rule that holds by accident. Feeding anything else to
+  `_results_block` would corrupt the single measurement everything else is
+  argued from.
+- **YouTube's numbers arrive in one Analytics call per sweep, since
+  2026-08-27.** `insights.refresh_youtube_account` mints a token and asks the
+  Analytics API for a report dimensioned by video and filtered to the ids the
+  queue already holds, so a month of posting is one request rather than thirty
+  and there is nothing to resolve: an upload returns its video id at publish,
+  which is the step TikTok needs and this does not. `averageViewDuration` and
+  `estimatedMinutesWatched` land in `avg_watch_ms` and `total_watch_ms`, and
+  `averageViewPercentage` got `avg_view_pct` (schema 19) rather than being
+  written into `skip_rate` inverted, which is the mistake to guard against:
+  one scores the opening and the other scores the whole video, and the loop is
+  a claim about openings. **A Short that loops reports past 100 percent**, and
+  an average view duration longer than the video, because a replay counts. One
+  of this account's own Shorts read 227.5 percent on 2026-08-27, so that is
+  measured rather than theoretical and is not a parsing bug.
+- **`GATEWAY_YOUTUBE_INSIGHTS_ENABLED` is not the flag that was decided
+  against.** `GATEWAY_YOUTUBE_ENABLED` is still absent, because publishing
+  there still runs only when a slot fires. The sweep is the first YouTube thing
+  that runs without one, which is exactly the test that earned TikTok its flag.
+  On by default, because it only reads and a deployment with no YouTube account
+  calls Google nothing; off is the switch for a channel whose refresh token has
+  died, where the alternative is a failed mint every six hours.
 - **On a TikTok row the unmeasured columns are 0 and the platform column is
   what says so.** `reach`, `saved`, `avg_watch_ms`, `total_watch_ms` and
   `skip_rate` are absences rather than results, and the Posts page renders the
