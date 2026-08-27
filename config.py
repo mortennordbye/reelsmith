@@ -150,6 +150,22 @@ class Settings(BaseSettings):
     # Short are queued, which is the behaviour every render had before this.
     tiktok_open_id: str = ""
 
+    # --- Facebook (optional) ------------------------------------------------
+    # The numeric Page id only, and nothing else. The Page access token lives
+    # on the gateway, which is what publishes, so no Facebook secret reaches
+    # the machine that renders. Same shape as the YouTube channel id and the
+    # TikTok open id above and for the same reason: this host needs to know
+    # where a row is going, not how to get in.
+    #
+    # The numeric id, not the vanity name. `facebook.com/thenightlybuild`
+    # addresses the Page perfectly well in a browser and not at all on
+    # `/{page-id}/video_reels`, and the gateway refuses a non-numeric one at
+    # registration rather than at the first publish.
+    #
+    # Without it the fan-out skips Facebook silently and queues the rest, which
+    # is the behaviour every render had before this.
+    facebook_page_id: str = ""
+
     # --- DM gateway (optional) ---------------------------------------------
     # The self-hosted service that answers comments and DMs, and hosts the
     # cover image Meta fetches. Leaving gateway_url empty disables both calls,

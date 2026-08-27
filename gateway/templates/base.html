@@ -16,7 +16,7 @@
    fetched: the stacks name them first and fall back to a system serif and a
    system mono, so a machine that has them gets them and the cluster never asks
    a CDN for anything. #}
-{% from "_icons.html" import platform_icon %}
+{% from "_icons.html" import platform_icon, platform_name %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -121,12 +121,16 @@
     .platform.instagram { color: #c98ae0; background: #241a2b; border: 1px solid #4d3a63; }
     .platform.youtube { color: #ff6b5e; background: #2b1310; border: 1px solid #6b2b24; }
     .platform.tiktok { color: #4fd1c5; background: #10262b; border: 1px solid #24575e; }
+    /* Blue for the fourth, which is both the obvious one for this platform and
+       the only quarter of the wheel the other three left empty. */
+    .platform.facebook { color: #7aa2f7; background: #101827; border: 1px solid #29406b; }
     /* The stripe repeats the badge down the left edge, so scrolling past a
        heading does not lose which surface you are looking at. */
     .board { display: flex; align-items: center; gap: 8px; padding-left: 10px; }
     .board.instagram { border-left: 3px solid #4d3a63; }
     .board.youtube { border-left: 3px solid #6b2b24; }
     .board.tiktok { border-left: 3px solid #24575e; }
+    .board.facebook { border-left: 3px solid #29406b; }
     button, .btn {
       font: inherit; font-size: 13px; padding: 5px 11px; border-radius: var(--r-sm);
       border: 1px solid var(--line-2); background: #1c1c1c; color: var(--ink);
@@ -163,6 +167,7 @@
     .switcher .mark.instagram { color: #c98ae0; }
     .switcher .mark.youtube { color: #ff6b5e; }
     .switcher .mark.tiktok { color: #4fd1c5; }
+    .switcher .mark.facebook { color: #7aa2f7; }
     /* One chip per original account, holding its name and one mark per
        platform. The chip is the group; the border is what says the page is
        inside it, so picking a single destination still shows which identity it
@@ -328,7 +333,7 @@
                    class="mark {{ a['platform'] or 'instagram' }}
                           {{ 'on' if scope.selected and scope.selected['account_id'] == a['account_id'] }}
                           {{ 'off' if not a['active'] }}"
-                   title="{{ {'youtube': 'YouTube', 'tiktok': 'TikTok'}.get(a['platform'], 'Instagram') }}
+                   title="{{ platform_name(a['platform']) }}
                           {{ a['username'] or a['account_id'] }}{{ ' (paused)' if not a['active'] }}">
                   {{ platform_icon(a['platform'] or 'instagram', 12) }}
                 </a>

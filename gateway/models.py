@@ -179,6 +179,58 @@ class TikTokAccountRegistration(BaseModel):
         return v
 
 
+class FacebookAccountRegistration(BaseModel):
+    """A Facebook Page this gateway publishes Reels to.
+
+    **The one destination whose credentials are the account row.** A Page
+    access token is a token plus an expiry, which is the shape `accounts` was
+    built around, so unlike YouTube and TikTok there is no second table and no
+    second write. What makes it a separate model from `AccountRegistration` is
+    not the fields, which nearly match, but what the route does with them: no
+    `subscribed_apps` call, because a Page here publishes and never answers
+    messages, and the keyword mechanic is Instagram's alone.
+
+    The token wanted here is a **long-lived Page token**, derived from a
+    long-lived user token. Those do not expire on a clock, which is why
+    `expires_in` is optional and why nothing in this service refreshes one. A
+    short-lived Page token registers just as cleanly and stops working in an
+    hour, which is the mistake this model cannot catch.
+    """
+
+    page_id: str = Field(min_length=1)
+    access_token: str = Field(min_length=1)
+    # Meta hands this back with a user token and usually not with a Page one.
+    # Absent means "no clock known", which is the normal and correct state for
+    # a long-lived Page token rather than something to warn about.
+    expires_in: int | None = None
+    # The Page name, for the admin UI. Same column as an Instagram username.
+    username: str = ""
+    # Which original account this destination belongs to, which is the
+    # pipeline's `--account <name>`. Left off, the gateway derives it from the
+    # username, which is right while one identity holds the same handle
+    # everywhere. Say it explicitly when a second identity is registered, or
+    # when its handle differs across platforms: this is what groups the rows
+    # into one account in the panel, and getting it wrong costs a board in the
+    # wrong group rather than a post to the wrong place.
+    brand: str = ""
+
+    @field_validator("page_id")
+    @classmethod
+    def _looks_like_a_page_id(cls, v: str) -> str:
+        """Catch the vanity-name paste, which is the likely mistake.
+
+        A Page id is digits. `facebook.com/thenightlybuild` and the vanity name
+        on its own both address the Page perfectly well in a browser and
+        neither works on `/{page-id}/video_reels`, so without this they would
+        register cleanly and fail at the first publish, days later and nowhere
+        near the cause.
+        """
+        v = v.strip()
+        if not v.isdigit():
+            raise ValueError("page_id must be the numeric Page id, not a name or URL")
+        return v
+
+
 class QueueSubmission(BaseModel):
     """A rendered Reel the gateway should publish on the next due slot.
 

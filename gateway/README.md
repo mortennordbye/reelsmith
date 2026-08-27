@@ -16,7 +16,7 @@ comment "SEND" on the Reel
 
 **Nothing advertises the keyword any more, so the DM half is dormant.** The ask
 ran for the account's first 53 posts and drew two comments, both from people who
-unfollowed once the link arrived. All three channels ask for a follow instead,
+unfollowed once the link arrived. Every channel asks for a follow instead,
 in `SPOKEN_CTA` and `CAPTION_CTA` in `pipeline/gateway.py`. The mechanic is left
 wired rather than deleted, and nobody can guess an unadvertised keyword, so
 everything above runs and never fires. Putting it back is a change to those two
@@ -134,8 +134,10 @@ that write costs a day. Failing before it costs the account, recoverable only
 by a person in a browser.
 
 `tiktok_credentials` is its own table for the same reason `youtube_credentials`
-is: three platforms with three shapes, and one table holding all of them would
-be two thirds null on every row. Only this one needs `refresh_expires_at`.
+is: four platforms with four credential shapes, and one table holding all of
+them would be mostly null on every row. Only this one needs
+`refresh_expires_at`. The two Meta surfaces need no table at all, because a
+token plus an expiry is what `accounts` already holds.
 
 **Two publish paths, and they end differently.** Direct Post needs an audit that
 reviews a posting screen this repo does not have; the unaudited path forces
@@ -202,10 +204,53 @@ panel pass `platform=None` and say so in the open.
 `docs/youtube-publishing-plan.md` has the rest of the shape, and
 `docs/youtube-api-setup.md` covers the account layout and the audit.
 
-## The four public pages
+### Registering a Facebook Page
 
-`gateway/pages.py` serves `GET /`, `/privacy`, `/terms` and `/tiktok/callback`,
-and they are the only routes here written for a human who is not the operator.
+The fourth destination and the cheapest, for a reason worth stating rather than
+rediscovering: **a Page access token is Meta's credential shape**, which is
+what `accounts` has held since the first migration. So there is no
+`facebook_credentials` table, no token mint per publish and no refresher loop.
+One write registers a Page.
+
+```bash
+uv run python scripts/facebook_authorise.py --gateway https://gate.example
+```
+
+That script exists for one step that is easy to leave out and impossible to
+notice afterwards. A Page token minted from a *short-lived* user token expires
+with it about an hour later, and the failure that follows says the token is
+invalid rather than saying it was born wrong. So the trip is code, short-lived
+user token, **long-lived** user token, then `GET /me/accounts`.
+
+The registration itself is one call, if the token is already in hand:
+
+```bash
+curl -s -X POST localhost:8000/api/accounts/facebook \
+  -H "authorization: Bearer $GATEWAY_API_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"page_id":"1047...","access_token":"EAA...","username":"The Nightly Build"}'
+```
+
+**This is not the Instagram Login path.** `gateway/publisher.py` talks to
+`graph.instagram.com` with a token that cannot see a Page, and
+`gateway/facebook.py` talks to `graph.facebook.com` with a Page token that
+cannot see the Instagram account. The host is a constant in that module rather
+than `cfg.graph_host`, because one shared host setting serving two login paths
+is a setting that is wrong for one of them.
+
+**There is no `GATEWAY_FACEBOOK_ENABLED`,** the same decision YouTube's absence
+records: publishing runs only when a slot fires, and a slot only fires when the
+scheduler is on. `GATEWAY_FACEBOOK_INSIGHTS_ENABLED` exists because the sweep
+is the one thing here that runs without a slot, which is exactly what earned
+TikTok its flag.
+
+`docs/facebook-api-setup.md` is the runbook.
+
+## The five public pages
+
+`gateway/pages.py` serves `GET /`, `/privacy`, `/terms`, `/tiktok/callback` and
+`/facebook/callback`, and they are the only routes here written for a human who
+is not the operator.
 
 **The first three exist because every platform demands them before it will take
 an application**, and TikTok adds a condition the others do not: the URLs must
@@ -214,20 +259,24 @@ sit on a domain it can prove by DNS record, so a GitHub blob URL is refused with
 off `docs/` and onto this service. One domain verification covers all four URLs
 and the media TikTok pulls, because a verified domain carries its subdomains.
 
-**The fourth is an OAuth redirect target and it deliberately does nothing.**
+**The last two are OAuth redirect targets and they deliberately do nothing.**
 TikTok will not register a redirect URI that is not https, and loopback is not
-an exception, so `scripts/tiktok_authorise.py` cannot run a listener. The
-browser lands here, the page prints the authorisation code, and the operator
-pastes it back into the waiting script. Exchanging it here would need the client
-secret, which this service is not told until the account is registered at the
-end of that same trip, so the obvious improvement puts a secret in a second
-place for the sake of a one-off.
+an exception, so `scripts/tiktok_authorise.py` cannot run a listener; Facebook
+does allow a localhost redirect while an app is in development and the app that
+publishes these Reels is live, so the Page trip lands here too. The browser
+arrives, the page prints the authorisation code, and the operator pastes it
+back into the waiting script. Exchanging it here would need the client secret,
+which this service is not told until the account is registered at the end of
+that same trip, so the obvious improvement puts a secret in a second place for
+the sake of a one-off. One template serves both, because the wording is all
+that differs; two routes rather than one, because each platform holds its own
+URL in its own portal.
 
 Three things about this router are load bearing:
 
 - **It mounts unconditionally**, unlike `admin.public`. The obvious home was
   that router, which already serves the one page that cannot require a login,
-  but it is only included when `GATEWAY_ADMIN_ENABLED` is on. Three platforms
+  but it is only included when `GATEWAY_ADMIN_ENABLED` is on. Four platforms
   hold these URLs on file, and a legal page that 404s because a feature flag
   moved is worse than one nobody reads. `tests/test_gateway_pages.py` pins it
   with the panel off.
@@ -378,17 +427,20 @@ Meta fetch a video, and therefore an unpublished queued Reel is readable by
 anyone who knows its filename. The name carries a 48 bit digest of the file's
 own bytes, so knowing it means already having it.
 
-## One identity is three rows
+## One identity is four rows
 
 `accounts` is one row per platform, so an identity publishing to Instagram,
-YouTube and TikTok is three of them. `brand` is what says they are the same
-identity, and it is the pipeline's `--account <name>`.
+YouTube, TikTok and Facebook is four of them. That includes the two Meta
+surfaces: a Page and the Instagram account beside it are different ids holding
+different tokens minted through different login paths. `brand` is what says
+they are the same identity, and it is the pipeline's `--account <name>`.
 
 Registration takes it explicitly and derives it from the handle when nobody
-says, stripping the leading @ and lowercasing, because two platforms store the
-handle with one and the third does not. Say it explicitly for a second identity
-or for one whose handle differs across platforms; a re-authorisation that omits
-it keeps whatever grouping the row already had.
+says, stripping the leading @ and lowercasing, because some platforms store the
+handle with one and others do not. Say it explicitly for a second identity or
+for one whose handle differs across platforms, which a Page usually does, since
+its name is prose rather than a handle. A re-authorisation that omits it keeps
+whatever grouping the row already had.
 
 The panel is built on that: the switcher is one chip per identity with a mark
 per platform, `?brand=` scopes to an identity and `?account=` to one of its
@@ -415,19 +467,23 @@ Three decisions worth knowing:
 - **The sweep is on by default**, where the scheduler is off. It only reads: it
   creates nothing, publishes nothing and messages nobody, so gaining it by
   upgrading is not a surprise worth guarding against.
-- **It reads all three platforms, and the `platform` column says which.** Meta
-  per media, TikTok by listing the account's videos and matching on the title
-  this service wrote, YouTube in one Analytics report covering the whole batch.
-  What each of them does not report stays 0, and nothing downstream may read
-  those zeroes as a result: a TikTok row has no watch time of any kind, a
-  YouTube row has no `skip_rate`, and neither has reach or saves.
-  `GATEWAY_TIKTOK_ENABLED` and `GATEWAY_YOUTUBE_INSIGHTS_ENABLED` are the two
-  switches, and only the second is on by default.
+- **It reads all four platforms, and the `platform` column says which.**
+  Instagram per media, TikTok by listing the account's videos and matching on
+  the title this service wrote, YouTube in one Analytics report covering the
+  whole batch, Facebook one request per Reel. What each of them does not report
+  stays 0, and nothing downstream may read those zeroes as a result: a TikTok
+  row has no watch time of any kind, a YouTube row has no `skip_rate` and no
+  reach, and a Facebook row has reach and watch time but no share count, since
+  Meta reports shares fused to the comment count. `GATEWAY_TIKTOK_ENABLED`,
+  `GATEWAY_YOUTUBE_INSIGHTS_ENABLED` and `GATEWAY_FACEBOOK_INSIGHTS_ENABLED`
+  are the three switches, and only the first is off by default.
 - **Only Instagram reaches the scriptwriter.** `/api/results` filters to it
-  explicitly. `skip_rate` scores the first three seconds, YouTube's
-  `averageViewPercentage` scores the whole video and TikTok reports nothing
-  about watching, so the three are stored side by side and compared to
-  themselves rather than to each other.
+  explicitly. `skip_rate` scores the first three seconds; YouTube's
+  `averageViewPercentage` and Facebook's average time watched both score the
+  whole video, replays included; TikTok reports nothing about watching. So the
+  four are stored side by side and compared to themselves rather than to each
+  other. Facebook is the one to watch here, because its board carries reach and
+  watch time and therefore looks like Instagram's.
 
 The per-post funnel comes from `comments_handled` and `deliveries`, both keyed
 by media id and both written all along. `db.funnel` only ever summed them

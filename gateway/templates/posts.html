@@ -80,6 +80,18 @@
           no watch time. That is an absence rather than a zero.
         </p>
       {% endif %}
+      {# The board that looks most like Instagram's and is not, which is the
+         one worth a sentence rather than the one with the fewest numbers. #}
+      {% if account['platform'] == 'facebook' %}
+        <p class="small muted" style="margin:10px 0 0">
+          Reach here means the same thing it does on Instagram. Watch time does
+          not: Facebook reports the average time a Reel played including
+          replays, so it scores the whole video rather than the opening, and
+          there is no skip rate to compare with the Instagram board. Shares are
+          missing rather than zero, because Facebook reports them added to the
+          comment count in one number.
+        </p>
+      {% endif %}
       {% if board.measured < board.posts | length %}
         <p class="small muted" style="margin:10px 0 0">
           {{ board.posts | length - board.measured }} of these have no reading yet.

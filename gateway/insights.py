@@ -37,7 +37,7 @@ from typing import Any
 
 import aiosqlite
 
-from gateway import db, tiktok, youtube
+from gateway import db, facebook, tiktok, youtube
 from gateway.config import GatewaySettings
 from gateway.graph import GraphClient, GraphError
 from gateway.metrics import Metrics
@@ -315,6 +315,107 @@ async def refresh_youtube_account(
     return written
 
 
+async def refresh_facebook_account(
+    conn: aiosqlite.Connection,
+    graph: GraphClient,
+    cfg: GatewaySettings,
+    metrics: Metrics,
+    account: Mapping[str, Any],
+    *,
+    on: str | None = None,
+) -> int:
+    """Fetch today's numbers for one Facebook Page. Returns how many stored.
+
+    **Nothing to resolve and nothing to mint.** The publish returns the video
+    id and the row already carries it, so this is neither TikTok's title match
+    nor YouTube's token dance. One request per Reel, and the Page token on the
+    account row is what makes it.
+
+    **One request rather than two**, because the comment count comes from the
+    node and the rest from its insights edge, and field expansion asks for both
+    at once. Splitting them would double a sweep's calls to answer one
+    question.
+
+    **Four columns, and the two absences are deliberate.** Meta reports reach
+    here as it does on Instagram, and watch time as YouTube does, so this board
+    has more than TikTok's. What it has not got is a three second skip, and
+    `post_video_avg_time_watched` scores the whole Reel including replays, so
+    writing it into `skip_rate` inverted would put two different measurements
+    in the one column the feedback loop reads. `saved` and `shares` stay 0 and
+    mean "not measured here": shares because Meta reports them fused to the
+    comment count in `post_video_social_actions` and splitting that would be
+    arithmetic on two different definitions.
+    """
+    moment = db.now()
+    on = on or moment.date().isoformat()
+    page_id = account["account_id"]
+    token = account["access_token"]
+    if not token:
+        log.warning("Facebook Page %s has no token; skipping insights", page_id)
+        return 0
+
+    # The same window the Meta sweep uses. `created_at` stands in where a row
+    # has no publish date, exactly as on the YouTube path: it is never later
+    # than the publish, so it can only widen the window.
+    def when(row: Any) -> Any:
+        return db.parse_iso(row["published_at"]) or db.parse_iso(row["created_at"]) or moment
+
+    cutoff = moment - timedelta(days=cfg.insights_max_age_days)
+    rows = [
+        row
+        for row in await db.published_on(conn, page_id)
+        if str(row["media_id"] or "") and when(row) >= cutoff
+    ]
+
+    written = 0
+    for row in rows:
+        video_id = str(row["media_id"])
+        try:
+            reading = await facebook.read_insights(
+                graph.http, video_id=video_id, token=token, api_version=cfg.api_version
+            )
+        except facebook.InsightsError as exc:
+            metrics.graph_errors.inc()
+            log.warning("Facebook insights for %s failed: %s", video_id, exc)
+            # An auth failure hits every remaining Reel the same way, so stop
+            # rather than spend the rest of the sweep proving it. The same
+            # decision `refresh_account` makes on the Instagram path.
+            if exc.is_auth:
+                log.error("Stopping the Facebook sweep for %s, the token is bad", page_id)
+                break
+            continue
+
+        # The permalink is not known at publish on every path: a Reel that was
+        # still transcoding when the publisher gave up waiting has a row with
+        # none, and this is the first call afterwards that would know. The id
+        # is unchanged, so this only ever fills a blank.
+        if reading.permalink and not str(row["permalink"] or ""):
+            await db.resolve_media_id(
+                conn, int(row["id"]), media_id=video_id, permalink=reading.permalink
+            )
+
+        await db.record_insights(
+            conn,
+            media_id=video_id,
+            account_id=page_id,
+            metrics={
+                "views": reading.views,
+                "reach": reading.reach,
+                "likes": reading.likes,
+                "comments": reading.comments,
+                "avg_watch_ms": reading.avg_watch_ms,
+                "total_watch_ms": reading.total_watch_ms,
+            },
+            on=on,
+            moment=moment,
+            platform=db.PLATFORM_FACEBOOK,
+        )
+        metrics.insights_fetched.inc()
+        written += 1
+
+    return written
+
+
 def _known(recent: list[Any], media_id: str) -> Any:
     """The video a row already resolved to, if it is still on the first page."""
     if not media_id:
@@ -330,11 +431,14 @@ async def refresh_once(
 ) -> int:
     """One sweep across every active account, on every platform that has numbers.
 
-    Three platforms, three shapes, and one rule they share: what is stored and
+    Four platforms, four shapes, and one rule they share: what is stored and
     what the scriptwriter is shown are different questions. Everything here
     writes to `insights` with its `platform` set, and `/api/results` still
     filters to Instagram, because `skip_rate` is the only measurement the loop
-    turns on and only one platform reports it.
+    turns on and only one platform reports it. Facebook is the one worth
+    re-reading that rule for: it reports reach and watch time, which look close
+    enough to Instagram's to be mistaken for them, and it reports no skip rate
+    at all.
     """
     total = 0
     for account in await db.all_accounts(conn):
@@ -353,6 +457,12 @@ async def refresh_once(
             if not account["active"]:
                 continue
             total += await refresh_tiktok_account(conn, graph, cfg, metrics, account)
+
+    if cfg.facebook_insights_enabled:
+        for account in await db.all_accounts(conn, platform=db.PLATFORM_FACEBOOK):
+            if not account["active"]:
+                continue
+            total += await refresh_facebook_account(conn, graph, cfg, metrics, account)
 
     metrics.insights_last_success.set(db.now().timestamp())
     return total

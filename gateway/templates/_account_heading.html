@@ -14,7 +14,7 @@
    Icon *and* word on the board line. The mark is what the eye finds while
    scrolling; the word is what makes it unambiguous, and it is what a screen
    reader gets. #}
-{% from "_icons.html" import platform_icon %}
+{% from "_icons.html" import platform_icon, platform_name %}
 {% set _platform = account['platform'] or 'instagram' %}
 {% set _grouped = scope and scope.brands | length > 1 %}
 {% if first_of_brand and _grouped %}
@@ -23,7 +23,7 @@
 <h3 class="board {{ _platform }}">
   <span class="platform {{ _platform }}">
     {{ platform_icon(_platform) }}
-    {{ {'youtube': 'YouTube', 'tiktok': 'TikTok'}.get(_platform, 'Instagram') }}
+    {{ platform_name(_platform) }}
   </span>
   {# One spelling of the handle. Instagram stores it bare and the other two
      store it with an @, so the panel showed the same identity two ways on one

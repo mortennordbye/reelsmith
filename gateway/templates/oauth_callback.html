@@ -1,13 +1,18 @@
+{# One page, two providers. TikTok and Facebook both refuse to register a
+   redirect URI that is not https, so neither consent trip can land on a
+   loopback listener, and both need a page on a domain the platform has
+   verified. The wording is the only thing that differs, so it is a variable
+   rather than a second template drifting from this one. #}
 {% extends "public_base.html" %}
-{% block title %}TikTok authorisation{% endblock %}
+{% block title %}{{ platform }} authorisation{% endblock %}
 {% block content %}
-<h1>TikTok authorisation</h1>
+<h1>{{ platform }} authorisation</h1>
 
 {% if error %}
-<p class="dateline">TikTok refused the authorisation.</p>
+<p class="dateline">{{ platform }} refused the authorisation.</p>
 <p><strong>{{ error }}</strong></p>
 {% if error_description %}<p>{{ error_description }}</p>{% endif %}
-<p>Nothing was exchanged. Run <code>scripts/tiktok_authorise.py</code> again.</p>
+<p>Nothing was exchanged. Run <code>{{ script }}</code> again.</p>
 
 {% elif code %}
 <p class="dateline">Copy the whole address bar back into the terminal that is
@@ -27,9 +32,9 @@ the exchange, which is the point of it.</p>
 
 {% else %}
 <p class="dateline">Nothing to do here.</p>
-<p>This address is where TikTok sends a browser after somebody authorises this
-service to post on their own account. Reaching it directly means there is no
-authorisation in progress, and there is nothing to see.</p>
+<p>This address is where {{ platform }} sends a browser after somebody
+authorises this service to post on their own account. Reaching it directly
+means there is no authorisation in progress, and there is nothing to see.</p>
 <p><a href="/">What this account is</a></p>
 {% endif %}
 {% endblock %}

@@ -30,6 +30,7 @@ from gateway.graph import GraphError
 from gateway.models import (
     AccountRegistration,
     CoverUploaded,
+    FacebookAccountRegistration,
     PostRegistration,
     Queued,
     QueueSubmission,
@@ -267,6 +268,39 @@ async def register_tiktok_account(
     # log line, here or anywhere.
     log.info("Registered the TikTok account %s", body.open_id)
     return Registered(detail=f"stored {body.open_id}")
+
+
+@router.post(
+    "/api/accounts/facebook", response_model=Registered, dependencies=[Depends(require_token)]
+)
+async def register_facebook_account(
+    request: Request, body: FacebookAccountRegistration
+) -> Registered:
+    """Register a Facebook Page to publish Reels to.
+
+    **One write, where the other two destinations take two.** A Page access
+    token is a token plus an expiry, which is what `accounts` already holds, so
+    there is no credentials table to fill first and no ordering to get right.
+
+    No `subscribed_apps` call, unlike `/api/accounts`. That subscription is
+    what makes an Instagram account produce comment webhooks, and the keyword
+    mechanic is that one surface. A Page here publishes and is never spoken to.
+    """
+    conn = request.app.state.db
+    expires_at = db.now() + timedelta(seconds=body.expires_in) if body.expires_in else None
+    await db.upsert_account(
+        conn,
+        account_id=body.page_id,
+        access_token=body.access_token,
+        username=body.username,
+        expires_at=expires_at,
+        platform=db.PLATFORM_FACEBOOK,
+        brand=body.brand,
+    )
+    # The Page id only. Nothing about the token reaches a log line, here or
+    # anywhere.
+    log.info("Registered the Facebook Page %s", body.page_id)
+    return Registered(detail=f"stored {body.page_id}")
 
 
 @router.post("/api/covers", response_model=CoverUploaded, dependencies=[Depends(require_token)])

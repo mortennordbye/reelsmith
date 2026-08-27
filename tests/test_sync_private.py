@@ -45,6 +45,7 @@ IDS = {
     # The leading hyphen is real and has bitten a config parser already, so it
     # is here rather than in a tidier fixture value.
     "TIKTOK_OPEN_ID": "-000y6NKYZ3EEbUGgXiyJ9nG66a_xqrF68Me",
+    "FACEBOOK_PAGE_ID": "104739283746152",
 }
 
 

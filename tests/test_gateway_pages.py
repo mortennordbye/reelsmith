@@ -9,10 +9,13 @@ So the thing to pin is not the wording. It is that the URLs answer, and keep
 answering when the admin panel is off, because the obvious place to have put
 them was a router that only mounts when it is on.
 
-`/tiktok/callback` rides on the same router for the same reason, and carries
-one property of its own: it must never exchange anything. It is a redirect
-target that prints a code, and the tests below say so, because the obvious
-"improvement" to it is to have the gateway finish the trip.
+`/tiktok/callback` and `/facebook/callback` ride on the same router for the same
+reason, and carry one property of their own: they must never exchange
+anything. They are redirect targets that print a code, and the tests below say
+so, because the obvious "improvement" to them is to have the gateway finish the
+trip. Both are checked rather than only the first, since a route added for the
+second platform is exactly the one that would be mounted on the panel's router
+by mistake.
 """
 
 from __future__ import annotations
@@ -25,6 +28,9 @@ from tests.gateway_harness import FakeMeta, settings
 
 BASE = "https://gateway"
 PAGES = ("/", "/privacy", "/terms")
+# One page and two providers. Each platform holds its own URL in its own
+# developer portal, so both have to answer whatever else changes.
+CALLBACKS = ("/tiktok/callback", "/facebook/callback")
 
 
 async def fetch(cfg, path: str) -> httpx.Response:
@@ -109,57 +115,65 @@ async def test_the_pages_carry_no_external_assets(tmp_path):
         assert "stylesheet" not in body, path
 
 
-async def test_the_callback_shows_the_code_it_was_handed(tmp_path):
+@pytest.mark.parametrize("path", CALLBACKS)
+async def test_the_callback_shows_the_code_it_was_handed(tmp_path, path):
     """The page exists so an operator can read the code out of a browser and
-    paste it back. TikTok refuses to register a redirect URI that is not
+    paste it back. Neither platform will register a redirect URI that is not
     https, so a loopback listener cannot be the target however much simpler it
     would be to run one."""
-    response = await fetch(
-        settings(tmp_path), "/tiktok/callback?code=abc123&state=xyz789"
-    )
+    response = await fetch(settings(tmp_path), f"{path}?code=abc123&state=xyz789")
 
     assert response.status_code == 200
     assert "abc123" in response.text
     assert "xyz789" in response.text
 
 
-async def test_the_callback_answers_with_the_admin_panel_off(tmp_path):
+@pytest.mark.parametrize("path", CALLBACKS)
+async def test_the_callback_answers_with_the_admin_panel_off(tmp_path, path):
     """Same property as the legal pages, and it matters more here: this URL is
-    saved in the app's configuration in TikTok's portal, and a redirect that
-    404s spends a consent trip."""
-    response = await fetch(
-        settings(tmp_path, admin_enabled=False), "/tiktok/callback?code=abc123"
-    )
+    saved in the app's configuration in the platform's portal, and a redirect
+    that 404s spends a consent trip."""
+    response = await fetch(settings(tmp_path, admin_enabled=False), f"{path}?code=abc123")
 
     assert response.status_code == 200
     assert "abc123" in response.text
 
 
-async def test_the_callback_reports_a_refusal_rather_than_a_blank_page(tmp_path):
-    """TikTok sends `error` instead of `code` when the user declines or the
-    app asks for a scope it does not hold. Rendering nothing would look like
-    the code failed to arrive, which points at the wrong half."""
+@pytest.mark.parametrize("path", CALLBACKS)
+async def test_the_callback_reports_a_refusal_rather_than_a_blank_page(tmp_path, path):
+    """Both send `error` instead of `code` when the user declines or the app
+    asks for a scope it does not hold. Rendering nothing would look like the
+    code failed to arrive, which points at the wrong half."""
     body = (
-        await fetch(
-            settings(tmp_path),
-            "/tiktok/callback?error=access_denied&error_description=nope",
-        )
+        await fetch(settings(tmp_path), f"{path}?error=access_denied&error_description=nope")
     ).text
 
     assert "access_denied" in body
     assert "nope" in body
 
 
-async def test_the_callback_is_inert_when_nobody_is_authorising(tmp_path):
+@pytest.mark.parametrize("path", CALLBACKS)
+async def test_the_callback_is_inert_when_nobody_is_authorising(tmp_path, path):
     """A stranger reaching it should find a page saying so, not a half
     rendered form suggesting there is something to fill in."""
-    response = await fetch(settings(tmp_path), "/tiktok/callback")
+    response = await fetch(settings(tmp_path), path)
 
     assert response.status_code == 200
     assert "Nothing to do here" in response.text
 
 
-async def test_the_callback_never_calls_tiktok(tmp_path):
+@pytest.mark.parametrize("path", CALLBACKS)
+async def test_the_callback_says_which_platform_sent_the_browser(tmp_path, path):
+    """One template serving two providers, so the wording is the only thing
+    that can silently go wrong. An operator who reaches a page naming the other
+    platform is looking at a misrouted consent trip."""
+    body = (await fetch(settings(tmp_path), f"{path}?code=abc123")).text
+
+    assert path.split("/")[1] in body.lower()
+
+
+@pytest.mark.parametrize("path", CALLBACKS)
+async def test_the_callback_never_calls_the_platform(tmp_path, path):
     """The one behaviour worth pinning. Exchanging the code here would need the
     client secret, which this service is not told until the account is
     registered at the end of the same trip. The page is a display and nothing
@@ -173,6 +187,6 @@ async def test_the_callback_never_calls_tiktok(tmp_path):
                 transport=httpx.ASGITransport(app=app), base_url=BASE
             ) as http,
         ):
-            await http.get("/tiktok/callback?code=abc123&state=xyz789")
+            await http.get(f"{path}?code=abc123&state=xyz789")
 
     assert meta.calls == []

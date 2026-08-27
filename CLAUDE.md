@@ -1,7 +1,7 @@
 # reelsmith
 
 Automated short videos about trending dev and AI tooling, published to
-Instagram, YouTube and TikTok. Python orchestration, Remotion rendering, plus a
+Instagram, YouTube, TikTok and Facebook. Python orchestration, Remotion rendering, plus a
 self-hosted gateway holding the queue that publishes them. See `README.md` for
 architecture and `gateway/README.md` for the service.
 
@@ -189,19 +189,42 @@ be a local path. Without it the thumbnail comes from `thumb_offset` at
 `COVER_FRAME`, which is the same moment `cover.png` renders, so the fallback
 loses the hook band and nothing else.
 
-### Three destinations, and what is shared between them
+### Four destinations, and what is shared between them
 
-**All three publish**, since 2026-08-27. One render fans out to three queue
-rows, one slot each at 08:10 Europe/Oslo, one post a day per platform.
-`docs/tiktok-api-setup.md` opens with the ordered runbook; the reasoning behind
-it is in that doc's later sections, `docs/multi-destination-audit.md` and
-`docs/tiktok-publishing-plan.md`, both of which are records of a decision rather
-than guides.
+**Instagram, YouTube and TikTok publish**, since 2026-08-27. One render fans out
+to a queue row each, one slot each at 08:10 Europe/Oslo, one post a day per
+platform. `docs/tiktok-api-setup.md` opens with the ordered runbook; the
+reasoning behind it is in that doc's later sections,
+`docs/multi-destination-audit.md` and `docs/tiktok-publishing-plan.md`, both of
+which are records of a decision rather than guides.
 
-The order in that runbook is forced rather than preferred. The consent trip is
-what produces the open id, and the open id is what the `GATEWAY_SLOTS` line and
-the render host's `TIKTOK_OPEN_ID` are both keyed on, so neither can be written
-ahead of it. Re-authorising an account means walking it again.
+**Facebook is the fourth. The code is built and the consent trip is walked;
+what is left is a deploy.** `gateway/facebook.py`, the scheduler branch, the
+insights sweep, the panel board and the fan-out all exist and are tested. The
+Page exists, the consent is granted and the Page access token was proved
+against the Graph API on 2026-08-27. It is not registered with the gateway yet,
+because `/api/accounts/facebook` ships with this change and the running image
+predates it, so the order is **deploy, then run
+`scripts/facebook_authorise.py`**, and the already-granted consent makes that a
+click-through.
+
+Three things that trip cost, all in `docs/facebook-api-setup.md`:
+
+- **A Page has two ids and the obvious one is wrong.** The Page's own URL is
+  `profile.php?id=61593782854313` and Business Suite shows a third number;
+  `/{page-id}/video_reels` wants `1236596692875712`, which is what
+  `GET /me/accounts` returns. Never read a Page id off a URL.
+- **The OAuth dialog bounces to `/forced_account_switch`** if the browser is
+  acting as the Page. Consent is granted by the person, not the Page.
+- **The callback 404s until the gateway is deployed** and the trip works
+  anyway, because the code is in the address bar and the page is only a
+  display.
+
+The order in both runbooks is forced rather than preferred. The consent trip is
+what produces the account key, and that key is what the `GATEWAY_SLOTS` line and
+the render host's `TIKTOK_OPEN_ID` or `FACEBOOK_PAGE_ID` are keyed on, so
+neither can be written ahead of it. Re-authorising an account means walking it
+again.
 
 **TikTok runs on the app's sandbox credentials, and that is permanent rather
 than a stage.** The production configuration cannot be saved at all: its Save
@@ -232,11 +255,27 @@ attempted*:
   ticked, so it is required and invisible at the same time.
 
 - **A destination is an `accounts` row, not a table.** `accounts.platform` says
-  which service and `account_id` is an opaque account key holding a Meta user id
-  on one platform and a channel id on another. Credentials live in a table per
-  platform, because Meta's shape is a token plus an expiry and Google's is a
-  client pair plus a refresh token, and one table holding both is half null on
-  every row.
+  which service and `account_id` is an opaque account key holding an Instagram
+  user id on one platform, a channel id on another and a Page id on a third.
+  Credentials live in a table per platform *where the shape differs*: Google's
+  is a client pair plus a refresh token and TikTok's rotates, and one table
+  holding those alongside Meta's would be mostly null on every row.
+- **Facebook needed no credentials table, and that is the whole reason it was
+  the cheapest of the four.** A Page access token is a token plus an expiry,
+  which is the shape `accounts` has held since the first migration, so a Page is
+  one write and there is no `facebook_credentials` anywhere. There is also no
+  refresher: a long-lived Page token has no clock. **The step that makes that
+  true is easy to skip.** A Page token minted from a *short-lived* user token
+  expires with it about an hour later, and the failure afterwards says the token
+  is invalid rather than saying it was born wrong, which is why
+  `scripts/facebook_authorise.py` does four steps rather than two.
+- **Two Meta surfaces, two rows, two login paths.** A Page and the Instagram
+  account beside it are different ids holding tokens minted through different
+  logins, and neither token can see the other's account. `gateway/publisher.py`
+  talks to `graph.instagram.com` through `cfg.graph_host`;
+  `gateway/facebook.py` names `graph.facebook.com` as its own constant, the way
+  `youtube.py` and `tiktok.py` do, because one shared host setting serving two
+  login paths is a setting that is wrong for one of them.
 - **It was called `ig_user_id` until 2026-08-26, and three places kept the old
   name on purpose.** `gateway/graph.py` and `gateway/publisher.py` still take an
   `ig_user_id`, because at that point the value is being handed to Meta as an
@@ -259,16 +298,19 @@ attempted*:
   precisely so a missed call site is inert. It matches on the platform now and
   fails the row rather than the tick, so one misconfigured account cannot stop
   the other two publishing. F1.
-- **All three are measured and only one is learned from.** `skip_rate` is the
+- **All four are measured and only one is learned from.** `skip_rate` is the
   share who scrolled past inside three seconds and it is the one number the
-  loop turns on. YouTube's `averageViewPercentage` scores a whole video and
-  TikTok exposes no retention metric at all. So `insights` carries a `platform`
-  column, all three platforms' counts are stored and shown on the Posts page,
-  and `/api/results` and the Insights page both filter to Instagram
+  loop turns on. YouTube's `averageViewPercentage` scores a whole video,
+  Facebook's `post_video_avg_time_watched` scores a whole Reel including
+  replays, and TikTok exposes no retention metric at all. So `insights` carries
+  a `platform` column, every platform's counts are stored and shown on the Posts
+  page, and `/api/results` and the Insights page both filter to Instagram
   **explicitly** rather than relying on nothing else filling the `skip_rate`
   column, which is a rule that holds by accident. Feeding anything else to
   `_results_block` would corrupt the single measurement everything else is
-  argued from.
+  argued from. **Facebook is the one to guard against here**, because it reports
+  reach and watch time and therefore produces a board that looks like
+  Instagram's.
 - **YouTube's numbers arrive in one Analytics call per sweep, since
   2026-08-27.** `insights.refresh_youtube_account` mints a token and asks the
   Analytics API for a report dimensioned by video and filtered to the ids the
@@ -319,6 +361,20 @@ attempted*:
   YouTube path runs unless a slot fires, and a slot only fires when the
   scheduler is on. A flag earns its place when something runs without it, which
   is what the TikTok refresher does.
+- **There is no `GATEWAY_FACEBOOK_ENABLED` either, and for the YouTube reason
+  rather than the TikTok one.** Publishing there runs only when a slot fires,
+  and a Page token does not rotate, so there is no refresher to gate.
+  `GATEWAY_FACEBOOK_INSIGHTS_ENABLED` exists because the sweep is the one
+  Facebook thing that runs without a slot, which is exactly the test that earned
+  TikTok its flag and YouTube its narrower one. On by default, because it only
+  reads and a deployment with no Page calls Meta nothing.
+- **On a Facebook row `shares` is an absence and `reach` is a real number.** Meta
+  reports comments and shares fused together in `post_video_social_actions`, so
+  splitting that by subtracting a separately fetched comment count would be
+  arithmetic on two different definitions; `shares` stays 0 and the platform
+  column says so. `reach` is genuine, which makes this the only board besides
+  Instagram's to carry it, and the reason the Posts page spends a sentence
+  saying that its watch time is not Instagram's watch time.
 - **`is_aigc` and `containsSyntheticMedia` are the same question and they move
   together.** Both are `false`, and since 2026-08-26 for a reason rather than
   because a value had to be sent: the fields ask whether the content depicts
@@ -329,10 +385,10 @@ attempted*:
   without the other is the bug to look for; the reasoning is in
   `gateway/config.py` next to the flag.
 
-### One identity, three destinations, and a panel built for many
+### One identity, four destinations, and a panel built for many
 
-`accounts` holds one row per platform, so an identity posting to all three is
-three rows, and until 2026-08-27 nothing recorded that they were the same
+`accounts` holds one row per platform, so an identity posting to all of them is
+four rows, and until 2026-08-27 nothing recorded that they were the same
 identity. That was invisible at one and unusable at two: the switcher offered
 `thenightlybuild` three times, told apart by a twelve pixel icon, and a second
 identity would have made it six chips reading nearly the same word.
@@ -345,7 +401,9 @@ identity would have made it six chips reading nearly the same word.
   leading @ and lowercases, because Instagram stores the handle bare and the
   other two store it with an @, so grouping on the raw string made one identity
   into two. Registration takes an explicit `brand`, which is what a second
-  identity needs the day it cannot get the same name on all three platforms.
+  identity needs the day it cannot get the same name on every platform. A
+  Facebook Page is usually that day, since its name is prose rather than a
+  handle.
 - **A re-authorisation never regroups a row.** `upsert_account` compares the
   *argument* rather than the value being inserted, because those differ exactly
   when nobody said, and reading `excluded.brand` put a corrected brand back
@@ -365,29 +423,47 @@ identity would have made it six chips reading nearly the same word.
 
 **What each board shows is the platform's own answer, never a zero standing in
 for an absence.** Instagram gets skip and watch time, YouTube gets watch time
-and average viewed, TikTok gets four counts and a line saying that is
-everything it reports. The DM funnel is on the Instagram board alone, because
-the keyword mechanic is comments and private replies: a YouTube card carrying
-"0 asked, 0 links sent, keyword send" reported a mechanic that never existed
-there as one that converted nobody. Insights says in a sentence why it cannot
-compare a YouTube or TikTok board, where it used to render a heading and empty
-space, which reads as a broken page rather than as a question the data cannot
-answer.
+and average viewed, TikTok gets four counts and a line saying that is everything
+it reports, Facebook gets reach and watch time and a line saying its watch time
+is not Instagram's and its shares are missing rather than zero. The DM funnel is
+on the Instagram board alone, because the keyword mechanic is comments and
+private replies: a YouTube card carrying "0 asked, 0 links sent, keyword send"
+reported a mechanic that never existed there as one that converted nobody.
+Insights says in a sentence why it cannot compare a board it has no skip rate
+for, where it used to render a heading and empty space, which reads as a broken
+page rather than as a question the data cannot answer.
+
+**The platform's name is in one place now.** It was
+`{'youtube': 'YouTube', 'tiktok': 'TikTok'}.get(p, 'Instagram')` in two
+templates, which is two copies of a list that grows with every destination and
+no way to notice when only one of them did. `platform_name` in `_icons.html` is
+the macro, and the fallback is still Instagram for the reason the account
+readers default to it.
 
 ### The public pages, and why they are not on GitHub
 
-`GET /`, `/privacy`, `/terms` and `/tiktok/callback` are served by
-`gateway/pages.py`. Every platform demands a privacy policy URL before it will
-take an application, and TikTok additionally demands terms of service and an
-official website. They were `docs/privacy.md` and `docs/terms.md` until
-2026-08-27.
+`GET /`, `/privacy`, `/terms`, `/tiktok/callback` and `/facebook/callback` are
+served by `gateway/pages.py`. Every platform demands a privacy policy URL before
+it will take an application, and TikTok additionally demands terms of service
+and an official website. They were `docs/privacy.md` and `docs/terms.md` until
+2026-08-27. **The three legal pages name every surface the account posts to**,
+so adding a destination means editing them, and the Facebook Page link sits in
+all three.
 
-The callback is on the same router for the same reason and is not a legal page:
-**TikTok will not register an OAuth redirect URI that is not https**, so the
-consent trip cannot land on a loopback listener. The page prints the
-authorisation code and does nothing else. It deliberately does not exchange it,
-because the exchange needs the client secret and this service is not told that
-until the account is registered at the end of the same trip.
+The two callbacks are on the same router for the same reason and are not legal
+pages: **TikTok will not register an OAuth redirect URI that is not https**, so
+that consent trip cannot land on a loopback listener. Facebook does allow a
+localhost redirect while an app is in development, and the Page trip lands here
+anyway, because the app that publishes these Reels is live and the page already
+existed. Each prints the authorisation code and does nothing else. Neither
+exchanges it, because the exchange needs the client secret and this service is
+not told that until the account is registered at the end of the same trip.
+
+**One template, two routes.** The wording is all that differs, so it is a
+parameter rather than a second page drifting from the first. Two routes rather
+than one shared `/oauth/callback`, because each platform holds its own URL in
+its own developer portal and a URL a platform has on file is not something to
+consolidate later.
 
 - **TikTok will not accept a URL on a domain it cannot verify by DNS record**,
   and `github.com` can never be one. The field simply reads "This URL is not
@@ -400,7 +476,7 @@ until the account is registered at the end of the same trip.
 - **The router mounts unconditionally, unlike the admin panel.** The obvious
   home was `admin.public`, which already serves the one page that cannot require
   a login, but that router is only included when `GATEWAY_ADMIN_ENABLED` is on.
-  Three platforms hold these URLs on file, and a legal page that 404s because a
+  Four platforms hold these URLs on file, and a legal page that 404s because a
   feature flag moved is worse than one nobody reads. `test_gateway_pages.py`
   pins it with the panel off.
 - **The templates are the only copy.** The Dockerfile copies `gateway/` alone,
@@ -544,20 +620,26 @@ section is.
   from three posts a day to one and ten stopped meaning three days. The numbers
   are a function of the cadence and have to move with it, which is the thing to
   remember rather than either pair of numbers.
-- **One render feeds all three destinations.** `--enqueue` and `--recover` make
-  an Instagram row, a YouTube row and a TikTok row from the same MP4, uploaded
-  once, so the nightly needs no second render and no extra step to keep three
-  surfaces fed. It is driven by `YOUTUBE_CHANNEL_ID` and `TIKTOK_OPEN_ID` in
-  the render host's `.env`, and without either the fan-out skips that
-  destination silently and queues the rest. The id is all that host needs: the
-  gateway holds the credentials, so no Google or TikTok secret reaches the
-  machine that renders.
+- **One render feeds every destination.** `--enqueue` and `--recover` make an
+  Instagram row, a YouTube row, a TikTok row and a Facebook row from the same
+  MP4, uploaded once, so the nightly needs no second render and no extra step to
+  keep four surfaces fed. It is driven by `YOUTUBE_CHANNEL_ID`,
+  `TIKTOK_OPEN_ID` and `FACEBOOK_PAGE_ID` in the render host's `.env`, and
+  without one of them the fan-out skips that destination silently and queues the
+  rest. The id is all that host needs: the gateway holds the credentials, so no
+  Google, TikTok or Page secret reaches the machine that renders. All three ids
+  are in `ENV_PROJECTED_KEYS` in `scripts/sync-private.sh`, and a new one that
+  is not reads as a destination the render host quietly skips.
 - **Which render goes where is a decision, not a detail.** YouTube gets
   `out-no-cta.mp4`, because a follow ask on a surface that calls following
   subscribing reads wrong. TikTok gets `out.mp4`, because it is a feed like
-  Instagram's and the word is the same word. The caption follows the same
-  split: `youtube_description` takes the ask out and `tiktok_title` keeps it.
-  Say so in the code rather than letting it be whichever variable was nearest.
+  Instagram's and the word is the same word. Facebook gets `out.mp4` **and the
+  Instagram caption unchanged**, because a Page has followers and the copy is
+  already written for a Meta feed. The caption follows the same split:
+  `youtube_description` takes the ask out, `tiktok_title` keeps it, and there is
+  deliberately no `facebook_description`, because a function that returns its
+  argument is a place for the two to drift apart later for no reason. Say so in
+  the code rather than letting it be whichever variable was nearest.
 - **The cut for YouTube is a second render, so it has to restage its own
   assets.** `video/public/` is staging, and a run prunes every other slug on
   its way in, so a spec's screenshot and voiceover survive exactly until the
@@ -653,7 +735,7 @@ Two things about the queue are load bearing and easy to undo by accident:
   evening's slot fire twice. This is also why the config sync keeps the id of
   an unchanged slot rather than recreating the row.
 - **Keep gateway deploys out of the slot window.** Since 2026-08-27 that is one
-  window rather than four: all three platforms fire at 08:10 Europe/Oslo, so
+  window rather than four: every platform fires at 08:10 Europe/Oslo, so
   06:10 UTC plus up to twenty minutes of jitter either side. A rollout landing
   inside it restarts the pod mid publish, and the claim the row is holding is
   deliberately never swept back automatically, because Meta may already have
