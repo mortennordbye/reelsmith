@@ -423,6 +423,15 @@ section is.
   Instagram follow ask while the third, still staged because it rendered last,
   got the cut. Anything else that re-renders a finished `video.json` needs the
   same call.
+- **The queue rows made before that fix were left as they were, deliberately.**
+  Eighteen of the twenty six pending YouTube rows point at the Instagram file
+  and eight had already published that way. Recutting them is cheap and the run
+  folders are all still on the render host; repointing them is not, because
+  nothing in the API changes a row's video and the only lever is a hand written
+  `UPDATE` of `video_name` against the live database. Decided 2026-08-27 that a
+  month of Shorts saying follow rather than subscribe is worth less than that
+  write. So a Short from before 2026-08-27 carrying the ask is expected, not a
+  sign the fix regressed.
 - **`--max-queue` counts the Instagram queue only.** YouTube drains one a day
   against Instagram's three, so its queue grows by design, and a third queue
   draining at its own rate does not change that reasoning. Counted in the
