@@ -28,23 +28,27 @@ YouTube side taught:
 
 ## What actually happened when this was attempted
 
-Tried on 2026-08-27, in a driven browser, signed in as the developer account.
-**It did not get past step 3**, and the reasons are not the ones the rest of
-this document predicts. Read this before spending an afternoon on the runbook
-below.
+Two sessions on 2026-08-27, both in a driven browser signed in as the developer
+account. The first stopped at step 3 believing nothing could be saved. The
+second got the sandbox configured and saved. Read both halves, because the
+first one's conclusion was wrong in a way that is easy to repeat.
 
-**What worked and is permanent:**
+**What is done and permanent:**
 
 - The TikTok account `@thenightlybuild` exists, created by hand.
 - The developer account and the app exist. App id `7678556799749900295`, type
-  Other, ownership Individual. A client key and secret are generated.
-- A sandbox exists, `nightlybuild-inbox`, id `7678567978794829831`.
+  Other, ownership Individual.
+- A sandbox exists, `nightlybuild-inbox`, id `7678567978794829831`, and its
+  **configuration is saved**: icon, category, description, terms, privacy and
+  website URLs, the Login Kit and Content Posting API products, the three
+  scopes, and the redirect URI. Verified by reloading the page rather than by
+  the absence of an error.
 - **`gate.nordbye.it` is a verified URL property.** This is the expensive step
   and it survives everything else. Domain verification, one DNS TXT record,
   `tiktok-developers-site-verification=...`, held in the homelab repo at
   `terraform/cloudflare/nordbye-it/dns.tf`. A verified domain carries its
   subdomains and every URL beneath it, so this one record covers the media
-  TikTok pulls **and** the privacy, terms and website URLs.
+  TikTok pulls **and** the privacy, terms, website and OAuth callback URLs.
 
 **What blocked it, in the order the walls appeared:**
 
@@ -54,53 +58,62 @@ below.
    them blocked the portal loads, logs in and reads fine, and every write
    silently does nothing: the console shows `a.init is not a function` and the
    click handler dies before it sends anything. Three `@@||domain^` exception
-   rules fix it. Anyone doing this from a network with DNS filtering will hit
-   this first and it looks nothing like its cause.
+   rules fix it and they stay. Anyone doing this from a network with DNS
+   filtering will hit this first and it looks nothing like its cause.
 2. **The URL fields will not take a GitHub URL.** "This URL is not verified",
    because TikTok requires privacy, terms and website URLs to sit on a domain
    proved by DNS record, and nobody can put a record on `github.com`. This is
    what moved those documents onto the gateway.
-3. **Nothing saves.** This is where it stopped. In the production
-   configuration, Save reports `This form has N errors` and the last two are
-   the App review section: a usage description, which can be written, and
-   **"Upload at least one demo video that shows the complete end-to-end flow"**,
-   which cannot. In the sandbox configuration the same form validates clean,
-   reports no errors at all, and **still does not save**: `Apply changes`
-   dispatches no network request whatsoever. Every `devportal` call on the page
-   is a GET. There is no failing POST to read an error from.
+3. **The products have to be added before the scopes exist.** With no products
+   on the app, the Add scopes dialog offers only `user.info.profile`,
+   `user.info.stats` and `video.list`, which reads as "this app may never have
+   `video.upload`" and is not what it means. Add Login Kit, then Content
+   Posting API, which requires it; `user.info.basic` and `video.upload` arrive
+   attached to their products and cannot be added on their own.
+4. **The redirect URI has to be https, and loopback is not an exception.** The
+   field rejects `http://127.0.0.1:8723/callback` with "Enter a valid URL
+   beginning with https://" and rejects `https://127.0.0.1:8723/callback` too.
+   `scripts/tiktok_authorise.py` ran a loopback listener until this was found.
+   It now sends the browser to `https://gate.nordbye.it/tiktok/callback`, a
+   page the gateway serves that prints the authorisation code, and the operator
+   pastes the address back into the waiting script.
 
-**So the claim at the top of this document, that the inbox path "needs no
-audit", is true of the API and false of the portal.** The redirect URI lives
-under Login Kit, inside the configuration that will not save, so
-`scripts/tiktok_authorise.py` has nowhere to send its callback and step 4 of
-the runbook cannot be reached from step 3.
+**The wall that was not one.** The first session recorded that the sandbox
+form "validates clean, reports no errors, and dispatches no network request at
+all". Two of those three were wrong. `Apply changes` runs a client side
+validation and sends nothing when it fails, which does look exactly like a dead
+button; and the page **was** reporting `This form has 1 error`, in a banner
+that is easy to miss and against a field that was empty because an earlier fill
+had gone into the wrong input. The field was **Web/Desktop URL**, which only
+appears once the Web platform checkbox is ticked, so it is both required and
+invisible until something else is done. Filled in, `Apply changes` sent
+`POST /devportal/sandbox/publish` and returned 200.
 
-**A demo video is not the shortcut it looks like.** It would not have helped
-here, since the sandbox never asked for one and still did not save. And were it
-the blocker, the video TikTok specifies is a recording of "the website or app
-where the features will actually be integrated" showing "the user interface and
-user interactions" for every product and scope. This project has no such
-interface: the consent is a CLI script and the posting is a background
-scheduler. The screen an audit reviews is the one in the content sharing
-guidelines, with a privacy dropdown carrying no default, duet, stitch and
-comment toggles driven by a live `creator_info` call, and a commercial
-disclosure toggle. Building that is the project, and `## The audit, read
-honestly` below still expects it to be refused afterwards.
+**So the lesson is about reading the portal, not about the portal being
+broken.** When a save appears to do nothing, look for the error banner and for
+a required field that appeared late, before concluding the page is dead.
 
-**One thing was learned that is worth acting on regardless.** `video.publish`
-is not offered as a scope an unaudited app may add. The Add scopes dialog lists
-only `user.info.profile`, `user.info.stats` and `video.list`, in both
-configurations; `user.info.basic` arrives with Login Kit and `video.upload`
-with the Content Posting API. `scripts/tiktok_authorise.py` used to request
-`video.publish` and no longer does, because requesting a scope the app does not
-hold fails the authorisation rather than being dropped from it.
+**Production still cannot be saved, and this part of the first session's
+account holds.** Save in the production configuration reports two errors and
+both are in the App review block: a usage description, which can be written,
+and "Upload at least one demo video that shows the complete end-to-end flow",
+which cannot. There is no save-as-draft that skips them. What TikTok specifies
+is a recording of "the website or app where the features will actually be
+integrated" showing "the user interface and user interactions" for every
+product and scope, and this project has no such interface: the consent is a CLI
+script and the posting is a background scheduler. Building the screen described
+in the content sharing guidelines is the project, and `## The audit, read
+honestly` below still expects a refusal afterwards.
 
-**Where to pick it up.** Either work the portal by hand in an ordinary browser,
-in case any of this is particular to automation, or accept that TikTok needs a
-posting interface first and treat it as a project rather than a configuration
-step. Nothing in the gateway is waiting on either: the publisher, the token
-refresher and the insights sweep all ship, and a queued TikTok row cannot be
-created at all until `TIKTOK_OPEN_ID` is set on the render host.
+**Which means the sandbox is the path, and it is the one that was built for.**
+The inbox upload needs no audit, and a sandbox exercises it against target
+users added by hand. What a sandbox cannot do is post publicly through Direct
+Post, which this deployment does not use.
+
+**`video.publish` is still not held.** It arrives with the Direct Post switch
+inside the Content Posting API product, which is deliberately off, so
+`scripts/tiktok_authorise.py` does not request it. Requesting a scope the app
+does not hold fails the whole authorisation rather than being dropped from it.
 
 ## Activation, in order, with this deployment's values
 
@@ -110,9 +123,9 @@ row, `tiktok_credentials` had no rows, the render host had no `TIKTOK_OPEN_ID`,
 and `GATEWAY_SLOTS` had no TikTok line. Everything below is portal work and one
 config change; no code is waiting on any of it.
 
-**The order is forced, and not by preference.** Step 4 produces the open id,
-and the open id is what steps 5 and 6 are keyed on, so nothing after step 4 can
-be done ahead of it. Doing 6 before 5 is the safe way round: a queued TikTok row
+**The order is forced, and not by preference.** Step 5 produces the open id,
+and the open id is what steps 6 and 7 are keyed on, so nothing after step 5 can
+be done ahead of it. Doing 7 before 6 is the safe way round: a queued TikTok row
 with no slot waits harmlessly, and a slot firing with `GATEWAY_TIKTOK_ENABLED`
 off fails that row rather than retrying it, because a flag that is off is not a
 transient condition.
@@ -123,21 +136,40 @@ transient condition.
    options the account has and the API works from those.
 
 2. **A developer account** at <https://developers.tiktok.com> against that
-   login, developer terms accepted, then an app from Manage apps. Add the
-   **Content Posting API** product. Leave Direct Post configuration alone: the
-   shipped default is the inbox path, which needs no audit.
+   login, developer terms accepted, then an app from Manage apps, then a
+   **sandbox** on it. Everything below is done in the sandbox configuration,
+   not the production one, because production will not save without a demo
+   video of a user interface this project does not have.
 
-   Scopes, exactly these four and no more, because asking for scopes the app
-   does not use is a named rejection reason at audit time:
-   `user.info.basic`, `video.publish`, `video.upload`, `video.list`.
-   All four in one trip; adding one later means going back through consent.
+   In the sandbox, in this order, because the order is load bearing:
 
-3. **Two things in the portal that are easy to miss, and both fail late.**
+   - **Add Login Kit, then Content Posting API**, which requires it. Leave the
+     Direct Post switch off: the shipped default is the inbox path, which needs
+     no audit.
+   - **Then add `video.list`.** The other two scopes, `user.info.basic` and
+     `video.upload`, arrive attached to their products and cannot be added on
+     their own. Before the products are on, the Add scopes dialog offers
+     neither, which reads as a refusal and is not one.
+   - Three scopes and no more, because asking for scopes the app does not use
+     is a named rejection reason at audit time. All three in one consent trip;
+     adding one later means going back through it.
 
-   - **Redirect URI**, character for character, port included:
-     `http://127.0.0.1:8723/callback`. `scripts/tiktok_authorise.py` fixes the
-     port for this reason. A mismatch is rejected with an error naming neither
-     side.
+3. **Four things in the portal that are easy to miss, and all of them fail
+   late.**
+
+   - **Redirect URI**, character for character:
+     `https://gate.nordbye.it/tiktok/callback`. **It must be https**, and
+     loopback is not an exception, which is why the authorise script no longer
+     runs a listener. `gateway/pages.py` serves that page and
+     `k8s/talos/apps/reelsmith/httproute.yaml` has to allow the path, since
+     that file is an allowlist.
+   - **Tick the Web platform checkbox before hunting for the website field.**
+     `Web/Desktop URL` is required and does not exist until Web is ticked, so
+     a form that will not save may be complaining about a field that is not on
+     the page yet.
+   - **Read the error banner when a save does nothing.** `Apply changes`
+     validates in the browser and sends no request when it fails. A dead button
+     and a failed validation look identical from the network tab.
    - **A verified URL property for `https://gate.nordbye.it`**, in the URL
      properties widget, plus the DNS record it hands you. The publisher uses
      `PULL_FROM_URL`, so without this every post fails at init with
@@ -146,7 +178,14 @@ transient condition.
      `GET /media/{name}` off `GATEWAY_PUBLIC_BASE_URL`, verified reachable with
      range support on 2026-08-27, so this is one DNS record and no new hosting.
 
-4. **The consent trip**, from this laptop, once:
+4. **Connect the account to the sandbox as a target user**, from Sandbox
+   settings, Add account. It redirects to a TikTok login, so it needs the
+   content account signed in **in that browser**, and it is a step a person
+   does rather than a script. A sandbox reaches only its target users, so
+   without this the consent trip in the next step has nothing to consent to.
+
+5. **The consent trip**, from this laptop, once, with the **sandbox** client
+   key and secret rather than the production pair:
 
    ```bash
    TIKTOK_CLIENT_KEY=... TIKTOK_CLIENT_SECRET=... \
@@ -154,17 +193,23 @@ transient condition.
    ```
 
    The keys are read from the environment and never from argv, which is visible
-   in `ps` and lands in shell history. It reads `GATEWAY_URL` and
-   `GATEWAY_TOKEN` from `.env` the way `youtube_authorise.py` does, exchanges
-   the code and registers the account and its credentials with the gateway in
-   one call, then prints the open id and the two lines it is needed in.
+   in `ps` and lands in shell history. It opens the consent screen, TikTok
+   redirects to `https://gate.nordbye.it/tiktok/callback`, that page prints the
+   code, and the script waits for the whole address to be pasted back. It reads
+   `GATEWAY_URL` and `GATEWAY_TOKEN` from `.env` the way `youtube_authorise.py`
+   does, exchanges the code and registers the account and its credentials with
+   the gateway in one call, then prints the open id and the two lines it is
+   needed in.
+
+   **Paste the address, not the code.** The state is checked against the one
+   the script generated, and a bare code carries no state to check.
 
    It prints the open id **before** it registers, so a gateway that refuses is
    not also a lost open id. The refresh token is a different matter: it never
    reaches a file or a terminal unless `--print-token` asks, and the documented
    recovery for a broken chain is another trip through this script.
 
-5. **A homelab PR**, `k8s/talos/apps/reelsmith/configmap.yaml`, both halves in
+6. **A homelab PR**, `k8s/talos/apps/reelsmith/configmap.yaml`, both halves in
    the same change:
 
    ```yaml
@@ -185,7 +230,7 @@ transient condition.
    outside the existing windows (06:10, 10:40, 17:20 and 19:05 UTC, each plus
    its jitter) and keep gateway deploys out of all of them.
 
-6. **`TIKTOK_OPEN_ID` on the render host**, in
+7. **`TIKTOK_OPEN_ID` on the render host**, in
    `accounts/nightlybuild/.env` on the share, next to `YOUTUBE_CHANNEL_ID`.
    That file, not the root `.env`: the open id is a property of one account.
    The open id is all that host needs, because the gateway holds the

@@ -1,0 +1,35 @@
+{% extends "public_base.html" %}
+{% block title %}TikTok authorisation{% endblock %}
+{% block content %}
+<h1>TikTok authorisation</h1>
+
+{% if error %}
+<p class="dateline">TikTok refused the authorisation.</p>
+<p><strong>{{ error }}</strong></p>
+{% if error_description %}<p>{{ error_description }}</p>{% endif %}
+<p>Nothing was exchanged. Run <code>scripts/tiktok_authorise.py</code> again.</p>
+
+{% elif code %}
+<p class="dateline">Copy the whole address bar back into the terminal that is
+waiting for it.</p>
+
+<p>The script asked for this authorisation and is holding for the value below.
+It is single use and it expires in a few minutes, so paste it now rather than
+later.</p>
+
+<div class="scroll"><table>
+  <tr><th>code</th><td><code>{{ code }}</code></td></tr>
+  <tr><th>state</th><td><code>{{ state }}</code></td></tr>
+</table></div>
+
+<p>The state is checked against the one the script generated. A mismatch stops
+the exchange, which is the point of it.</p>
+
+{% else %}
+<p class="dateline">Nothing to do here.</p>
+<p>This address is where TikTok sends a browser after somebody authorises this
+service to post on their own account. Reaching it directly means there is no
+authorisation in progress, and there is nothing to see.</p>
+<p><a href="/">What this account is</a></p>
+{% endif %}
+{% endblock %}

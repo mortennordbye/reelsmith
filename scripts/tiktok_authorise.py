@@ -3,10 +3,7 @@
 
 The same job `scripts/youtube_authorise.py` does, and a different flow, because
 TikTok's OAuth is a plain authorisation code exchange with CSRF state and no
-PKCE library worth pulling in for it. So this hand-rolls the loopback listener
-that the Google script deliberately does not, and for the opposite reason:
-there is no `google-auth-oauthlib` equivalent here, and the whole flow is one
-redirect and one POST.
+PKCE library worth pulling in for it.
 
 Run it once per account:
 
@@ -17,23 +14,31 @@ never from argv, which is visible in `ps` and lands in shell history. The result
 is posted straight to the gateway so the refresh token never reaches a file or
 a terminal scrollback on the way.
 
+**There is no loopback listener, and that is not a simplification.** This ran
+one until 2026-08-27, on a fixed port so the redirect URI could match character
+for character. TikTok will not register the URI at all: the developer portal
+rejects anything that does not begin with `https://`, `http://127.0.0.1:8723/`
+and `https://127.0.0.1:8723/` alike. So the redirect goes to a page the gateway
+already serves on a domain TikTok has verified, that page prints the code, and
+the operator pastes it back here. One paste, once per account.
+
+**The exchange stays on this machine.** The gateway could have done it and
+saved the paste, but it is never told the client secret until the last step of
+this same trip, and handing it over early would put a secret in a second place
+for the sake of a one-off.
+
 **The refresh token this returns is not the one that will be in use tomorrow.**
 TikTok rotates it on every refresh and the gateway's refresher loop rewrites it
 daily. So this value is a seed, and re-running this script is how an account is
 recovered when that chain is ever broken.
-
-The redirect URI has to match what the app declares in the TikTok developer
-portal exactly, including the port, so it is a fixed port rather than port 0.
 """
 
 from __future__ import annotations
 
 import argparse
-import http.server
 import os
 import secrets
 import sys
-import threading
 import urllib.parse
 import webbrowser
 from pathlib import Path
@@ -48,10 +53,17 @@ from config import Settings  # noqa: E402  - after the sys.path insert above
 AUTH_URL = "https://www.tiktok.com/v2/auth/authorize/"
 TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
 
-# Fixed, because it has to match the app's declared redirect URI character for
-# character. TikTok rejects a mismatch with an error that names neither side.
-REDIRECT_PORT = 8723
-REDIRECT_URI = f"http://127.0.0.1:{REDIRECT_PORT}/callback"
+# It has to match the app's declared redirect URI character for character.
+# TikTok rejects a mismatch with an error that names neither side.
+#
+# A page on the gateway rather than a loopback port, because the developer
+# portal refuses to save a redirect URI that does not begin with `https://`,
+# and a loopback address cannot have a certificate anybody trusts. The gateway
+# already serves this host's privacy policy and terms off the same DNS
+# verified domain, so the page costs one route and no new hosting.
+REDIRECT_URI = os.environ.get(
+    "TIKTOK_REDIRECT_URI", "https://gate.nordbye.it/tiktok/callback"
+)
 
 # Asked for together, in one authorisation, because adding a scope later means
 # going back through the browser and re-consenting.
@@ -61,42 +73,26 @@ REDIRECT_URI = f"http://127.0.0.1:{REDIRECT_PORT}/callback"
 # nothing comes back at all. `user.info.basic` is what makes the open id
 # readable here rather than pasted, and comes with Login Kit.
 #
-# **`video.publish` is deliberately absent.** It is Direct Post, and the
-# developer portal does not offer it as a scope an unaudited app can add: the
-# Add scopes dialog on this app listed only `user.info.profile`,
-# `user.info.stats` and `video.list` on 2026-08-27, in both the production and
-# the sandbox configuration. Requesting a scope the app does not hold fails the
-# authorisation rather than being quietly dropped, so asking for it here would
-# break the consent trip for the path that does work. Add it back in the same
-# breath as the audit that grants it, not before.
+# **`video.publish` is deliberately absent.** It is Direct Post, and the app
+# does not hold it: the two scopes above arrive with their products, and
+# `video.publish` arrives only with the Direct Post switch inside the Content
+# Posting API product, which is off here on purpose. Requesting a scope the app
+# does not hold fails the authorisation rather than being quietly dropped, so
+# asking for it here would break the consent trip for the path that does work.
+# Turn the switch on and add it in the same breath as the audit that makes
+# Direct Post do anything but `SELF_ONLY`, not before.
 #
 # Asking for scopes the app does not use is also a named rejection reason at
 # audit time, so this list should not grow speculatively.
 SCOPES = "user.info.basic,video.upload,video.list"
 
 
-class _Catcher(http.server.BaseHTTPRequestHandler):
-    """One request, then done. Holds the query string on the server object."""
-
-    def do_GET(self) -> None:  # noqa: N802 - stdlib's spelling
-        self.server.query = urllib.parse.parse_qs(  # type: ignore[attr-defined]
-            urllib.parse.urlparse(self.path).query
-        )
-        self.send_response(200)
-        self.send_header("content-type", "text/plain; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(b"Authorised. You can close this tab and go back to the terminal.")
-
-    def log_message(self, *_args) -> None:
-        """Silence. The default writes every request to stderr."""
-
-
 def authorise(client_key: str) -> str:
-    """Open the browser, catch the code on loopback. Returns the code.
+    """Open the browser, take the code back by hand. Returns the code.
 
-    `state` is compared on the way back rather than ignored. It is the only
-    thing standing between this listener and any page the browser happens to
-    load while it is open.
+    `state` is compared on the way back rather than ignored. Pasting the whole
+    address is what makes that possible, and it is why the prompt asks for the
+    address rather than for the code: a bare code carries no state to check.
     """
     state = secrets.token_urlsafe(24)
     query = urllib.parse.urlencode(
@@ -108,25 +104,27 @@ def authorise(client_key: str) -> str:
             "state": state,
         }
     )
-    server = http.server.HTTPServer(("127.0.0.1", REDIRECT_PORT), _Catcher)
-    server.query = {}  # type: ignore[attr-defined]
-    thread = threading.Thread(target=server.handle_request, daemon=True)
-    thread.start()
-
     url = f"{AUTH_URL}?{query}"
     print(
-        "\nA browser is opening. Two things to watch for:\n"
+        "\nA browser is opening. Three things to watch for:\n"
         "  - Pick the account you mean. The wrong pick is not visible again\n"
         "    until the first publish.\n"
-        f"  - If it does not open, paste this:\n    {url}\n"
+        "  - It lands on a page on the gateway showing a code. Copy the whole\n"
+        "    address bar, not just the code.\n"
+        f"  - If the browser does not open, paste this:\n    {url}\n"
     )
     webbrowser.open(url)
-    thread.join(timeout=300)
-    server.server_close()
 
-    returned = server.query  # type: ignore[attr-defined]
+    pasted = input("\nPaste the address you landed on: ").strip()
+    if not pasted:
+        raise SystemExit("Nothing pasted. Nothing was exchanged.")
+
+    returned = urllib.parse.parse_qs(urllib.parse.urlparse(pasted).query)
     if not returned:
-        raise SystemExit("No callback arrived within five minutes.")
+        raise SystemExit(
+            "No query string in that. Paste the whole address, including "
+            "everything after the question mark."
+        )
     if returned.get("error"):
         raise SystemExit(
             f"TikTok refused the authorisation: {returned['error'][0]} "
@@ -134,6 +132,8 @@ def authorise(client_key: str) -> str:
         )
     if returned.get("state", [""])[0] != state:
         raise SystemExit("The state did not match. Nothing was exchanged.")
+    if not returned.get("code"):
+        raise SystemExit("That address carries no code. Nothing was exchanged.")
     return returned["code"][0]
 
 

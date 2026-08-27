@@ -21,6 +21,14 @@ than one nobody reads.
 that deliberately carries no dependency it does not import, and keeping both
 would mean two versions of a privacy policy drifting apart. Those two files now
 point here instead.
+
+`/tiktok/callback` sits here for the same reason the other three do, which is
+that it has to answer whether or not the admin panel is on. It is the OAuth
+redirect target `scripts/tiktok_authorise.py` sends a browser to, and it exists
+because **TikTok will not register a redirect URI that is not https**, so the
+loopback listener the script used to run had nowhere to listen. It renders the
+authorisation code and nothing else happens here; the exchange is done by the
+script, with the client secret, on the operator's own machine.
 """
 
 from __future__ import annotations
@@ -53,3 +61,30 @@ async def privacy(request: Request) -> Any:
 @router.get("/terms", response_class=HTMLResponse, name="terms_page")
 async def terms(request: Request) -> Any:
     return templates.TemplateResponse(request, "terms.html", {})
+
+
+@router.get("/tiktok/callback", response_class=HTMLResponse, name="tiktok_callback")
+async def tiktok_callback(request: Request) -> Any:
+    """Show the authorisation code so it can be pasted back into the terminal.
+
+    **It deliberately does not exchange the code.** The exchange needs the
+    client secret, and this service is never told it until the account is
+    registered, which is the last step of the trip this page is in the middle
+    of. Handing the secret to the gateway early to save one paste would put it
+    in a second place for the sake of a one-off.
+
+    A stranger reaching this URL sees a page saying there is nothing here. The
+    code in the query string is the visitor's own, so rendering it back tells
+    nobody anything they did not already have.
+    """
+    query = request.query_params
+    return templates.TemplateResponse(
+        request,
+        "tiktok_callback.html",
+        {
+            "code": query.get("code", ""),
+            "state": query.get("state", ""),
+            "error": query.get("error", ""),
+            "error_description": query.get("error_description", ""),
+        },
+    )
