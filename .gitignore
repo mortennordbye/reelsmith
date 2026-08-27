@@ -8,6 +8,18 @@
 # repo public, audit the history as well:
 #   git log --all --pretty=format: --name-only --diff-filter=A | sort -u
 
+# --- Browser automation traces ---------------------------------------------
+# Playwright MCP writes a page snapshot, a console log, and any screenshot it
+# takes, into `.playwright-mcp/`, one file per browser step. They are the
+# debugging trace of a single session and they carry whatever happened to be on
+# screen, which on a portal page is an app record and on a logged-in page could
+# be anything. 36 of them reached main on 2026-08-27 through a `git add -A`
+# during a browser-driven task, along with two screenshots dropped at the repo
+# root. Ignored rather than tidied, because the next such task will make more.
+.playwright-mcp/
+*-screenshot.png
+page-????-??-??T??-??-??-???Z.png
+
 # --- The private half ------------------------------------------------------
 # Everything between the markers is BOTH git-ignored and backed up by
 # scripts/backup-secrets.sh, which reads this block. That is the point of the

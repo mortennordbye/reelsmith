@@ -269,6 +269,37 @@ ahead of it.
   without the other is the bug to look for; the reasoning is in
   `gateway/config.py` next to the flag.
 
+### The public pages, and why they are not on GitHub
+
+`GET /`, `/privacy` and `/terms` are served by `gateway/pages.py`. Every
+platform demands a privacy policy URL before it will take an application, and
+TikTok additionally demands terms of service and an official website. They were
+`docs/privacy.md` and `docs/terms.md` until 2026-08-27.
+
+- **TikTok will not accept a URL on a domain it cannot verify by DNS record**,
+  and `github.com` can never be one. The field simply reads "This URL is not
+  verified" and the form refuses to save. That is what moved them, not a
+  preference for HTML.
+- **One verification covers all four URLs.** A verified domain carries its
+  subdomains, and `gate.nordbye.it` is already the host TikTok pulls media from
+  for `PULL_FROM_URL`, so the media and the three documents need one record
+  between them rather than one each.
+- **The router mounts unconditionally, unlike the admin panel.** The obvious
+  home was `admin.public`, which already serves the one page that cannot require
+  a login, but that router is only included when `GATEWAY_ADMIN_ENABLED` is on.
+  Three platforms hold these URLs on file, and a legal page that 404s because a
+  feature flag moved is worse than one nobody reads. `test_gateway_pages.py`
+  pins it with the panel off.
+- **The templates are the only copy.** The Dockerfile copies `gateway/` alone,
+  so the image cannot see `docs/`; rendering markdown at runtime would put a
+  parser in an image that carries no dependency it does not import, and keeping
+  both would be two privacy policies drifting apart. `docs/privacy.md` and
+  `docs/terms.md` are pointers now.
+- **No script tags and no external stylesheet**, asserted rather than intended.
+  These render for somebody who arrived from an app listing on an unknown
+  device, and an asset on a third-party host is both a tracking vector on a
+  privacy policy and a way for the page to become unstyled text in a few years.
+
 ### An account is a directory, and it is never guessed
 
 `accounts/<name>/` holds the machine readable half of an identity: the per
