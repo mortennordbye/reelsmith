@@ -26,6 +26,82 @@ YouTube side taught:
   review, one tap a day. It is not unattended, which is the whole objection to
   it, and it is also the only thing on this page that works today.
 
+## What actually happened when this was attempted
+
+Tried on 2026-08-27, in a driven browser, signed in as the developer account.
+**It did not get past step 3**, and the reasons are not the ones the rest of
+this document predicts. Read this before spending an afternoon on the runbook
+below.
+
+**What worked and is permanent:**
+
+- The TikTok account `@thenightlybuild` exists, created by hand.
+- The developer account and the app exist. App id `7678556799749900295`, type
+  Other, ownership Individual. A client key and secret are generated.
+- A sandbox exists, `nightlybuild-inbox`, id `7678567978794829831`.
+- **`gate.nordbye.it` is a verified URL property.** This is the expensive step
+  and it survives everything else. Domain verification, one DNS TXT record,
+  `tiktok-developers-site-verification=...`, held in the homelab repo at
+  `terraform/cloudflare/nordbye-it/dns.tf`. A verified domain carries its
+  subdomains and every URL beneath it, so this one record covers the media
+  TikTok pulls **and** the privacy, terms and website URLs.
+
+**What blocked it, in the order the walls appeared:**
+
+1. **A DNS ad blocker breaks the portal silently.** AdGuard on the local
+   network sinkholes `tiktokv.com`, `tiktokw.eu` and `byteoversea.com`, which
+   are where TikTok loads the SDK that signs its own API requests from. With
+   them blocked the portal loads, logs in and reads fine, and every write
+   silently does nothing: the console shows `a.init is not a function` and the
+   click handler dies before it sends anything. Three `@@||domain^` exception
+   rules fix it. Anyone doing this from a network with DNS filtering will hit
+   this first and it looks nothing like its cause.
+2. **The URL fields will not take a GitHub URL.** "This URL is not verified",
+   because TikTok requires privacy, terms and website URLs to sit on a domain
+   proved by DNS record, and nobody can put a record on `github.com`. This is
+   what moved those documents onto the gateway.
+3. **Nothing saves.** This is where it stopped. In the production
+   configuration, Save reports `This form has N errors` and the last two are
+   the App review section: a usage description, which can be written, and
+   **"Upload at least one demo video that shows the complete end-to-end flow"**,
+   which cannot. In the sandbox configuration the same form validates clean,
+   reports no errors at all, and **still does not save**: `Apply changes`
+   dispatches no network request whatsoever. Every `devportal` call on the page
+   is a GET. There is no failing POST to read an error from.
+
+**So the claim at the top of this document, that the inbox path "needs no
+audit", is true of the API and false of the portal.** The redirect URI lives
+under Login Kit, inside the configuration that will not save, so
+`scripts/tiktok_authorise.py` has nowhere to send its callback and step 4 of
+the runbook cannot be reached from step 3.
+
+**A demo video is not the shortcut it looks like.** It would not have helped
+here, since the sandbox never asked for one and still did not save. And were it
+the blocker, the video TikTok specifies is a recording of "the website or app
+where the features will actually be integrated" showing "the user interface and
+user interactions" for every product and scope. This project has no such
+interface: the consent is a CLI script and the posting is a background
+scheduler. The screen an audit reviews is the one in the content sharing
+guidelines, with a privacy dropdown carrying no default, duet, stitch and
+comment toggles driven by a live `creator_info` call, and a commercial
+disclosure toggle. Building that is the project, and `## The audit, read
+honestly` below still expects it to be refused afterwards.
+
+**One thing was learned that is worth acting on regardless.** `video.publish`
+is not offered as a scope an unaudited app may add. The Add scopes dialog lists
+only `user.info.profile`, `user.info.stats` and `video.list`, in both
+configurations; `user.info.basic` arrives with Login Kit and `video.upload`
+with the Content Posting API. `scripts/tiktok_authorise.py` used to request
+`video.publish` and no longer does, because requesting a scope the app does not
+hold fails the authorisation rather than being dropped from it.
+
+**Where to pick it up.** Either work the portal by hand in an ordinary browser,
+in case any of this is particular to automation, or accept that TikTok needs a
+posting interface first and treat it as a project rather than a configuration
+step. Nothing in the gateway is waiting on either: the publisher, the token
+refresher and the insights sweep all ship, and a queued TikTok row cannot be
+created at all until `TIKTOK_OPEN_ID` is set on the render host.
+
 ## Activation, in order, with this deployment's values
 
 Written 2026-08-27, when the code was merged and running and nothing account
