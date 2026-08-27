@@ -178,9 +178,19 @@ loses the hook band and nothing else.
 
 ### Three destinations, and what is shared between them
 
-Instagram and YouTube publish today. TikTok is researched and not built, and the
-three docs are `docs/tiktok-api-setup.md`, `docs/multi-destination-audit.md` and
+Instagram and YouTube publish today. **TikTok is built and not switched on**,
+which is a different thing from unbuilt and the distinction is the whole of what
+is left: the publisher, the refresher, the sweep and the queue row all exist and
+ship, and what is missing is an account. Nothing is waiting on code.
+`docs/tiktok-api-setup.md` opens with the ordered runbook that turns it on, with
+this deployment's redirect URI, domain and slot line filled in; the reasoning
+behind it is in that doc's later sections, `docs/multi-destination-audit.md` and
 `docs/tiktok-publishing-plan.md`.
+
+The order in that runbook is forced rather than preferred. The consent trip is
+what produces the open id, and the open id is what the `GATEWAY_SLOTS` line and
+the render host's `TIKTOK_OPEN_ID` are both keyed on, so neither can be written
+ahead of it.
 
 - **A destination is an `accounts` row, not a table.** `accounts.platform` says
   which service and `account_id` is an opaque account key holding a Meta user id
@@ -413,6 +423,15 @@ section is.
   Instagram follow ask while the third, still staged because it rendered last,
   got the cut. Anything else that re-renders a finished `video.json` needs the
   same call.
+- **The queue rows made before that fix were left as they were, deliberately.**
+  Eighteen of the twenty six pending YouTube rows point at the Instagram file
+  and eight had already published that way. Recutting them is cheap and the run
+  folders are all still on the render host; repointing them is not, because
+  nothing in the API changes a row's video and the only lever is a hand written
+  `UPDATE` of `video_name` against the live database. Decided 2026-08-27 that a
+  month of Shorts saying follow rather than subscribe is worth less than that
+  write. So a Short from before 2026-08-27 carrying the ask is expected, not a
+  sign the fix regressed.
 - **`--max-queue` counts the Instagram queue only.** YouTube drains one a day
   against Instagram's three, so its queue grows by design, and a third queue
   draining at its own rate does not change that reasoning. Counted in the

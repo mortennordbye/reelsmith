@@ -43,6 +43,8 @@ import httpx
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from config import Settings  # noqa: E402  - after the sys.path insert above
+
 AUTH_URL = "https://www.tiktok.com/v2/auth/authorize/"
 TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
 
@@ -173,6 +175,11 @@ def main() -> None:
     )
     parser.add_argument("--username", default="", help="the @handle, for the admin UI")
     parser.add_argument(
+        "--env",
+        action="store_true",
+        help="print the line for the account's .env instead of registering",
+    )
+    parser.add_argument(
         "--print-token",
         action="store_true",
         help=(
@@ -203,17 +210,42 @@ def main() -> None:
     print(f"\nAuthorised open id {tokens['open_id']}")
     print(f"Scopes granted: {tokens.get('scope', 'unknown')}")
 
-    if args.print_token or not args.gateway:
-        if not args.gateway:
-            print("\nNo gateway URL given, so nothing was registered.")
+    if args.env:
+        # The render host needs the open id and nothing else: the credentials
+        # live on the gateway, which is what publishes. Same shape as the
+        # YouTube channel id it sits next to.
+        print("\nAdd to accounts/<name>/.env on the render host:\n")
+        print(f"TIKTOK_OPEN_ID={tokens['open_id']}")
+        print("\nNothing was registered, so run this again without --env.")
+        return
+
+    if args.print_token:
+        # Deliberately the only path that puts the token on a terminal, and it
+        # has to be asked for. The default keeps it between this process and
+        # the gateway.
         print("\nRefresh token (seed only; the gateway rotates it daily):")
         print(tokens["refresh_token"])
         return
 
-    api_token = os.environ.get("GATEWAY_API_TOKEN", "")
-    if not api_token:
-        raise SystemExit("Set GATEWAY_API_TOKEN to register, or use --print-token.")
-    register(args.gateway, api_token, payload)
+    # The same GATEWAY_URL and GATEWAY_TOKEN the pipeline already uses, which
+    # is what `youtube_authorise.py` reads too. Requiring a second pair of
+    # names here was not a stricter setup, it was a failure after the browser
+    # consent had already been spent, and the recovery for that is another
+    # trip through the consent screen.
+    cfg = Settings()
+    base_url = args.gateway or cfg.gateway_url
+    api_token = os.environ.get("GATEWAY_API_TOKEN", "") or cfg.gateway_token
+    if not base_url or not api_token:
+        raise SystemExit(
+            "Set GATEWAY_URL and GATEWAY_TOKEN in .env to register this, or\n"
+            "pass --print-token and store the refresh token by hand."
+        )
+    register(base_url, api_token, payload)
+    print(
+        "\nNext: TIKTOK_OPEN_ID="
+        f"{tokens['open_id']} in the render host's accounts/<name>/.env, and a\n"
+        f"GATEWAY_SLOTS line ending account={tokens['open_id']} in the homelab config."
+    )
 
 
 if __name__ == "__main__":
