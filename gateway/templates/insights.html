@@ -4,16 +4,45 @@
 {% block body %}
 <h1>Insights</h1>
 <p class="sub">
-  Groups rather than posts. The Posts page says what each Reel did; this says
+  Groups rather than posts. The Posts page says what each video did; this says
   which kinds of them did better, which is the only form the answer can take
-  while three go out a day and the prompt changes underneath them.
+  while posts go out on a timetable and the prompt changes underneath them.
 </p>
 
 {% for board in boards %}
   {% set account = board.account %}
+  {# The board knows its identity; only the loop knows whether the board above
+     it had the same one, which is what decides where a heading goes. #}
+  {% set first_of_brand = loop.first or account['brand'] != loop.previtem.account['brand'] %}
   {% include "_account_heading.html" %}
 
-  {% if not board.chart %}
+  {% if not board.comparable %}
+    {# Not an empty page. Every group here is built on skip rate, which only
+       one platform reports, and a board that renders nothing says "broken"
+       where a board that says why says "asked and answered". The numbers these
+       platforms do have are one click away, so the card ends there rather than
+       at an apology. #}
+    {% set _p = account['platform'] %}
+    <div class="card empty">
+      <p style="margin:0 0 8px"><strong>No comparisons for this platform.</strong></p>
+      <p style="margin:0 0 8px">
+        Every group on this page is built on skip rate, the share who scrolled
+        past inside the first three seconds, so it scores the opening alone.
+        {% if _p == 'youtube' %}
+          YouTube reports average view percentage instead, which scores the
+          whole video, so the two cannot share a table without one of them
+          being read as the other.
+        {% else %}
+          TikTok reports no retention, watch time or completion metric of any
+          kind, so there is nothing here to group by.
+        {% endif %}
+      </p>
+      <p style="margin:0">
+        What it does report is on the
+        <a href="{{ url_for('posts_page') }}?account={{ account['account_id'] }}">Posts page</a>.
+      </p>
+    </div>
+  {% elif not board.chart %}
     <div class="card empty">
       Nothing to compare yet. {{ board.total }} published,
       {{ board.measured }} with a retention reading, and a reading takes a few

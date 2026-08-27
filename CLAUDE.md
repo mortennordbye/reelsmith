@@ -329,6 +329,51 @@ attempted*:
   without the other is the bug to look for; the reasoning is in
   `gateway/config.py` next to the flag.
 
+### One identity, three destinations, and a panel built for many
+
+`accounts` holds one row per platform, so an identity posting to all three is
+three rows, and until 2026-08-27 nothing recorded that they were the same
+identity. That was invisible at one and unusable at two: the switcher offered
+`thenightlybuild` three times, told apart by a twelve pixel icon, and a second
+identity would have made it six chips reading nearly the same word.
+
+- **`accounts.brand` is the grouping and it is the pipeline's `--account
+  <name>`** (schema 20). The two sides never talk about it, so it is a label
+  rather than a foreign key, and that is the point: a typo puts a board in the
+  wrong group, where a wrong `account_id` publishes to the wrong audience.
+- **Derived from the handle only when nobody says.** `db.brand_of` strips the
+  leading @ and lowercases, because Instagram stores the handle bare and the
+  other two store it with an @, so grouping on the raw string made one identity
+  into two. Registration takes an explicit `brand`, which is what a second
+  identity needs the day it cannot get the same name on all three platforms.
+- **A re-authorisation never regroups a row.** `upsert_account` compares the
+  *argument* rather than the value being inserted, because those differ exactly
+  when nobody said, and reading `excluded.brand` put a corrected brand back
+  under its handle on the next OAuth run. Same rule as `active` and `platform`.
+- **The switcher is one chip per identity**, holding its name and one mark per
+  platform. The name selects the identity across every platform, a mark selects
+  one of them, and `?brand=` and `?account=` are the two scopes. The narrower
+  wins when both arrive, since that means a stale link rather than a
+  contradiction.
+- **Boards are grouped in SQL, not in five templates.** `_ACCOUNT_ORDER` sorts
+  by brand and then by platform in the order the fan-out writes them, so the
+  switcher and the boards cannot disagree about the order without someone
+  changing one query.
+- **Nothing new appears at one identity.** The identity heading and the
+  switcher both stay hidden until there are two, for the same reason the
+  switcher always has: a control naming the only option there is is furniture.
+
+**What each board shows is the platform's own answer, never a zero standing in
+for an absence.** Instagram gets skip and watch time, YouTube gets watch time
+and average viewed, TikTok gets four counts and a line saying that is
+everything it reports. The DM funnel is on the Instagram board alone, because
+the keyword mechanic is comments and private replies: a YouTube card carrying
+"0 asked, 0 links sent, keyword send" reported a mechanic that never existed
+there as one that converted nobody. Insights says in a sentence why it cannot
+compare a YouTube or TikTok board, where it used to render a heading and empty
+space, which reads as a broken page rather than as a question the data cannot
+answer.
+
 ### The public pages, and why they are not on GitHub
 
 `GET /`, `/privacy`, `/terms` and `/tiktok/callback` are served by

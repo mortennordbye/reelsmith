@@ -14,6 +14,7 @@
      were two, which hid the surface exactly when the switcher had narrowed to
      one account and the page gave no other clue which it was. #}
   {% set account = board.account %}
+  {% set first_of_brand = loop.first or account['brand'] != loop.previtem.account['brand'] %}
   {% include "_account_heading.html" %}
 
   {% if board.posts %}
@@ -29,10 +30,12 @@
           <div><span class="n">{{ board.totals.saved }}</span><span class="l">saves</span></div>
         {% endif %}
         <div><span class="n">{{ board.totals.shares }}</span><span class="l">shares</span></div>
-        <div>
-          <span class="n">{{ board.totals.links_sent }}</span>
-          <span class="l">links sent</span>
-        </div>
+        {% if board.has_funnel %}
+          <div>
+            <span class="n">{{ board.totals.links_sent }}</span>
+            <span class="l">links sent</span>
+          </div>
+        {% endif %}
         {% if board.avg_skip is not none %}
           <div>
             <span class="n">{{ '%.0f' | format(board.avg_skip) }}%</span>
@@ -65,6 +68,16 @@
           what YouTube reports instead. It scores the video rather than the
           opening, so it is not a skip rate and the two do not compare. Over
           100 percent means the Short looped, since a replay counts.
+        </p>
+      {% endif %}
+      {# Every other board says what its numbers mean, so the one with the
+         fewest has to say why rather than being the board that looks unfinished
+         next to the other two. #}
+      {% if account['platform'] == 'tiktok' %}
+        <p class="small muted" style="margin:10px 0 0">
+          These four counts are everything TikTok reports. There is no reach, no
+          saves and nothing about watching, so this board has no skip rate and
+          no watch time. That is an absence rather than a zero.
         </p>
       {% endif %}
       {% if board.measured < board.posts | length %}
@@ -153,7 +166,14 @@
             {% endif %}
 
             {# The half this service owns. Nothing else can report it, because
-               the DM funnel never leaves this database. #}
+               the DM funnel never leaves this database.
+
+               Instagram only, and not because the numbers happen to be zero
+               elsewhere. The keyword mechanic is comments and private replies,
+               which exist on one platform, so a YouTube card carrying "0
+               asked, 0 links sent, keyword send" was reporting a mechanic that
+               was never available there as one that failed. #}
+            {% if board.has_funnel %}
             <div class="metrics" style="border-top:1px solid var(--line);padding-top:8px">
               <div>
                 <span class="n {{ 'none' if not post.funnel.get('comments_seen') }}">
@@ -180,6 +200,7 @@
                 <span class="l">keyword</span>
               </div>
             </div>
+            {% endif %}
           </div>
         </div>
       </div>

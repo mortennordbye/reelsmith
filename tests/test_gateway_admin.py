@@ -1207,8 +1207,13 @@ async def test_scoping_to_an_account_hides_the_others(client):
     body = (await http.get(f"/admin/?account={other}")).text
 
     assert "second" in body
-    # The scoped page must not still be rendering a board for the other one.
-    assert body.count("nightly") <= 1, "only the switcher may still name it"
+    # Split at the header, because the switcher names every account by
+    # definition and now names each one twice: once as the chip and once in the
+    # title a mark carries for the sake of a screen reader. Counting mentions
+    # across the whole page measured the switcher's markup rather than the
+    # scope. What the scope promises is about the body.
+    main = body.split("</header>", 1)[-1]
+    assert "nightly" not in main, "the scoped page still renders the other board"
 
 
 async def test_an_unknown_account_falls_back_to_everything(client):

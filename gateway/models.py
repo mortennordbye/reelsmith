@@ -71,6 +71,14 @@ class AccountRegistration(BaseModel):
     # pasted by hand does not come with one, and an unknown expiry is treated as
     # due for refresh rather than as an error.
     expires_in: int | None = None
+    # Which original account this destination belongs to, which is the
+    # pipeline's `--account <name>`. Left off, the gateway derives it from the
+    # username, which is right while one identity holds the same handle
+    # everywhere. Say it explicitly when a second identity is registered, or
+    # when its handle differs across platforms: this is what groups the three
+    # rows into one account in the panel, and getting it wrong costs a board in
+    # the wrong group rather than a post to the wrong place.
+    brand: str = ""
     # Whether to call subscribed_apps. Off in tests and when the subscription is
     # already known good.
     subscribe: bool = True
@@ -96,6 +104,14 @@ class YouTubeAccountRegistration(BaseModel):
     refresh_token: str = Field(min_length=1)
     # The @handle, for the admin UI. Same column as an Instagram username.
     username: str = ""
+    # Which original account this destination belongs to, which is the
+    # pipeline's `--account <name>`. Left off, the gateway derives it from the
+    # username, which is right while one identity holds the same handle
+    # everywhere. Say it explicitly when a second identity is registered, or
+    # when its handle differs across platforms: this is what groups the three
+    # rows into one account in the panel, and getting it wrong costs a board in
+    # the wrong group rather than a post to the wrong place.
+    brand: str = ""
 
     @field_validator("channel_id")
     @classmethod
@@ -136,6 +152,14 @@ class TikTokAccountRegistration(BaseModel):
     refresh_expires_in: int | None = None
     # The @handle, for the admin UI. Same column as an Instagram username.
     username: str = ""
+    # Which original account this destination belongs to, which is the
+    # pipeline's `--account <name>`. Left off, the gateway derives it from the
+    # username, which is right while one identity holds the same handle
+    # everywhere. Say it explicitly when a second identity is registered, or
+    # when its handle differs across platforms: this is what groups the three
+    # rows into one account in the panel, and getting it wrong costs a board in
+    # the wrong group rather than a post to the wrong place.
+    brand: str = ""
 
     @field_validator("open_id")
     @classmethod
