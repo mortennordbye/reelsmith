@@ -44,6 +44,7 @@
 #   NAS_SHARE        SMB share name           (default shared-data)
 #   NAS_BACKUP_ROOT  parent dir on the share  (default documents/IT/Repo-Hidden-Files-Backups)
 #   NAS_DIR          already-mounted share root; skip mounting
+#   NAS_USER         SMB username; skips the prompt, not the password
 #   MANIFEST_FILE    manifest path            (default <repo-root>/.backup-manifest)
 #   GITIGNORE_FILE   file holding the block   (default <repo-root>/.gitignore)
 #   KEEP             snapshots to retain      (0 = keep all, default 14)
@@ -167,12 +168,25 @@ resolve_base() {
     [[ -d "$NAS_DIR" ]] || die "NAS_DIR '$NAS_DIR' is not a directory (is the share mounted?)"
     BASE="$NAS_DIR"
   else
-    NAS_USER=""
+    # mount_smbfs asks for the password on the controlling terminal itself, so
+    # this needs one whatever the username comes from. Without it the shell dies
+    # on `/dev/tty: Device not configured`, which names a device rather than the
+    # problem. Checked before the prompt, so it fails before anything is typed.
+    if ! (exec </dev/tty) 2>/dev/null; then
+      die "This needs a terminal: mount_smbfs prompts for the password itself and there
+       is no /dev/tty here. Run it in a real shell. There is no passwordless route
+       for this script: the backup destination sits outside the render host's
+       mounts, which is why sync-private.sh has one and this does not."
+    fi
+    NAS_USER="${NAS_USER:-}"
     while [[ -z "$NAS_USER" ]]; do read -r -p "NAS username: " NAS_USER </dev/tty; done
     # macOS refuses to mount the same SMB share twice ("File exists"). If it's
     # already mounted (Finder, or a prior run), reuse it instead of failing — and
     # don't unmount it on exit, since we didn't open it.
-    existing="$(/sbin/mount | awk -v sh="/$NAS_SHARE" '/\(smbfs/ && $1 ~ sh"$" {print $3; exit}')"
+    # `|| true` because pipefail turns a missing /sbin/mount into a silent
+    # exit, and "there is no such command here" is the same answer as "nothing
+    # is mounted" for this question.
+    existing="$(/sbin/mount 2>/dev/null | awk -v sh="/$NAS_SHARE" '/\(smbfs/ && $1 ~ sh"$" {print $3; exit}' || true)"
     if [[ -n "$existing" ]]; then
       log "//$NAS_HOST/$NAS_SHARE already mounted at $existing — reusing it"
       BASE="$existing"
