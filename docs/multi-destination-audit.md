@@ -4,13 +4,20 @@ Written 2026-08-26 against `main` at `d6393b7`. Every claim below was read in th
 code rather than taken from `PLAN.md`, because section H was written on
 2026-08-02 and predates the YouTube change that answered half of it.
 
+**Both questions have since been answered in the code, and this is the record
+of what they cost rather than a description of the present.** `--account`
+shipped on 2026-08-26 and TikTok published from 2026-08-27, so read the two
+framing bullets below as the state on the day. The findings F0 to F9 are still
+the live reference and are cited by name from `CLAUDE.md`; every one of them was
+fixed.
+
 The job is two questions that are usually confused with each other:
 
-- **A third platform.** Instagram and YouTube publish today. TikTok would be the
-  third. `docs/tiktok-api-setup.md` covers whether it can; this covers what the
-  code costs.
-- **A second account.** `SPINOFFS.md` and `HANDOVER.md` both stop at the same
-  sentence, which is that `--account` does not exist.
+- **A third platform.** Instagram and YouTube published then; TikTok is the
+  third and publishes now. `docs/tiktok-api-setup.md` covers whether it can;
+  this covers what the code cost.
+- **A second account.** `SPINOFFS.md` stopped at the same sentence, which was
+  that `--account` does not exist. It does now.
 
 They are not the same question and the code is in very different shape on each.
 **The gateway is close to done on both. The pipeline is single account and knows

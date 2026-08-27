@@ -1,10 +1,22 @@
 # Publishing to TikTok from the gateway
 
-**Nothing here is built.** Written 2026-08-26 as research, not as a record.
-`docs/tiktok-api-setup.md` is the API background and the audit; the audit is the
-part that decides whether most of this is worth starting.
-`docs/multi-destination-audit.md` is what the code costs, and finding numbers
-below refer to it.
+**Executed as of 2026-08-27.** Every phase below is built, deployed and
+authorised, on the inbox path and against the app's sandbox credentials. The
+Direct Post audit is not, and on the evidence never will be: the production
+configuration cannot be saved without a demo video of a posting interface this
+project does not have.
+
+Kept as the record of why the design is shaped the way it is. **It is not the
+guide.** `docs/tiktok-api-setup.md` opens with the ordered runbook and the
+portal traps, and its *What actually happened when this was attempted* section
+is the one to read before touching the portal. `docs/multi-destination-audit.md`
+is what the code cost, and finding numbers below refer to it.
+
+Two things below were written as open questions and are now answered, so read
+them as history rather than as instructions: the four items under "what could
+not be verified" are resolved in the setup doc under *What was unknown, and what
+is still*, and the split recommendation on the audit resolved to the unaudited
+half, exactly as this plan hedged for.
 
 ## Handover
 
@@ -22,7 +34,8 @@ and that no retention or watch time metric exists on any TikTok API.
 individual registration suffices at audit time, the exact DNS record for domain
 verification, whether the audit form asks for a creator cap, and whether Direct
 Post configuration is available before approval. All four are collected under
-"What only you can check" in the setup doc, as one browser trip.
+"What was unknown, and what is still" in the setup doc, where three of the four
+are now answered.
 
 **In the code**, four claims from `PLAN.md` H were re-checked and all four hold,
 and one thing was found that nobody was looking for: **registering a second

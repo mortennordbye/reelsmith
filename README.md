@@ -1,7 +1,8 @@
 # reelsmith
 
-Automated Instagram Reels for trending AI/dev tooling. One command goes from
-"what's trending on GitHub today" to a posted-ready 1080x1920 MP4.
+Automated short videos about trending AI/dev tooling, on Instagram, YouTube and
+TikTok. One command goes from "what's trending on GitHub today" to a
+posted-ready 1080x1920 MP4.
 
 ```
 python main.py
@@ -283,18 +284,32 @@ mechanic, which is wired but dormant because nothing advertises the keyword any
 more. It runs in the homelab cluster, imports nothing from `pipeline/` or
 `config.py`, and the pipeline works with it down. See `gateway/README.md`.
 
-**A destination is a row, not a service.** Instagram and YouTube publish today
-from the same queue, the same slots and the same claims; the entire difference
-is one branch in `scheduler.publish_queued` and a credentials table per
-platform. TikTok is researched and not built, and the reason is an audit rather
-than an engineering cost: `docs/tiktok-api-setup.md`,
-`docs/multi-destination-audit.md` and `docs/tiktok-publishing-plan.md`. One
-render feeds every destination it is enqueued to, uploaded once, because
-`/api/media` is content addressed.
+**A destination is a row, not a service.** Instagram, YouTube and TikTok all
+publish from the same queue, the same slots and the same claims; the entire
+difference is one branch in `scheduler.publish_queued` and a credentials table
+per platform. One render feeds every destination it is enqueued to, uploaded
+once, because `/api/media` is content addressed.
 
-**One account, for now.** The gateway is written for several and the pipeline is
-not. `--account` does not exist, so a second account today means a second
-checkout. What that would cost is audited in `docs/multi-destination-audit.md`.
+TikTok arrived last and cost no subsystem, but it is not on the same footing as
+the other two. It posts by dropping the video into the creator's drafts for one
+tap, because the audit that would allow unattended posting reviews a posting
+screen this project does not have and rejects apps "designed for private or
+personal use only". A refusal therefore costs a config flag rather than a
+rewrite, which is what the two paths sharing a publisher buys.
+`docs/tiktok-api-setup.md` is the runbook and the portal traps.
+
+**Several accounts, one niche.** `accounts/<name>/` holds an account's `.env`,
+its cooldown store and its voice reference, and `--account` binds a run to one
+before the settings are built, so no stage signature changes. There is no
+default and no resolve-by-count: a run without one fails at startup naming the
+accounts it could see, because publishing to the wrong audience is not
+recoverable and a lost night is.
+
+What `--account` does not give a second account is a different **subject**.
+`VideoSpec.repo` is required and mirrored in `video/src/schema.ts`, so a second
+niche breaks that interface once, deliberately, when there is a second real
+caller to argue with it. The cost of both is audited in
+`docs/multi-destination-audit.md`.
 
 ---
 
@@ -457,12 +472,13 @@ deliberately lacks, so on a render host it is
 
 ## Not built yet
 
-TikTok, which is the third destination and is blocked on a compliance audit
-rather than on code. `--account`, without which a second account means a second
-checkout. A second render backend.
+Unattended posting to TikTok, which needs an audit that reviews a posting screen
+this project does not have; the drafts path works today and needs no audit. A
+second niche, which is one required field and one scene component away and is
+deliberately waiting for a second real caller. A second render backend.
 
-The admin UI, the scheduled queue and the insights feedback loop all used to be
-listed here and all three shipped.
+The admin UI, the scheduled queue, the insights feedback loop, YouTube, TikTok
+and `--account` all used to be listed here and all six shipped.
 
 The largest open question is how much of the pipeline could move off the laptop
 entirely. Research and publishing would move easily; script generation would

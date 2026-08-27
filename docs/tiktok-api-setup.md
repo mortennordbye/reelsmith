@@ -1,9 +1,16 @@
 # TikTok API setup
 
 One-time setup to let the gateway publish for you. Read on 2026-08-26 against
-TikTok's live developer documentation; every claim below carries a link in
-`## Sources` and anything that could not be checked without an account is marked
-**unverified** and collected in `## What only you can check`.
+TikTok's live developer documentation and then walked in the portal on
+2026-08-27; every claim carries a link in `## Sources`, what the portal actually
+did is in `## What actually happened when this was attempted`, and what is still
+guesswork is in `## What was unknown, and what is still`.
+
+**This is done.** TikTok has published from this deployment since 2026-08-27, on
+the inbox path, against the app's sandbox credentials. Read the runbook below if
+you are setting up another account; read the *what actually happened* section
+first either way, because three of the four walls it hit look nothing like their
+cause.
 
 Three things shape all of it, and the first two are the opposite of what the
 YouTube side taught:
@@ -24,7 +31,8 @@ YouTube side taught:
   planned for. `video.upload` drops the video into the creator's TikTok inbox and
   the creator publishes it from the app. No forced private, no audit, no UX
   review, one tap a day. It is not unattended, which is the whole objection to
-  it, and it is also the only thing on this page that works today.
+  it, and it is the path this deployment runs on, because the other one cannot
+  even be configured here.
 
 ## What actually happened when this was attempted
 
@@ -120,8 +128,10 @@ does not hold fails the whole authorisation rather than being dropped from it.
 Written 2026-08-27, when the code was merged and running and nothing account
 shaped existed: `accounts` had an Instagram row and a YouTube row and no TikTok
 row, `tiktok_credentials` had no rows, the render host had no `TIKTOK_OPEN_ID`,
-and `GATEWAY_SLOTS` had no TikTok line. Everything below is portal work and one
-config change; no code is waiting on any of it.
+and `GATEWAY_SLOTS` had no TikTok line. **All seven steps were completed that
+afternoon**, so this now reads as the procedure for the next account rather than
+as a to-do list. Everything in it is portal work and one config change; no code
+is waiting on any of it.
 
 **The order is forced, and not by preference.** Step 5 produces the open id,
 and the open id is what steps 6 and 7 are keyed on, so nothing after step 5 can
@@ -219,16 +229,22 @@ transient condition.
    and one more `GATEWAY_SLOTS` line, with the open id from step 4:
 
    ```
-   17:40 Europe/Oslo jitter=15 account=<open_id>
+   08:10 Europe/Oslo jitter=15 account=<open_id>
    ```
 
-   One a day, not three. The inbox path allows five pending shares per 24 hours
-   and each one is a tap in the app, so the cap is attention rather than API
-   quota. Put an explicit `account=` on it like every other line: a line without
-   one attaches to the single registered Instagram account, and the config sweep
-   freezes rather than deleting anything it cannot attribute. Pick a time
-   outside the existing windows (06:10, 10:40, 17:20 and 19:05 UTC, each plus
-   its jitter) and keep gateway deploys out of all of them.
+   One a day. The inbox path allows five pending shares per 24 hours and each
+   one is a tap in the app, so the cap is attention rather than API quota.
+
+   **The same time as the other two, deliberately.** Since 2026-08-27 all three
+   destinations fire at 08:10 Europe/Oslo, which is 06:10 UTC. Only Instagram
+   produces a skip rate, so there is nothing to argue a different hour from for
+   the other two, and one window is easier to keep gateway deploys out of than
+   four. They land minutes apart anyway, because the jitter is derived per slot
+   rather than shared.
+
+   Put an explicit `account=` on it like every other line: a line without one
+   attaches to the single registered Instagram account, and the config sweep
+   freezes rather than deleting anything it cannot attribute.
 
 7. **`TIKTOK_OPEN_ID` on the render host**, in
    `accounts/nightlybuild/.env` on the share, next to `YOUTUBE_CHANNEL_ID`.
@@ -273,47 +289,85 @@ cheap hedge rather than throwaway work.
 
 2. **A TikTok for Developers account** at <https://developers.tiktok.com>,
    registered against that TikTok login, with the developer terms accepted.
-   Individual registration is enough to create an app and a sandbox. **Unverified:**
-   whether an organisation registration is demanded at audit time.
+   Individual registration is enough for everything short of the audit,
+   confirmed on 2026-08-27: the app, the sandbox, both products, all three
+   scopes, the URL property and the consent trip were all done on one. Whether
+   it is enough to *submit* the audit is still unknown and is blocked behind the
+   demo video rather than behind the registration type.
 
 3. **An app**, created from Manage apps. The app review guidelines want the app
    name to be the product's actual name rather than a description of what it
    does, an icon, a description, and a **valid official website that is not a
    landing page or a login page**, with the privacy policy and terms of service
-   reachable from it without opening a menu. `docs/privacy.md` already exists for
-   the Meta app and is the obvious starting point for the policy half.
+   reachable from it without opening a menu.
+
+   The portal is stricter than that reads. All three URL fields refuse a domain
+   it cannot verify by DNS record, so a GitHub blob URL simply will not save,
+   and that is what moved these documents onto the gateway: `GET /`, `/privacy`
+   and `/terms` off `gateway/pages.py`. `docs/privacy.md` and `docs/terms.md`
+   are pointers to those templates now, not the documents.
+
+   **`Web/Desktop URL` is required and does not exist until the Web platform
+   checkbox is ticked**, which is worth knowing because a form refusing to save
+   over a field that is not on the page yet reads as a broken form.
 
 4. **The Content Posting API product added to the app**, and for Direct Post,
    **Direct Post configuration enabled** on it. These are two separate switches
    and the second is easy to miss.
 
-5. **Scopes.** `video.publish` for Direct Post, `video.upload` for the inbox
-   path. Add `user.info.basic` and `video.list` in the same trip if you want any
-   numbers back at all, because `video.list` is what carries the view and
-   engagement counts. Asking for scopes the app does not use is a named rejection
-   reason, so do not add the rest.
+5. **Scopes, and they do not exist until the products are added.** With no
+   products on the app the Add scopes dialog lists only `user.info.profile`,
+   `user.info.stats` and `video.list`, which reads as a permanent refusal and is
+   not one. `user.info.basic` arrives attached to Login Kit and `video.upload`
+   to the Content Posting API, and neither can be added on its own.
+   `video.publish` arrives only with the Direct Post switch inside that product.
 
-6. **A sandbox**, before anything else is submitted. Manage apps, toggle to
-   Sandbox mode, Create Sandbox. Up to 5 sandboxes per app and up to 10 target
-   users each, added by their TikTok login and requiring them to accept the
-   developer terms. The app review guidelines say a first time app **must** use
-   the sandbox environment for its demo videos, so this is not optional
-   scaffolding. Note the ceiling on it: **a sandbox cannot post public videos
-   through the Content Posting API**, so it proves the wiring and nothing about
-   visibility.
+   So for the inbox path it is three: `user.info.basic`, `video.upload`,
+   `video.list`. The last carries the view and engagement counts and without it
+   nothing comes back at all. Asking for scopes the app does not use is a named
+   rejection reason, so do not add the rest.
+
+6. **A sandbox, which turned out to be the whole path rather than
+   scaffolding.** Manage apps, toggle to Sandbox mode, Create Sandbox. Up to 5
+   sandboxes per app and up to 10 target users each. The app review guidelines
+   say a first time app **must** use the sandbox for its demo videos, and
+   independently of that it is the only configuration that can be saved at all
+   here, because production validates the App review block and demands a demo
+   video of an interface this project does not have.
+
+   Adding a target user redirects to a TikTok login and **logs you out first**,
+   so it needs the content account's password to hand and cannot be done by a
+   driven browser holding only a developer session.
+
+   The ceiling on it: **a sandbox cannot post public videos through the Content
+   Posting API**, so it proves the wiring and nothing about visibility. On the
+   inbox path that costs nothing, since the creator publishes from the app.
 
 7. **A verified domain or URL prefix**, if you use `PULL_FROM_URL`. Add the
    property in the URL properties widget on the app, then add the signature
    string TikTok gives you to the domain's DNS. A verified domain covers every
    path under it and its subdomains; a verified URL prefix covers only URLs with
-   that exact prefix. The gateway already serves the MP4 unauthenticated at
-   `GET /media/{name}` off `GATEWAY_PUBLIC_BASE_URL`, so this is one DNS record
-   and no new hosting. **Unverified:** the exact record type and TTL, which the
-   media transfer guide does not print and the portal shows you at the time.
+   that exact prefix, so the domain is the one worth doing: **one record covers
+   the media, the three public pages and the OAuth callback together.**
+
+   It is a **TXT record** holding `tiktok-developers-site-verification=<string>`,
+   confirmed on 2026-08-27 for `gate.nordbye.it` and held in the homelab repo at
+   `terraform/cloudflare/nordbye-it/dns.tf`. It verified on the first check with
+   no waiting worth measuring. This is the single most durable step on the page:
+   it survived every other thing that failed.
 
 8. **An OAuth round trip**, once per account, storing `client_key`,
    `client_secret` and the refresh token. The access token lasts 86,400 seconds
    and the refresh token 31,536,000, which is 24 hours and a year.
+
+   **The redirect URI must be https, and loopback is not an exception.** The
+   field rejects `http://127.0.0.1:8723/callback` and the https form of the same
+   address alike, with "Enter a valid URL beginning with https://". That is what
+   removed the loopback listener from `scripts/tiktok_authorise.py`: the browser
+   lands on `GET /tiktok/callback` on the gateway, that page prints the code,
+   and the operator pastes the whole address back so the CSRF state can still be
+   checked. The httproute allowlist in homelab has to carry that path or the
+   consent trip lands on a 404 and is spent.
 
 ## The audit, read honestly
 
@@ -532,26 +586,51 @@ correctly.
 - **The token refresher.** Instagram's rides on `--snapshot` and YouTube has
   none. TikTok needs a real one on the gateway's own loop.
 
-## What only you can check
+## What was unknown, and what is still
 
-Everything below needs a logged in developer account and none of it could be
-read from the public docs. Do it in one trip.
+This section was five open questions written from the public docs on
+2026-08-26. Three were answered in the portal on 2026-08-27 and are recorded
+here rather than deleted, because "we checked" is worth more than a shorter
+list.
 
-1. Whether individual registration is enough to submit the audit, or whether an
-   organisation and a business verification are demanded.
-2. The exact DNS record type and value for domain verification, and how long it
-   takes to propagate on the portal's side.
-3. Whether the audit form asks for a creator cap, and what number to ask for.
-   Three a day is the answer, and asking for more invites a question.
-4. Whether Direct Post configuration is available on the app before the audit or
-   only after.
-5. Whether the app review form treats a single account publisher as in scope at
-   all, which is the question this whole page turns on and which the public
-   guidelines answer discouragingly rather than definitively.
+**Answered:**
+
+- **The DNS record is a TXT record** holding
+  `tiktok-developers-site-verification=<string>`. It verified on the first
+  check, with no propagation delay worth measuring.
+- **Direct Post configuration is available before any audit.** It is a switch
+  inside the Content Posting API product, present in both the production and
+  the sandbox configuration, and it is what grants `video.publish`. Having it
+  is not the same as being allowed to use it: unaudited, the documented 403 is
+  `unaudited_client_can_only_post_to_private_accounts`. It is deliberately off
+  here.
+- **Individual registration is enough to build everything short of the audit**:
+  the app, the sandbox, the products, the scopes, the URL properties and the
+  consent trip were all done on an Individual account.
+
+**Still unknown, and now cheaper to leave that way:**
+
+- Whether individual registration is enough to *submit* the audit, or whether
+  an organisation and a business verification are demanded.
+- Whether the audit form asks for a creator cap, and what number to ask for.
+- Whether the app review form treats a single account publisher as in scope.
+
+**All three are blocked behind the same wall and none of them is the next
+thing to do.** The production configuration cannot be saved at all without a
+demo video of an end to end user interface, and there is no save-as-draft that
+skips it. So the audit cannot be submitted, and the questions about the audit
+form are unanswerable, until a posting screen exists. Building that screen is a
+project rather than a configuration step, and `## The audit, read honestly`
+below expects a refusal at the end of it anyway.
+
+The inbox path needs none of this, which is why it is the one that shipped.
 
 ## Sources
 
-Read 2026-08-26.
+Read 2026-08-26 against the public documentation. Everything on this page
+marked as observed rather than quoted was checked in the portal on 2026-08-27,
+signed in as the developer account, and `## What actually happened when this
+was attempted` is the record of that.
 
 - [Content Posting API, get started](https://developers.tiktok.com/doc/content-posting-api-get-started)
 - [Direct Post reference](https://developers.tiktok.com/doc/content-posting-api-reference-direct-post)
