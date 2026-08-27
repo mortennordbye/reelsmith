@@ -180,8 +180,23 @@ resolve_base() {
       MNT="$(mktemp -d)"
       log "Mounting //$NAS_USER@$NAS_HOST/$NAS_SHARE — enter the NAS password when asked"
       # mount_smbfs prompts for the password itself; no sudo, nothing on disk.
-      mount_smbfs "//${NAS_USER}@${NAS_HOST}/${NAS_SHARE}" "$MNT" \
-        || die "SMB mount failed — check the username/password, that SMB is enabled on the NAS, and that '$NAS_USER' can access '$NAS_SHARE'"
+      # This is the only script left that needs SMB. sync-private.sh gained a
+      # route through the render host on 2026-08-27, after the mount started
+      # failing; the backup destination sits outside the pod's mounts, so there
+      # is no such route here. That makes this message the one that gets read
+      # when the mount breaks, so it says what to try rather than what to check.
+      mount_smbfs "//${NAS_USER}@${NAS_HOST}/${NAS_SHARE}" "$MNT" || die \
+        "SMB mount failed. \`smbutil view //${NAS_USER}@${NAS_HOST}\` tests the login on
+       its own and says more than mount_smbfs does.
+
+       An 'Authentication error' means the server answered and refused the pair, so
+       it is the username or the password and not the network. DSM's auto-block
+       firewalls the address instead, which shows up as a timeout rather than a
+       refusal, and once tripped it refuses the right password too: clear it under
+       Control Panel, Security, Protection.
+
+       Guest is disabled on this NAS, so there is no anonymous way to check the
+       share name from here."
       MOUNTED=true
       BASE="$MNT"
     fi
