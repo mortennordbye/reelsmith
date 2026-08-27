@@ -2,12 +2,13 @@
 
 One-time setup to let the gateway publish Reels to a Facebook Page.
 
-**Status: walked on 2026-08-27, up to the registration.** The app is
-configured, the Page exists, the consent trip completed and the Page access
-token was proved against the Graph API. The one step outstanding is
-registering it with the gateway, which cannot happen until the gateway is
-deployed with the `/api/accounts/facebook` route. See
-`## What actually happened when this was attempted`.
+**Status: done on 2026-08-27.** Walked end to end: the app configured, the
+Page created, the consent granted, the gateway deployed, the Page registered
+and a slot given. **Nothing has published yet**, so everything below the
+registration is still theory: the publisher and the insights sweep have been
+tested against a fake and have never met Meta. See
+`## What actually happened when this was attempted`, which is a record rather
+than a guess.
 
 **This was the cheapest of the four destinations, and one fact is why.** A Page
 access token is a token plus an expiry, which is the shape `accounts` has held
@@ -70,13 +71,23 @@ recording precisely because the TikTok trip did not.
   returned `The Nightly Build`, `Digital creator`. A registration that stores an
   unproven token fails days later at a slot.
 
-**What is not done:**
+**The deploy, and the order it forced:**
 
-- **The gateway registration.** `POST /api/accounts/facebook` returns 404,
-  because the route ships with this change and the deployed image predates it.
-  So the order is deploy first, then run
-  `scripts/facebook_authorise.py`. The consent above is already granted, which
-  makes the re-run a click-through rather than a fresh authorisation.
+- **Register after deploying, never before.** `POST /api/accounts/facebook`
+  ships with the code, so the first attempt hit a 404 from an image that
+  predated it and spent an authorisation code for nothing. Codes are single
+  use. The consent itself survives, so the second trip on an already-connected
+  app is one click with no Page picker.
+- **`/facebook/callback` 404s until homelab is changed too.** See
+  `## The other repo, which is the trap worth remembering`.
+- **The brand has to match the rows already there.** Registering with
+  `--brand nightlybuild`, which is what `CLAUDE.md` said brand is, put the
+  board in a group of its own: the other three rows carry `thenightlybuild`,
+  derived from the handle when they were registered without an explicit brand.
+  Corrected by re-registering. Read `accounts.brand` out of the database before
+  registering anything new rather than trusting the prose.
+
+**What is not done:**
 - **The Page username, and it is not merely unclaimed: the Page is not
   eligible for one yet.** Facebook offers no username field at all on a new
   Page. The documented bar is roughly 25 followers plus at least one post, and
@@ -180,9 +191,52 @@ Ordered, and the order matters in one place, noted at step 5.
    Put an explicit `account=` on the line. A line without one is resolved to the
    single registered Instagram account, and that shortcut is F0.
 
-6. **Check it.** The Posts page grows a Facebook board once a Reel has
+6. **Add the path to the homelab allowlist, and give the Page a slot.** Both
+   live in the homelab repo: an `Exact /facebook/callback` in
+   `httproute.yaml`, and a `GATEWAY_SLOTS` line ending `account=<page id>` in
+   `configmap.yaml`. The ConfigMap has a Reloader annotation, so the pod
+   restarts itself and the boot log prints one `Applied 1 slot(s) from config
+   for <id>` per line; a `Removed n config slot(s)` line would mean an existing
+   schedule was just deleted.
+
+   The slot is safe to add before the account is registered: every line names
+   an account so nothing is unresolved, `schedule_slots` has no foreign key,
+   and `scheduler.tick_once` iterates accounts and then their slots, so a slot
+   for an account that does not exist is never visited.
+
+7. **Check it.** The Posts page grows a Facebook board once a Reel has
    published, and the switcher grows a fourth mark. Before that, the account row
    is visible in the panel as soon as step 4 finishes.
+
+## The other repo, which is the trap worth remembering
+
+`gateway/pages.py` serving `/facebook/callback` is half of a public route. The
+other half is an `Exact` match in `k8s/talos/apps/reelsmith/httproute.yaml` in
+the **homelab** repo. That route is an allowlist, deliberately, so Traefik 404s
+anything not named in it before it ever reaches the pod.
+
+Both repos already carried the warning. This project's `CLAUDE.md` records it
+from the TikTok rollout, in those words, and `httproute.yaml` says in its own
+header that "adding a route to the service means adding it here too". The
+Facebook rollout walked into it anyway, because the two halves ship separately
+and nothing connects them.
+
+So when adding any public path:
+
+```yaml
+# k8s/talos/apps/reelsmith/httproute.yaml
+- path:
+    type: Exact
+    value: /your/new/path
+```
+
+`Exact` rather than `PathPrefix`, for the reason that file gives: a prefix of
+`/` turns the allowlist into a catch-all and puts `/admin` and `/metrics` back
+on the public internet.
+
+**Nothing checks this.** The symptom is a 404 that looks like the application
+failing to serve a route it plainly has, and the fix is in a repository you
+were not looking at.
 
 ## The scopes, and why there are only three
 
