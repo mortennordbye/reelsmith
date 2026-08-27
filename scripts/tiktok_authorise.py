@@ -56,15 +56,23 @@ REDIRECT_URI = f"http://127.0.0.1:{REDIRECT_PORT}/callback"
 # Asked for together, in one authorisation, because adding a scope later means
 # going back through the browser and re-consenting.
 #
-# `video.publish` is Direct Post and `video.upload` is the inbox path. Both,
-# because which one is usable depends on an audit that has not happened and the
-# consent screen is not somewhere to go twice. `video.list` is what carries the
-# view and engagement counts, and without it nothing comes back at all.
-# `user.info.basic` is what makes the open id readable here rather than pasted.
+# `video.upload` is the inbox path and comes with the Content Posting API
+# product. `video.list` carries the view and engagement counts, and without it
+# nothing comes back at all. `user.info.basic` is what makes the open id
+# readable here rather than pasted, and comes with Login Kit.
 #
-# Asking for scopes the app does not use is a named rejection reason at audit
-# time, so this list should not grow speculatively.
-SCOPES = "user.info.basic,video.publish,video.upload,video.list"
+# **`video.publish` is deliberately absent.** It is Direct Post, and the
+# developer portal does not offer it as a scope an unaudited app can add: the
+# Add scopes dialog on this app listed only `user.info.profile`,
+# `user.info.stats` and `video.list` on 2026-08-27, in both the production and
+# the sandbox configuration. Requesting a scope the app does not hold fails the
+# authorisation rather than being quietly dropped, so asking for it here would
+# break the consent trip for the path that does work. Add it back in the same
+# breath as the audit that grants it, not before.
+#
+# Asking for scopes the app does not use is also a named rejection reason at
+# audit time, so this list should not grow speculatively.
+SCOPES = "user.info.basic,video.upload,video.list"
 
 
 class _Catcher(http.server.BaseHTTPRequestHandler):

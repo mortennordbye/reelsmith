@@ -192,6 +192,19 @@ what produces the open id, and the open id is what the `GATEWAY_SLOTS` line and
 the render host's `TIKTOK_OPEN_ID` are both keyed on, so neither can be written
 ahead of it.
 
+**And it stops at step 3, which is the thing to know before starting.** Tried
+on 2026-08-27: the account, the developer app and a sandbox all exist, and
+`gate.nordbye.it` is a verified URL property, which is the part that survives.
+What does not work is saving the app configuration. Production refuses without
+a demo video of an end to end flow; the sandbox validates clean, reports no
+error, and sends no request at all. The redirect URI lives inside that
+configuration, so `scripts/tiktok_authorise.py` has nowhere to send its
+callback. **"The inbox path needs no audit" is true of the API and false of the
+portal**, and the demo video is not a shortcut, because the interface it is
+meant to record does not exist here. The whole account is in
+`docs/tiktok-api-setup.md` under *What actually happened when this was
+attempted*.
+
 - **A destination is an `accounts` row, not a table.** `accounts.platform` says
   which service and `account_id` is an opaque account key holding a Meta user id
   on one platform and a channel id on another. Credentials live in a table per
