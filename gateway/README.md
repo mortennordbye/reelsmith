@@ -194,6 +194,48 @@ panel pass `platform=None` and say so in the open.
 `docs/youtube-publishing-plan.md` has the rest of the shape, and
 `docs/youtube-api-setup.md` covers the account layout and the audit.
 
+## The four public pages
+
+`gateway/pages.py` serves `GET /`, `/privacy`, `/terms` and `/tiktok/callback`,
+and they are the only routes here written for a human who is not the operator.
+
+**The first three exist because every platform demands them before it will take
+an application**, and TikTok adds a condition the others do not: the URLs must
+sit on a domain it can prove by DNS record, so a GitHub blob URL is refused with
+"This URL is not verified" and the form will not save. That is what moved them
+off `docs/` and onto this service. One domain verification covers all four URLs
+and the media TikTok pulls, because a verified domain carries its subdomains.
+
+**The fourth is an OAuth redirect target and it deliberately does nothing.**
+TikTok will not register a redirect URI that is not https, and loopback is not
+an exception, so `scripts/tiktok_authorise.py` cannot run a listener. The
+browser lands here, the page prints the authorisation code, and the operator
+pastes it back into the waiting script. Exchanging it here would need the client
+secret, which this service is not told until the account is registered at the
+end of that same trip, so the obvious improvement puts a secret in a second
+place for the sake of a one-off.
+
+Three things about this router are load bearing:
+
+- **It mounts unconditionally**, unlike `admin.public`. The obvious home was
+  that router, which already serves the one page that cannot require a login,
+  but it is only included when `GATEWAY_ADMIN_ENABLED` is on. Three platforms
+  hold these URLs on file, and a legal page that 404s because a feature flag
+  moved is worse than one nobody reads. `tests/test_gateway_pages.py` pins it
+  with the panel off.
+- **The templates are the only copy.** The Dockerfile copies `gateway/` alone,
+  so the image cannot see `docs/`. Rendering markdown at runtime would put a
+  parser in an image that carries no dependency it does not import, and keeping
+  both would be two privacy policies drifting apart.
+- **No script tags and no external stylesheet**, asserted rather than intended.
+  These render for somebody who arrived from an app listing on an unknown
+  device, and an asset on a third-party host is both a tracking vector on a
+  privacy policy and a way for the page to become unstyled text in a few years.
+
+Whatever fronts this service has to allow the paths explicitly if it is an
+allowlist. Shipping the route is not the same as serving it, and a redirect
+that 404s spends a consent trip.
+
 ## The scheduled queue
 
 ```

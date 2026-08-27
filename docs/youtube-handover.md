@@ -5,17 +5,26 @@ remaining work is decisions rather than code. `docs/youtube-api-setup.md` is the
 API background, `docs/youtube-publishing-plan.md` is the design and why it is
 shaped that way, and this is the list.
 
+**Updated 2026-08-27.** Four things below have been overtaken and are corrected
+in place rather than deleted, so the reasoning still reads: the gateway has
+published to YouTube, the channel is public, the slot moved, and the cadence
+mismatch this document called "the one with a deadline" has resolved itself
+without anyone acting on it. See *The cadence mismatch* below for why that is
+not quite a happy ending.
+
 ## What is live
 
-The gateway runs `0.0.29` on schema v11. The channel `@thenightlybuild`
-(`UCH8RDOkbzDna2mDAlq4GaFw`) is registered, and one slot fires at 21:05
-Europe/Oslo against Instagram's three. `--enqueue` puts one render into both
-queues from a single upload.
+The channel `@thenightlybuild` (`UCH8RDOkbzDna2mDAlq4GaFw`) is registered and
+`--enqueue` puts one render into every queue from a single upload, three of them
+since TikTok joined on 2026-08-27.
 
-One video is on the channel, uploaded from the Mac as a proof before the
-scheduler path existed. **The gateway itself has not published to YouTube yet**,
-because nothing has been enqueued since it went live. The first one is the real
-test of the path, and it is worth watching the log for rather than assuming.
+**As of 2026-08-27 the gateway has published 11 Shorts and 26 are queued.** The
+slot moved from 21:05 to 08:10 Europe/Oslo on that date, when the account went
+to one post a day on all three platforms at one time; the reasoning is in the
+Homelab ConfigMap next to the slot itself.
+
+The line below about the gateway never having published is what this section
+said on 2026-08-15. It was true then and the first one did work.
 
 ## The audit, which turned out not to block anything
 
@@ -47,13 +56,26 @@ requesting a quota increase. The form's only sensible entry point is the
 100 otherwise reads as confusion.
 
 Going public is `GATEWAY_YOUTUBE_PRIVACY_STATUS=public` in the Homelab
-ConfigMap, whenever you want it.
+ConfigMap. **Done; it has been `public` since shortly after this was written.**
 
 ## Decisions left
 
-**The cadence mismatch is the one with a deadline.** Three renders go in a day
-and one comes out on YouTube, so that queue grows by two a day and never
-drains. It will not break anything soon: `db.live_media_names` exempts every
+**The cadence mismatch resolved itself on 2026-08-27, and not by being fixed.**
+It read: three renders go in a day and one comes out on YouTube, so that queue
+grows by two a day and never drains. Instagram then went to one post a day and
+the nightly to `--batch 2 --max-queue 3`, so roughly one render goes in and one
+Short comes out. The queue stops growing.
+
+It does not shrink either. The 26 rows already there stay 26 deep, which is
+close to a month of Shorts, and **a Short published today was rendered around a
+month ago**. That matters for one thing beyond patience: 18 of those rows point
+at the Instagram cut and carry a follow ask rather than a subscribe ask, decided
+deliberately on 2026-08-27 rather than repaired with a hand written `UPDATE`
+against the live database. So that will keep showing up until the backlog
+drains, and it is expected rather than a regression.
+
+The original reasoning follows, and still applies to why nothing broke while the
+queue was growing. It will not break anything soon: `db.live_media_names` exempts every
 queued row from the media sweep regardless of account, so the videos are kept
 rather than pruned out from under it, and the PVC requests 1Gi but sits on an
 NFS mount with 446G free that does not enforce the request. What it does mean is

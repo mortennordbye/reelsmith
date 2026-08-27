@@ -1,8 +1,9 @@
 # reelsmith
 
-Automated Instagram Reels about trending dev and AI tooling. Python
-orchestration, Remotion rendering, plus a self-hosted comment to DM gateway.
-See `README.md` for architecture and `gateway/README.md` for the service.
+Automated short videos about trending dev and AI tooling, published to
+Instagram, YouTube and TikTok. Python orchestration, Remotion rendering, plus a
+self-hosted gateway holding the queue that publishes them. See `README.md` for
+architecture and `gateway/README.md` for the service.
 
 **If `PROFILE.md` exists, read it before writing anything a viewer will see.**
 It is gitignored and therefore absent from a fresh clone. It holds the account
@@ -171,6 +172,18 @@ Four things here are load bearing:
   is star velocity also the thing keeping posting alive, so do not "simplify"
   the refresh out of it without moving it somewhere that runs as often.
 
+  **That is true on the laptop and a silent no-op on the render host**, which is
+  the machine `--snapshot` actually runs on nightly. The render host has no
+  `ig_token.json` and no `IG_ACCESS_TOKEN`, because it enqueues rather than
+  publishes, so `refresh_token_if_due` cannot load a token and returns `None`
+  rather than failing, and the caller swallows the error besides. Nothing
+  anywhere refreshes the laptop's token automatically; the gateway refreshes its
+  own separately, which is why posting has never noticed. So `main.py
+  --refresh-token` on the laptop is a manual job with a 60 day clock on it, and
+  the only thing that will remind you is reading the expiry out of
+  `accounts/<name>/data/ig_token.json`. Checked 2026-08-27: last refreshed
+  2026-07-31, expires 2026-09-29.
+
 `--cover-url` is the seam for a hosted cover. Meta cURLs that URL, so it cannot
 be a local path. Without it the thumbnail comes from `thumb_offset` at
 `COVER_FRAME`, which is the same moment `cover.png` renders, so the fallback
@@ -178,34 +191,25 @@ loses the hook band and nothing else.
 
 ### Three destinations, and what is shared between them
 
-Instagram and YouTube publish today. **TikTok is built and not switched on**,
-which is a different thing from unbuilt and the distinction is the whole of what
-is left: the publisher, the refresher, the sweep and the queue row all exist and
-ship, and what is missing is an account. Nothing is waiting on code.
-`docs/tiktok-api-setup.md` opens with the ordered runbook that turns it on, with
-this deployment's redirect URI, domain and slot line filled in; the reasoning
-behind it is in that doc's later sections, `docs/multi-destination-audit.md` and
-`docs/tiktok-publishing-plan.md`.
+**All three publish**, since 2026-08-27. One render fans out to three queue
+rows, one slot each at 08:10 Europe/Oslo, one post a day per platform.
+`docs/tiktok-api-setup.md` opens with the ordered runbook; the reasoning behind
+it is in that doc's later sections, `docs/multi-destination-audit.md` and
+`docs/tiktok-publishing-plan.md`, both of which are records of a decision rather
+than guides.
 
 The order in that runbook is forced rather than preferred. The consent trip is
 what produces the open id, and the open id is what the `GATEWAY_SLOTS` line and
 the render host's `TIKTOK_OPEN_ID` are both keyed on, so neither can be written
-ahead of it.
+ahead of it. Re-authorising an account means walking it again.
 
-**It runs in the sandbox, and production is the part that is refused.** As of
-2026-08-27 the account, the developer app and the sandbox all exist,
-`gate.nordbye.it` is a verified URL property, and **the sandbox configuration
-is saved**: both products, all three scopes, the URLs and the redirect URI,
-checked by reloading the page rather than by the absence of an error. What is
-left is a step a person has to do, which is connecting the content account to
-the sandbox as a target user, and then the consent trip.
-
-Production will not save at all. Its Save validates the App review block, which
-demands a demo video of the end to end flow, and the interface that video is
-meant to record does not exist here: the consent is a CLI script and the
-posting is a background scheduler. So **"the inbox path needs no audit" holds,
-and the sandbox is how it is reached**; a sandbox cannot Direct Post publicly,
-which this deployment does not do anyway.
+**TikTok runs on the app's sandbox credentials, and that is permanent rather
+than a stage.** The production configuration cannot be saved at all: its Save
+validates the App review block, which demands a demo video of an end to end user
+interface, and this project has none. A sandbox reaches only its target users,
+`@thenightlybuild` is one, and the inbox path needs no audit, so nothing is lost
+except the ability to post unattended. Re-read this if a posting screen is ever
+built.
 
 Three portal facts that cost a session each, all in
 `docs/tiktok-api-setup.md` under *What actually happened when this was
@@ -461,17 +465,19 @@ section is.
   finished Reel goes straight into the gateway's schedule and the next free
   slot publishes it. The alternative was a draft, which waits for somebody to
   watch it, and a draft queued at 02:00 waits until somebody remembers it
-  exists. Three slots a day drain a queue faster than anyone reliably reviews
-  one.
-- **It renders four a night against three slots, up to a queue of ten.**
-  `--batch 4 --max-queue 10`, and the surplus is the point: the queue is meant
+  exists. A slot drains a queue faster than anyone reliably reviews one.
+- **It renders two a night against one slot, up to a queue of three.**
+  `--batch 2 --max-queue 3`, and the surplus is the point: the queue is meant
   to sit about three days deep so a night that produces nothing is absorbed
-  rather than showing up as a gap on the feed. A power cut, a wedged pod, or
-  four scripts that all trip the dash validator then costs the account nothing.
+  rather than showing up as a gap on the feed. A power cut, a wedged pod, or two
+  scripts that both trip the dash validator then costs the account nothing.
   Because `--max-queue` clamps the batch to the room left, most nights render
-  one or two and stop on their own. A ten-post queue is the case
-  `db.live_media_names` already exists to protect, so nothing on the gateway
-  side has to change to hold one.
+  one and stop on their own.
+
+  **It was `--batch 4 --max-queue 10` until 2026-08-27**, when Instagram went
+  from three posts a day to one and ten stopped meaning three days. The numbers
+  are a function of the cadence and have to move with it, which is the thing to
+  remember rather than either pair of numbers.
 - **One render feeds all three destinations.** `--enqueue` and `--recover` make
   an Instagram row, a YouTube row and a TikTok row from the same MP4, uploaded
   once, so the nightly needs no second render and no extra step to keep three
@@ -532,7 +538,7 @@ section is.
   `/tmp/nightly.log`. One finished video survived because it was already on
   disk; a script that had been researched and paid for did not get used.
 - **So queueing is `--recover`, not a list of `--enqueue` lines.** The nightly
-  ends with `--recover --approve --max-queue 10`, which sweeps the last two
+  ends with `--recover --approve --max-queue 3`, which sweeps the last two
   days of build folders and finishes whatever each one still owes. It is what
   makes the run idempotent: interrupted anywhere, the next pass picks the work
   up rather than abandoning it. `queued.json`/`published.json` make it safe to
@@ -580,12 +586,20 @@ Two things about the queue are load bearing and easy to undo by accident:
   rolled.** A random offset is re-rolled on every restart, which lets one
   evening's slot fire twice. This is also why the config sync keeps the id of
   an unchanged slot rather than recreating the row.
+- **Keep gateway deploys out of the slot window.** Since 2026-08-27 that is one
+  window rather than four: all three platforms fire at 08:10 Europe/Oslo, so
+  06:10 UTC plus up to twenty minutes of jitter either side. A rollout landing
+  inside it restarts the pod mid publish, and the claim the row is holding is
+  deliberately never swept back automatically, because Meta may already have
+  accepted the post. The result is a row stuck in `claimed` with no failure,
+  which `CLAIM_STALE_AFTER` makes visible after an hour but nothing undoes for
+  you.
 
 ### The panel answers two different questions
 
 Queue and Posts list things. Insights compares them, and the split is
-deliberate: a list cannot answer "did that change work" while three posts a day
-go out and the prompt changes underneath them.
+deliberate: a list cannot answer "did that change work" while posts go out on a
+timetable and the prompt changes underneath them.
 
 - **The hook is on the queue card, and it is not decoration.** Cancelling
   before the slot fires is the only review this account has, and until the hook
@@ -945,7 +959,7 @@ and for every security update, and holds routine majors back for a human.
   finished render does tell the gateway it happened, which is a weaker thing
   and is undone by `--unmark`; see "Rendered is a second, weaker list".
 - **A batch ranks once, not once per video.** `--batch N` fills the gateway's
-  three daily slots from one sitting. It cannot rank per video, because the
+  slots for the next few days from one sitting. It cannot rank per video, because the
   cooldown only starts at publish or enqueue, so a freshly rendered repo is
   still the top candidate and every run in the batch would pick it again.
   `--covered` prints the store; covered repos are dropped during discovery,
@@ -1006,7 +1020,7 @@ and for every security update, and holds routine majors back for a human.
   zero. Re-run `pod-setup.sh` when it says so; it rebuilds on mismatch.
 - **A scheduled render needs a ceiling.** `--max-queue N` asks the gateway how
   many posts are already waiting and skips the batch when the line is at least
-  that long, because three slots a day drain slower than a nightly job fills.
+  that long, because one slot a day drains slower than a nightly job fills.
   An unreachable gateway is refusal, not zero: the two are opposite answers and
   guessing wrong costs a batch. `--recover` honours the same ceiling and makes
   the same refusal, because it runs after something has already gone wrong.
