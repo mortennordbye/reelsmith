@@ -53,6 +53,14 @@ class FakeYouTube:
     sessions: list[dict[str, Any]] = field(default_factory=list)
     # Byte counts of each completed PUT.
     uploads: list[int] = field(default_factory=list)
+    # What the Analytics API knows, keyed by video id. A video missing from
+    # here is one YouTube has no data for, which is what a Short published an
+    # hour ago looks like and is not an error.
+    stats: dict[str, dict[str, float]] = field(default_factory=dict)
+    analytics_status: int = 200
+    # Every report request, so a test can assert the range and the filter
+    # rather than only what came back.
+    reports: list[httpx.QueryParams] = field(default_factory=list)
 
     def handle(self, request: httpx.Request) -> httpx.Response | None:
         """Answer if this is ours, otherwise None so Meta gets a look."""
@@ -62,6 +70,27 @@ class FakeYouTube:
             if self.token_status != 200:
                 return httpx.Response(self.token_status, json={"error": "invalid_grant"})
             return httpx.Response(200, json={"access_token": "ya29.fake", "expires_in": 3599})
+
+        if url.startswith("https://youtubeanalytics.googleapis.com/v2/reports"):
+            self.reports.append(request.url.params)
+            if self.analytics_status != 200:
+                return httpx.Response(self.analytics_status, json={"error": {"code": 403}})
+            metrics = str(request.url.params.get("metrics") or "").split(",")
+            asked = str(request.url.params.get("filters") or "").removeprefix("video==")
+            wanted = [one for one in asked.split(",") if one in self.stats]
+            return httpx.Response(
+                200,
+                json={
+                    # Dimension first, then the metrics in the order asked for,
+                    # which is the shape the real report comes back in.
+                    "columnHeaders": [{"name": "video"}]
+                    + [{"name": name} for name in metrics],
+                    "rows": [
+                        [one] + [self.stats[one].get(name, 0) for name in metrics]
+                        for one in wanted
+                    ],
+                },
+            )
 
         if url.startswith("https://www.googleapis.com/upload/youtube/v3/videos"):
             if self.session_status != 200:

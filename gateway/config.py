@@ -232,17 +232,24 @@ class GatewaySettings(BaseSettings):
     # than reports. **The two flags move together or not at all**, and one
     # changed without the other is the bug to look for. See PROFILE.md.
     youtube_synthetic_media: bool = False
-    # Deliberately absent: GATEWAY_YOUTUBE_ENABLED.
+    # Still deliberately absent: GATEWAY_YOUTUBE_ENABLED.
     #
-    # `docs/youtube-publishing-plan.md` names it and it was never built. Adding
-    # it now would be a second gate on something `scheduler_enabled` already
-    # gates completely: nothing on the YouTube path runs unless a slot fires,
-    # and a slot only fires when the scheduler is on.
+    # `docs/youtube-publishing-plan.md` names it and it was never built. It
+    # would be a second gate on something `scheduler_enabled` already gates
+    # completely, because publishing to YouTube still happens only when a slot
+    # fires, and a slot fires only when the scheduler is on.
     #
-    # `tiktok_enabled` is not the same case, and the asymmetry is the point.
-    # That platform has a background loop of its own, rotating a token daily,
-    # which would call TikTok on every deployment that has no TikTok account.
-    # A flag earns its place when something runs without it.
+    # The flag below is the narrower thing and its name says which. A flag earns
+    # its place when something runs without a slot, and as of the analytics
+    # sweep exactly one YouTube thing does.
+    #
+    # On by default, for the same reason `insights_enabled` is: it only reads,
+    # it asks Google nothing on a deployment with no YouTube account, and the
+    # cost of it running unasked is a report nobody opens. Off is the switch for
+    # a channel whose refresh token has died, where the alternative is a sweep
+    # spending a failed token mint every six hours and a `graph_errors` count
+    # that says nothing about Meta.
+    youtube_insights_enabled: bool = True
     # Shorts are 10 to 20 MB and go up in seconds on any real connection. The
     # ceiling is for a stalled transfer, not a slow one.
     youtube_upload_timeout_s: int = 600

@@ -43,8 +43,13 @@ from typing import Any
 # time, completion or anything a three second skip could be computed from. A
 # TikTok row rendered with Instagram's set is a post that got zero reach and
 # zero saves, which is a claim rather than an absence. F5.
+#
+# YouTube's Analytics report has the same four counts and neither reach nor
+# saves. What it does have, and TikTok has not, is watch time, which is why the
+# retention tiles below are keyed on the reading rather than on the platform.
 _MEASURED = {
     "instagram": ("views", "reach", "likes", "comments", "saved", "shares"),
+    "youtube": ("views", "likes", "comments", "shares"),
     "tiktok": ("views", "likes", "comments", "shares"),
 }
 

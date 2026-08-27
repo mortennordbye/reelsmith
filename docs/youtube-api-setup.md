@@ -153,6 +153,14 @@ capped at 60 characters by `max_hook_chars`, so it fits a title as written.
   scores the whole video. Feeding both into `_results_block` without
   distinguishing them would corrupt the one signal the scriptwriter is tuned on.
 
+  The numbers themselves are collected since 2026-08-27. The insights sweep
+  reads the YouTube Analytics API for every registered channel and stores views,
+  likes, comments, shares, average view duration and average view percentage
+  against the `youtube` platform, which is what the Posts page renders. The
+  scopes for it were granted at the first authorisation, so a channel already
+  set up needs no second consent trip. `skip_rate` stays 0 on those rows and
+  `/api/results` still filters to Instagram.
+
 ## On staying published
 
 The risk worth managing is not the API. Compliant use of the official API is

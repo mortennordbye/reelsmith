@@ -395,9 +395,18 @@ async def posts_page(request: Request) -> Any:
         # that have a reading. A total watch time would be a number that only
         # goes up, and dividing by every post would report a hook getting
         # better every time an unmeasured one drops off the window.
-        scored = [
-            p["insights"] for p in posts if p["insights"] and p["insights"]["skip_rate"]
-        ]
+        #
+        # Each figure over its own population rather than all of them over the
+        # posts that have a `skip_rate`. Only Instagram reports that one, so
+        # tying the watch time to it hid the number YouTube does report behind
+        # the one it does not.
+        scored: list[Any] = [p["insights"] for p in posts if p["insights"]]
+
+        def mean(key: str, rows: list[Any] = scored) -> float | None:
+            measured = [float(r[key]) for r in rows if r[key]]
+            return sum(measured) / len(measured) if measured else None
+
+        avg_watch_ms = mean("avg_watch_ms")
         boards.append(
             {
                 "account": account,
@@ -412,14 +421,14 @@ async def posts_page(request: Request) -> Any:
                 # Reels benchmark at 30 to 40 percent; the first seven here ran
                 # 64 to 80, which is why it is on the board rather than buried
                 # in a per post row.
-                "avg_skip": (
-                    sum(r["skip_rate"] for r in scored) / len(scored) if scored else None
-                ),
-                "avg_watch_s": (
-                    sum(r["avg_watch_ms"] for r in scored) / len(scored) / 1000
-                    if scored
-                    else None
-                ),
+                "avg_skip": mean("skip_rate"),
+                # Milliseconds in the column and seconds on the page, the same
+                # conversion the per post tile makes.
+                "avg_watch_s": avg_watch_ms / 1000 if avg_watch_ms else None,
+                # YouTube's share of the video watched. Meta reports no such
+                # figure and TikTok reports nothing about watching at all, so
+                # this tile appears on one board of three.
+                "avg_viewed": mean("avg_view_pct"),
             }
         )
 

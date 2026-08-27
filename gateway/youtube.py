@@ -294,3 +294,147 @@ async def upload(
     )
     log.info("Uploaded %s as %s (%s)", video_path.name, result.video_id, result.privacy_status)
     return result
+
+
+class AnalyticsError(RuntimeError):
+    """A read that did not answer.
+
+    Separate from `UploadError` because that one's whole job is the
+    `session_created` flag, which divides a retryable failure from one where a
+    video may already exist. A read creates nothing, so there is no such line to
+    draw and no flag to carry.
+    """
+
+
+@dataclass(frozen=True)
+class VideoStats:
+    """One video's lifetime numbers, as the Analytics API reports them.
+
+    `views`, `likes`, `comments` and `shares` line up with the columns
+    `insights` already has. The other two are the half Instagram calls
+    retention: `avg_watch_ms` is `averageViewDuration`, which YouTube gives in
+    whole seconds, and `avg_view_pct` is `averageViewPercentage`.
+
+    **`avg_view_pct` is not a skip rate and cannot become one.** It scores the
+    whole video, where `skip_rate` is the share who left inside three seconds
+    and therefore scores the opening alone. They answer different questions,
+    which is why this carries its own field rather than filling that column.
+
+    **It can exceed 100, and so can the watch time.** A Short loops, and a
+    replay counts, so a video that holds people round twice reports 227.5
+    percent and an average view duration longer than the video. Measured on
+    this account's own numbers on 2026-08-27. Not clamped: the figure is the
+    real one and clamping it would hide the only thing on the page that says a
+    Short was watched twice.
+    """
+
+    video_id: str
+    views: int = 0
+    likes: int = 0
+    comments: int = 0
+    shares: int = 0
+    avg_watch_ms: int = 0
+    total_watch_ms: int = 0
+    avg_view_pct: float = 0.0
+
+
+ANALYTICS_URL = "https://youtubeanalytics.googleapis.com/v2/reports"
+
+# Asked for in one call for the whole batch, because the report is dimensioned
+# by video and the quota is per request rather than per row.
+#
+# `estimatedMinutesWatched` is minutes and `averageViewDuration` is seconds, so
+# both are converted on the way in. Everything the table stores is milliseconds.
+ANALYTICS_METRICS = (
+    "views",
+    "likes",
+    "comments",
+    "shares",
+    "estimatedMinutesWatched",
+    "averageViewDuration",
+    "averageViewPercentage",
+)
+
+# The documented ceiling on a `video==` filter is 500 ids. Fifty keeps the URL
+# short enough to read in a log line, and a queue publishing one a day reaches
+# the sweep's thirty day window well inside one request anyway.
+ANALYTICS_BATCH = 50
+
+
+async def analytics(
+    http: httpx.AsyncClient,
+    *,
+    token: str,
+    video_ids: list[str],
+    start_date: str,
+    end_date: str,
+) -> dict[str, VideoStats]:
+    """Lifetime numbers for a batch of the channel's own videos, keyed by id.
+
+    A date range rather than a per-day series, because `insights` already keeps
+    the history: one row per media per day, each holding the running total. A
+    daily report would answer the same question in a shape nothing here reads.
+
+    **A video with no rows is not an error.** YouTube omits a video that has no
+    data for the range, which is what a Short published an hour ago looks like,
+    and the caller stores nothing for it rather than storing zeroes.
+    """
+    if not video_ids:
+        return {}
+
+    try:
+        response = await http.get(
+            ANALYTICS_URL,
+            params={
+                "ids": "channel==MINE",
+                "startDate": start_date,
+                "endDate": end_date,
+                "metrics": ",".join(ANALYTICS_METRICS),
+                "dimensions": "video",
+                "filters": f"video=={','.join(video_ids)}",
+                "maxResults": len(video_ids),
+            },
+            headers={"authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+    except httpx.HTTPError as exc:
+        raise AnalyticsError(f"Could not reach the YouTube Analytics API: {exc}") from exc
+
+    if response.status_code != 200:
+        raise AnalyticsError(f"Analytics refused ({response.status_code}): {response.text}")
+
+    payload = response.json() if response.content else {}
+    # Read by header name rather than by position. The column order follows the
+    # order asked for today, and a report that quietly gained a column would
+    # otherwise be stored as the wrong metric rather than as an error.
+    columns = [str(head.get("name") or "") for head in payload.get("columnHeaders") or []]
+    if "video" not in columns:
+        raise AnalyticsError(f"Analytics returned no video dimension: {columns}")
+
+    index = {name: position for position, name in enumerate(columns)}
+
+    def number(row: list, name: str) -> float:
+        position = index.get(name)
+        if position is None or position >= len(row):
+            return 0.0
+        try:
+            return float(row[position] or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    stats = {}
+    for row in payload.get("rows") or []:
+        video_id = str(row[index["video"]] or "")
+        if not video_id:
+            continue
+        stats[video_id] = VideoStats(
+            video_id=video_id,
+            views=int(number(row, "views")),
+            likes=int(number(row, "likes")),
+            comments=int(number(row, "comments")),
+            shares=int(number(row, "shares")),
+            avg_watch_ms=int(number(row, "averageViewDuration") * 1000),
+            total_watch_ms=int(number(row, "estimatedMinutesWatched") * 60_000),
+            avg_view_pct=round(number(row, "averageViewPercentage"), 1),
+        )
+    return stats

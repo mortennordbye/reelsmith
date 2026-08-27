@@ -399,6 +399,19 @@ Three decisions worth knowing:
 - **The sweep is on by default**, where the scheduler is off. It only reads: it
   creates nothing, publishes nothing and messages nobody, so gaining it by
   upgrading is not a surprise worth guarding against.
+- **It reads all three platforms, and the `platform` column says which.** Meta
+  per media, TikTok by listing the account's videos and matching on the title
+  this service wrote, YouTube in one Analytics report covering the whole batch.
+  What each of them does not report stays 0, and nothing downstream may read
+  those zeroes as a result: a TikTok row has no watch time of any kind, a
+  YouTube row has no `skip_rate`, and neither has reach or saves.
+  `GATEWAY_TIKTOK_ENABLED` and `GATEWAY_YOUTUBE_INSIGHTS_ENABLED` are the two
+  switches, and only the second is on by default.
+- **Only Instagram reaches the scriptwriter.** `/api/results` filters to it
+  explicitly. `skip_rate` scores the first three seconds, YouTube's
+  `averageViewPercentage` scores the whole video and TikTok reports nothing
+  about watching, so the three are stored side by side and compared to
+  themselves rather than to each other.
 
 The per-post funnel comes from `comments_handled` and `deliveries`, both keyed
 by media id and both written all along. `db.funnel` only ever summed them
