@@ -1,0 +1,122 @@
+- generic [ref=f10e2]:
+  - generic [ref=f10e6]:
+    - link [ref=f10e7] [cursor=pointer]:
+      - /url: /
+      - img "TikTok for Developers" [ref=f10e8]
+    - navigation [ref=f10e11]:
+      - button "Products" [ref=f10e12] [cursor=pointer]
+      - link "Docs" [ref=f10e16] [cursor=pointer]:
+        - /url: /doc/overview
+      - link "Support" [ref=f10e18] [cursor=pointer]:
+        - /url: https://developers.tiktok.com/portal/support
+      - link "Blog" [ref=f10e20] [cursor=pointer]:
+        - /url: /blogs
+      - button "Get started" [ref=f10e23] [cursor=pointer]
+  - main [ref=f10e26]:
+    - generic [ref=f10e32]:
+      - generic [ref=f10e33]: Sign up
+      - textbox "Email" [ref=f10e37]
+      - generic [ref=f10e38]:
+        - text: By continuing, you agree to the
+        - link "Tiktok Developer Terms of Service" [ref=f10e39] [cursor=pointer]:
+          - /url: https://www.tiktok.com/legal/page/global/tik-tok-developer-terms-of-service/en
+        - text: and acknowledge that you have read our
+        - link "Privacy Policy" [ref=f10e40] [cursor=pointer]:
+          - /url: https://www.tiktok.com/legal/page/global/partner-privacy-policy/en
+        - text: .
+      - button "Send PIN to email" [disabled] [ref=f10e42]
+      - generic [ref=f10e45]:
+        - generic [ref=f10e46]:
+          - text: Already have a developer account?
+          - link "Log in" [ref=f10e47] [cursor=pointer]:
+            - /url: /login
+        - generic [ref=f10e48]:
+          - text: Having trouble creating an account?
+          - link "Get support" [ref=f10e49] [cursor=pointer]:
+            - /url: https://www.tiktok.com/support
+  - contentinfo [ref=f10e51]:
+    - generic [ref=f10e52]:
+      - img "TikTok for Developers" [ref=f10e53]
+      - navigation [ref=f10e55]:
+        - generic [ref=f10e56]:
+          - generic [ref=f10e57]: Products
+          - generic [ref=f10e60]:
+            - list [ref=f10e61]:
+              - listitem [ref=f10e62]:
+                - link "Share Kit" [ref=f10e63] [cursor=pointer]:
+                  - /url: /products/share-kit/
+              - listitem [ref=f10e64]:
+                - link "Login Kit" [ref=f10e65] [cursor=pointer]:
+                  - /url: /products/login-kit/
+              - listitem [ref=f10e66]:
+                - link "Content Posting API" [ref=f10e67] [cursor=pointer]:
+                  - /url: /products/content-posting-api/
+              - listitem [ref=f10e68]:
+                - link "Research API" [ref=f10e69] [cursor=pointer]:
+                  - /url: /products/research-api/
+              - listitem [ref=f10e70]:
+                - link "Display API" [ref=f10e71] [cursor=pointer]:
+                  - /url: /doc/display-api-get-started/
+            - list [ref=f10e72]:
+              - listitem [ref=f10e73]:
+                - link "Embed Videos" [ref=f10e74] [cursor=pointer]:
+                  - /url: /doc/embed-videos/
+              - listitem [ref=f10e75]:
+                - link "Data Portability API" [ref=f10e76] [cursor=pointer]:
+                  - /url: /products/data-portability-api/
+              - listitem [ref=f10e77]:
+                - link "Green Screen Kit" [ref=f10e78] [cursor=pointer]:
+                  - /url: /products/share-kit#green-screen
+              - listitem [ref=f10e79]:
+                - link "Commercial Content API" [ref=f10e80] [cursor=pointer]:
+                  - /url: /products/commercial-content-api
+        - generic [ref=f10e81]:
+          - generic [ref=f10e82]: Other platforms
+          - list [ref=f10e85]:
+            - listitem [ref=f10e86]:
+              - link "TikTok Embeds" [ref=f10e87] [cursor=pointer]:
+                - /url: https://www.tiktok.com/embed
+            - listitem [ref=f10e88]:
+              - link "TikTok for Business" [ref=f10e89] [cursor=pointer]:
+                - /url: https://www.tiktok.com/business
+            - listitem [ref=f10e90]:
+              - link "Advertise on TikTok" [ref=f10e91] [cursor=pointer]:
+                - /url: https://www.tiktok.com/business/&attr_source=tt_official_site&attr_medium=tt_official_site_guidance
+            - listitem [ref=f10e92]:
+              - link "TikTok Creative Center" [ref=f10e93] [cursor=pointer]:
+                - /url: https://ads.tiktok.com/business/creativecenter/
+            - listitem [ref=f10e94]:
+              - link "TikTok.com" [ref=f10e95] [cursor=pointer]:
+                - /url: https://www.tiktok.com
+            - listitem [ref=f10e96]:
+              - link "Policy Center" [ref=f10e97] [cursor=pointer]:
+                - /url: https://developers.tiktok.com/docs-v2/rules/en
+        - generic [ref=f10e98]:
+          - generic [ref=f10e99]: Company
+          - list [ref=f10e102]:
+            - listitem [ref=f10e103]:
+              - link "About TikTok" [ref=f10e104] [cursor=pointer]:
+                - /url: https://www.tiktok.com/about
+            - listitem [ref=f10e105]:
+              - link "Newsroom" [ref=f10e106] [cursor=pointer]:
+                - /url: https://newsroom.tiktok.com
+            - listitem [ref=f10e107]:
+              - link "Contact" [ref=f10e108] [cursor=pointer]:
+                - /url: https://www.tiktok.com/about/contact
+            - listitem [ref=f10e109]:
+              - link "Careers" [ref=f10e110] [cursor=pointer]:
+                - /url: https://careers.tiktok.com
+            - listitem [ref=f10e111]:
+              - link "ByteDance" [ref=f10e112] [cursor=pointer]:
+                - /url: https://www.bytedance.com
+            - listitem [ref=f10e113]:
+              - link "Transparency Center" [ref=f10e114] [cursor=pointer]:
+                - /url: https://www.tiktok.com/transparency
+    - generic [ref=f10e115]:
+      - generic [ref=f10e116]: © 2026 TikTok
+      - link "Terms of Service" [ref=f10e117] [cursor=pointer]:
+        - /url: https://www.tiktok.com/legal/page/global/tik-tok-developer-terms-of-service/en
+      - link "Privacy Policy" [ref=f10e118] [cursor=pointer]:
+        - /url: https://www.tiktok.com/legal/page/global/partner-privacy-policy/en
+      - link "Resources & Legal" [ref=f10e119] [cursor=pointer]:
+        - /url: "#site-footer"
