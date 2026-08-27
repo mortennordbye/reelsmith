@@ -178,9 +178,19 @@ loses the hook band and nothing else.
 
 ### Three destinations, and what is shared between them
 
-Instagram and YouTube publish today. TikTok is researched and not built, and the
-three docs are `docs/tiktok-api-setup.md`, `docs/multi-destination-audit.md` and
+Instagram and YouTube publish today. **TikTok is built and not switched on**,
+which is a different thing from unbuilt and the distinction is the whole of what
+is left: the publisher, the refresher, the sweep and the queue row all exist and
+ship, and what is missing is an account. Nothing is waiting on code.
+`docs/tiktok-api-setup.md` opens with the ordered runbook that turns it on, with
+this deployment's redirect URI, domain and slot line filled in; the reasoning
+behind it is in that doc's later sections, `docs/multi-destination-audit.md` and
 `docs/tiktok-publishing-plan.md`.
+
+The order in that runbook is forced rather than preferred. The consent trip is
+what produces the open id, and the open id is what the `GATEWAY_SLOTS` line and
+the render host's `TIKTOK_OPEN_ID` are both keyed on, so neither can be written
+ahead of it.
 
 - **A destination is an `accounts` row, not a table.** `accounts.platform` says
   which service and `account_id` is an opaque account key holding a Meta user id

@@ -26,6 +26,105 @@ YouTube side taught:
   review, one tap a day. It is not unattended, which is the whole objection to
   it, and it is also the only thing on this page that works today.
 
+## Activation, in order, with this deployment's values
+
+Written 2026-08-27, when the code was merged and running and nothing account
+shaped existed: `accounts` had an Instagram row and a YouTube row and no TikTok
+row, `tiktok_credentials` had no rows, the render host had no `TIKTOK_OPEN_ID`,
+and `GATEWAY_SLOTS` had no TikTok line. Everything below is portal work and one
+config change; no code is waiting on any of it.
+
+**The order is forced, and not by preference.** Step 4 produces the open id,
+and the open id is what steps 5 and 6 are keyed on, so nothing after step 4 can
+be done ahead of it. Doing 6 before 5 is the safe way round: a queued TikTok row
+with no slot waits harmlessly, and a slot firing with `GATEWAY_TIKTOK_ENABLED`
+off fails that row rather than retrying it, because a flag that is off is not a
+transient condition.
+
+1. **A TikTok account for the content**, and a decision about whether it is the
+   same identity as the Instagram and YouTube ones. Nothing forces them to
+   match. Not a Business account; the creator info endpoint reports whatever
+   options the account has and the API works from those.
+
+2. **A developer account** at <https://developers.tiktok.com> against that
+   login, developer terms accepted, then an app from Manage apps. Add the
+   **Content Posting API** product. Leave Direct Post configuration alone: the
+   shipped default is the inbox path, which needs no audit.
+
+   Scopes, exactly these four and no more, because asking for scopes the app
+   does not use is a named rejection reason at audit time:
+   `user.info.basic`, `video.publish`, `video.upload`, `video.list`.
+   All four in one trip; adding one later means going back through consent.
+
+3. **Two things in the portal that are easy to miss, and both fail late.**
+
+   - **Redirect URI**, character for character, port included:
+     `http://127.0.0.1:8723/callback`. `scripts/tiktok_authorise.py` fixes the
+     port for this reason. A mismatch is rejected with an error naming neither
+     side.
+   - **A verified URL property for `https://gate.nordbye.it`**, in the URL
+     properties widget, plus the DNS record it hands you. The publisher uses
+     `PULL_FROM_URL`, so without this every post fails at init with
+     `url_ownership_unverified`, which names the URL rather than the missing
+     record. The gateway already serves the MP4 unauthenticated at
+     `GET /media/{name}` off `GATEWAY_PUBLIC_BASE_URL`, verified reachable with
+     range support on 2026-08-27, so this is one DNS record and no new hosting.
+
+4. **The consent trip**, from this laptop, once:
+
+   ```bash
+   TIKTOK_CLIENT_KEY=... TIKTOK_CLIENT_SECRET=... \
+     uv run python scripts/tiktok_authorise.py --username '@handle'
+   ```
+
+   The keys are read from the environment and never from argv, which is visible
+   in `ps` and lands in shell history. It reads `GATEWAY_URL` and
+   `GATEWAY_TOKEN` from `.env` the way `youtube_authorise.py` does, exchanges
+   the code and registers the account and its credentials with the gateway in
+   one call, then prints the open id and the two lines it is needed in.
+
+   It prints the open id **before** it registers, so a gateway that refuses is
+   not also a lost open id. The refresh token is a different matter: it never
+   reaches a file or a terminal unless `--print-token` asks, and the documented
+   recovery for a broken chain is another trip through this script.
+
+5. **A homelab PR**, `k8s/talos/apps/reelsmith/configmap.yaml`, both halves in
+   the same change:
+
+   ```yaml
+   GATEWAY_TIKTOK_ENABLED: "true"
+   ```
+
+   and one more `GATEWAY_SLOTS` line, with the open id from step 4:
+
+   ```
+   17:40 Europe/Oslo jitter=15 account=<open_id>
+   ```
+
+   One a day, not three. The inbox path allows five pending shares per 24 hours
+   and each one is a tap in the app, so the cap is attention rather than API
+   quota. Put an explicit `account=` on it like every other line: a line without
+   one attaches to the single registered Instagram account, and the config sweep
+   freezes rather than deleting anything it cannot attribute. Pick a time
+   outside the existing windows (06:10, 10:40, 17:20 and 19:05 UTC, each plus
+   its jitter) and keep gateway deploys out of all of them.
+
+6. **`TIKTOK_OPEN_ID` on the render host**, in
+   `accounts/nightlybuild/.env` on the share, next to `YOUTUBE_CHANNEL_ID`.
+   That file, not the root `.env`: the open id is a property of one account.
+   The open id is all that host needs, because the gateway holds the
+   credentials, so no TikTok secret reaches the machine that renders.
+
+   Until this line exists the nightly fan-out skips TikTok silently and queues
+   only the Reel and the Short, which is what every render did before this.
+   After it, `--enqueue` and `--recover` make a third row from the same MP4,
+   uploaded once, and `queued.json` gains a `tiktok_id`.
+
+**Then check it the way `## Verify it by API, not by the green ticks` says**,
+not by the portal's green ticks. Seeing
+`unaudited_client_can_only_post_to_private_accounts` is the proof that
+everything else is wired correctly.
+
 ## The two paths, and which one you are on
 
 | | Direct Post | Inbox upload |
