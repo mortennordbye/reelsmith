@@ -47,10 +47,18 @@ from typing import Any
 # YouTube's Analytics report has the same four counts and neither reach nor
 # saves. What it does have, and TikTok has not, is watch time, which is why the
 # retention tiles below are keyed on the reading rather than on the platform.
+#
+# Facebook is the one that is nearly Instagram and is not. It reports reach,
+# which no other platform here does, and it reports no share count at all:
+# `post_video_social_actions` is comments and shares fused into one number, and
+# splitting it by subtracting a separately fetched comment count would be
+# arithmetic on two different definitions. So shares is absent rather than
+# zero, which is the whole reason this table exists.
 _MEASURED = {
     "instagram": ("views", "reach", "likes", "comments", "saved", "shares"),
     "youtube": ("views", "likes", "comments", "shares"),
     "tiktok": ("views", "likes", "comments", "shares"),
+    "facebook": ("views", "reach", "likes", "comments"),
 }
 
 

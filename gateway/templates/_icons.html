@@ -20,6 +20,16 @@
             stroke="currentColor" stroke-width="2"/>
       <path d="M10.5 9.2v5.6l5-2.8z" fill="currentColor"/>
     </svg>
+  {%- elif platform == 'facebook' -%}
+    {# The lowercase f in its rounded square, drawn as an outline so it sits in
+       the same weight as the other three rather than as the only solid mark. #}
+    <svg viewBox="0 0 24 24" width="{{ size }}" height="{{ size }}" fill="none"
+         aria-hidden="true" focusable="false" style="vertical-align:-2px">
+      <rect x="3" y="3" width="18" height="18" rx="5.5"
+            stroke="currentColor" stroke-width="2"/>
+      <path d="M15 8h-1.6a2 2 0 0 0-2 2v9M9.6 13h4.6"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>
   {%- elif platform == 'tiktok' -%}
     {# A quaver, which is the shape the eye finds at this size. The official
        mark is two offset copies in two colours, which at 13px reads as a
@@ -39,4 +49,17 @@
       <circle cx="17.2" cy="6.8" r="1.3" fill="currentColor"/>
     </svg>
   {%- endif -%}
+{%- endmacro %}
+
+{# The word beside the mark, in one place.
+
+   It lived as `{'youtube': 'YouTube', 'tiktok': 'TikTok'}.get(p, 'Instagram')`
+   in two templates, which was two copies of a list that grows every time a
+   destination is added and no way to notice when only one of them did. The
+   fallback is still Instagram rather than the raw column, for the reason the
+   account readers default to it: a platform nobody has taught this about
+   renders the word that has always been rendered. #}
+{% macro platform_name(platform) -%}
+  {{- {'youtube': 'YouTube', 'tiktok': 'TikTok', 'facebook': 'Facebook'}
+      .get(platform, 'Instagram') -}}
 {%- endmacro %}

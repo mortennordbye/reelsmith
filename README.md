@@ -1,8 +1,8 @@
 # reelsmith
 
-Automated short videos about trending AI/dev tooling, on Instagram, YouTube and
-TikTok. One command goes from "what's trending on GitHub today" to a
-posted-ready 1080x1920 MP4.
+Automated short videos about trending AI/dev tooling, on Instagram, YouTube,
+TikTok and Facebook. One command goes from "what's trending on GitHub today" to
+a posted-ready 1080x1920 MP4.
 
 ```
 python main.py
@@ -287,19 +287,23 @@ mechanic, which is wired but dormant because nothing advertises the keyword any
 more. It runs in the homelab cluster, imports nothing from `pipeline/` or
 `config.py`, and the pipeline works with it down. See `gateway/README.md`.
 
-**A destination is a row, not a service.** Instagram, YouTube and TikTok all
-publish from the same queue, the same slots and the same claims; the entire
-difference is one branch in `scheduler.publish_queued` and a credentials table
-per platform. One render feeds every destination it is enqueued to, uploaded
-once, because `/api/media` is content addressed.
+**A destination is a row, not a service.** Instagram, YouTube, TikTok and
+Facebook all publish from the same queue, the same slots and the same claims;
+the entire difference is one branch in `scheduler.publish_queued` and, on two
+of them, a credentials table. One render feeds every destination it is enqueued
+to, uploaded once, because `/api/media` is content addressed.
 
-TikTok arrived last and cost no subsystem, but it is not on the same footing as
-the other two. It posts by dropping the video into the creator's drafts for one
-tap, because the audit that would allow unattended posting reviews a posting
-screen this project does not have and rejects apps "designed for private or
-personal use only". A refusal therefore costs a config flag rather than a
-rewrite, which is what the two paths sharing a publisher buys.
-`docs/tiktok-api-setup.md` is the runbook and the portal traps.
+TikTok is not on the same footing as the others. It posts by dropping the video
+into the creator's drafts for one tap, because the audit that would allow
+unattended posting reviews a posting screen this project does not have and
+rejects apps "designed for private or personal use only". A refusal therefore
+costs a config flag rather than a rewrite, which is what the two paths sharing a
+publisher buys. `docs/tiktok-api-setup.md` is the runbook and the portal traps.
+
+Facebook was the cheapest of the four and the reason is worth stating: a Page
+access token is a token plus an expiry, which is the shape `accounts` has held
+since the first migration, so it needed no credentials table, no token mint and
+no refresher. `docs/facebook-api-setup.md` is the runbook.
 
 **Several accounts, one niche.** `accounts/<name>/` holds an account's `.env`,
 its cooldown store and its voice reference, and `--account` binds a run to one
@@ -480,8 +484,8 @@ this project does not have; the drafts path works today and needs no audit. A
 second niche, which is one required field and one scene component away and is
 deliberately waiting for a second real caller. A second render backend.
 
-The admin UI, the scheduled queue, the insights feedback loop, YouTube, TikTok
-and `--account` all used to be listed here and all six shipped.
+The admin UI, the scheduled queue, the insights feedback loop, YouTube, TikTok,
+Facebook and `--account` all used to be listed here and all seven shipped.
 
 The largest open question is how much of the pipeline could move off the laptop
 entirely. Research and publishing would move easily; script generation would

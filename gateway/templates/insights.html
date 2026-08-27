@@ -32,6 +32,11 @@
           YouTube reports average view percentage instead, which scores the
           whole video, so the two cannot share a table without one of them
           being read as the other.
+        {% elif _p == 'facebook' %}
+          Facebook reports the average time a Reel played, replays included,
+          which scores the whole video rather than the opening. It is the
+          closest thing here to Instagram's numbers and it still cannot share a
+          table with them.
         {% else %}
           TikTok reports no retention, watch time or completion metric of any
           kind, so there is nothing here to group by.

@@ -22,13 +22,20 @@ that deliberately carries no dependency it does not import, and keeping both
 would mean two versions of a privacy policy drifting apart. Those two files now
 point here instead.
 
-`/tiktok/callback` sits here for the same reason the other three do, which is
-that it has to answer whether or not the admin panel is on. It is the OAuth
-redirect target `scripts/tiktok_authorise.py` sends a browser to, and it exists
-because **TikTok will not register a redirect URI that is not https**, so the
-loopback listener the script used to run had nowhere to listen. It renders the
-authorisation code and nothing else happens here; the exchange is done by the
-script, with the client secret, on the operator's own machine.
+`/tiktok/callback` and `/facebook/callback` sit here for the same reason the
+other three do, which is that they have to answer whether or not the admin
+panel is on. They are the OAuth redirect targets `scripts/tiktok_authorise.py`
+and `scripts/facebook_authorise.py` send a browser to, and they exist because
+**neither platform will register a redirect URI that is not https**, so a
+loopback listener has nowhere to listen. They render the authorisation code and
+nothing else happens here; the exchange is done by the script, with the client
+secret, on the operator's own machine.
+
+**Two routes and one template.** The wording is all that differs between them,
+so it is a parameter rather than a second page drifting from the first. Two
+routes rather than one shared `/oauth/callback`, because each platform has its
+own URL on file in its own developer portal, and a URL a platform holds is not
+something to consolidate later.
 """
 
 from __future__ import annotations
@@ -63,8 +70,7 @@ async def terms(request: Request) -> Any:
     return templates.TemplateResponse(request, "terms.html", {})
 
 
-@router.get("/tiktok/callback", response_class=HTMLResponse, name="tiktok_callback")
-async def tiktok_callback(request: Request) -> Any:
+def _callback(request: Request, *, platform: str, script: str) -> Any:
     """Show the authorisation code so it can be pasted back into the terminal.
 
     **It deliberately does not exchange the code.** The exchange needs the
@@ -73,18 +79,41 @@ async def tiktok_callback(request: Request) -> Any:
     of. Handing the secret to the gateway early to save one paste would put it
     in a second place for the sake of a one-off.
 
-    A stranger reaching this URL sees a page saying there is nothing here. The
-    code in the query string is the visitor's own, so rendering it back tells
-    nobody anything they did not already have.
+    A stranger reaching either URL sees a page saying there is nothing here.
+    The code in the query string is the visitor's own, so rendering it back
+    tells nobody anything they did not already have.
     """
     query = request.query_params
     return templates.TemplateResponse(
         request,
-        "tiktok_callback.html",
+        "oauth_callback.html",
         {
+            "platform": platform,
+            "script": script,
             "code": query.get("code", ""),
             "state": query.get("state", ""),
             "error": query.get("error", ""),
             "error_description": query.get("error_description", ""),
         },
+    )
+
+
+@router.get("/tiktok/callback", response_class=HTMLResponse, name="tiktok_callback")
+async def tiktok_callback(request: Request) -> Any:
+    return _callback(
+        request, platform="TikTok", script="scripts/tiktok_authorise.py"
+    )
+
+
+@router.get("/facebook/callback", response_class=HTMLResponse, name="facebook_callback")
+async def facebook_callback(request: Request) -> Any:
+    """The Page consent trip's landing page.
+
+    Facebook Login does allow a `localhost` redirect while an app is in
+    development, and this deliberately does not rely on that: the app that
+    publishes the Reels is live, the allowance is one Meta has narrowed before,
+    and the page next door already exists.
+    """
+    return _callback(
+        request, platform="Facebook", script="scripts/facebook_authorise.py"
     )

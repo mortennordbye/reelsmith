@@ -1487,6 +1487,19 @@ def _enqueue_run(cfg: Settings, run_dir: Path, *, approved: bool) -> None:
         hook=hook,
     )
 
+    facebook_result = _enqueue_facebook(
+        cfg,
+        run_dir,
+        video_name=video_url.rsplit("/", 1)[-1],
+        link=repo.url if repo else "",
+        caption=caption,
+        cover_name=cover_url.rsplit("/", 1)[-1] if cover_url else None,
+        repo_full_name=repo.full_name if repo else None,
+        approved=approved,
+        recipe=recipe,
+        hook=hook,
+    )
+
     queue_receipt.write_text(
         json.dumps(
             {
@@ -1494,6 +1507,7 @@ def _enqueue_run(cfg: Settings, run_dir: Path, *, approved: bool) -> None:
                 "state": result.get("state"),
                 "youtube_id": youtube_result.get("id") if youtube_result else None,
                 "tiktok_id": tiktok_result.get("id") if tiktok_result else None,
+                "facebook_id": facebook_result.get("id") if facebook_result else None,
                 "queued_at": datetime.now(UTC).isoformat(),
                 "repo": repo.full_name if repo else None,
             },
@@ -1693,6 +1707,74 @@ def _enqueue_tiktok(
 
     console.print(
         f"[bold green]Queued on TikTok[/] as #{result.get('id')} "
+        f"[dim]({result.get('detail')})[/]"
+    )
+    return result
+
+
+def _enqueue_facebook(
+    cfg: Settings,
+    run_dir: Path,
+    *,
+    video_name: str,
+    link: str,
+    caption: str,
+    cover_name: str | None = None,
+    repo_full_name: str | None,
+    approved: bool,
+    recipe: str = "",
+    hook: str = "",
+) -> dict | None:
+    """Queue the same render on a Facebook Page, if one is configured.
+
+    **Facebook gets `out.mp4` and the Instagram caption unchanged**, and that
+    is a decision rather than whichever variable was nearest. YouTube gets the
+    trimmed render and a rewritten description because a follow ask reads wrong
+    on a surface that calls it subscribing. TikTok gets the full video and its
+    own single field. A Page has followers, the word is the same word, and the
+    caption is already written for a Meta feed, so this is the one destination
+    where the Instagram copy ports verbatim and no third shape is needed.
+
+    That is also why there is no `facebook_description` in `pipeline/gateway.py`
+    next to the other two. A function that returns its argument is a place for
+    the two to drift apart later for no reason.
+
+    **Best effort, and loudly so**, exactly like the other two fan-outs. The
+    Reel is the primary surface and its row is committed by the time this runs,
+    so a Facebook failure must not fail the command or strand the Instagram
+    post. But a destination that quietly stops receiving videos looks exactly
+    like one nobody is posting to.
+    """
+    if not cfg.facebook_page_id:
+        return None
+
+    result = gateway.enqueue(
+        video_name,
+        link,
+        cfg,
+        caption=caption,
+        # The same still every other row got, uploaded once and named by its
+        # own digest, so this costs no second upload. Meta fetches the video
+        # itself on this path and never reads the cover; it is the panel that
+        # does, where a row without one is a black player and looks like a
+        # video that failed to render.
+        cover_name=cover_name,
+        repo_full_name=repo_full_name,
+        approved=approved,
+        account=cfg.facebook_page_id,
+        recipe=recipe,
+        hook=hook,
+    )
+    if result is None:
+        console.print(
+            "[yellow]The gateway would not take the Facebook row.[/] "
+            "[dim]The Reel is queued and the cooldown has started, so re-running "
+            "--enqueue will not retry it. Queue it by hand in the admin UI.[/]"
+        )
+        return None
+
+    console.print(
+        f"[bold green]Queued on Facebook[/] as #{result.get('id')} "
         f"[dim]({result.get('detail')})[/]"
     )
     return result

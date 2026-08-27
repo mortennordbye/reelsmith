@@ -283,9 +283,9 @@ def create_app(
     app.state.metrics = Metrics()
     app.include_router(webhook.router)
     app.include_router(api.router)
-    # Unconditional, unlike the admin panel below: these are the URLs the
-    # Instagram, YouTube and TikTok app records point at, and they must not
-    # depend on whether the panel happens to be switched on.
+    # Unconditional, unlike the admin panel below: these are the URLs every
+    # platform's app record points at, and they must not depend on whether the
+    # panel happens to be switched on.
     app.include_router(pages.router)
     if cfg.admin_enabled:
         # `require_admin_auth` has already refused to get here without either a

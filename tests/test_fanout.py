@@ -1,16 +1,19 @@
-"""One render, three destinations, and one upload.
+"""One render, four destinations, and one upload.
 
-`--enqueue` and `--recover` make an Instagram row, a YouTube row and a TikTok
-row from the same build folder. `/api/media` is content addressed by digest, so
-one MP4 still goes up once however many rows point at it, and the nightly needs
-no second render and no extra step to keep three surfaces fed.
+`--enqueue` and `--recover` make an Instagram row, a YouTube row, a TikTok row
+and a Facebook row from the same build folder. `/api/media` is content
+addressed by digest, so one MP4 still goes up once however many rows point at
+it, and the nightly needs no second render and no extra step to keep four
+surfaces fed.
 
 **Which render goes where is a decision, not a detail.** YouTube gets
 `out-no-cta.mp4`, because a follow ask on a surface that calls following
 subscribing reads wrong. TikTok gets `out.mp4`, because it is a feed like
-Instagram's and the word is the same word. That is stated here as well as in
-the code, because "whichever variable was nearest" is exactly how it would
-otherwise be decided.
+Instagram's and the word is the same word. Facebook gets `out.mp4` and the
+Instagram caption unchanged, because a Page has followers and the copy is
+already written for a Meta feed. That is stated here as well as in the code,
+because "whichever variable was nearest" is exactly how it would otherwise be
+decided.
 """
 
 from __future__ import annotations
@@ -26,6 +29,9 @@ from config import Settings
 
 CHANNEL = "UCq0Ff3lJ7dK2sWnEv8mXtLp"
 OPEN_ID = "_000TikTokOpenIdLooksLikeThis0000"
+# A Page id, which is digits. Not the same string as the Instagram user id: a
+# Page and the Instagram account beside it are two ids and two tokens.
+PAGE_ID = "104739283746152"
 
 
 @pytest.fixture
@@ -37,6 +43,7 @@ def cfg(tmp_path, monkeypatch) -> Settings:
         ig_user_id="17841400000000000",
         youtube_channel_id=CHANNEL,
         tiktok_open_id=OPEN_ID,
+        facebook_page_id=PAGE_ID,
         _env_file=None,
     )
 
@@ -97,14 +104,14 @@ def accounts(rows: list[dict]) -> list[str]:
     return [row.get("account") or "instagram" for row in rows]
 
 
-def test_one_render_makes_three_rows(cfg, run, queued):
+def test_one_render_makes_four_rows(cfg, run, queued):
     main._enqueue_run(cfg, run, approved=True)
 
-    assert accounts(queued) == ["instagram", CHANNEL, OPEN_ID]
+    assert accounts(queued) == ["instagram", CHANNEL, OPEN_ID, PAGE_ID]
 
 
 def test_the_media_goes_up_once(cfg, run, queued):
-    """`/api/media` names a file by its own digest, so three rows pointing at
+    """`/api/media` names a file by its own digest, so four rows pointing at
     one video is one upload. Without the trimmed YouTube render there is
     nothing else to send."""
     main._enqueue_run(cfg, run, approved=True)
@@ -117,19 +124,19 @@ def test_tiktok_gets_the_video_with_the_ask(cfg, run, queued):
     the ask reads wrong there; TikTok is a feed like Instagram's."""
     main._enqueue_run(cfg, run, approved=True)
 
-    instagram, _youtube, tiktok = queued
+    instagram, _youtube, tiktok, _facebook = queued
     assert tiktok["video_name"] == instagram["video_name"]
 
 
 def test_tiktok_keeps_the_ask_in_its_caption_and_youtube_does_not(cfg, run, queued):
     main._enqueue_run(cfg, run, approved=True)
 
-    _instagram, youtube, tiktok = queued
+    _instagram, youtube, tiktok, _facebook = queued
     assert main.gateway.CAPTION_CTA in tiktok["caption"]
     assert main.gateway.CAPTION_CTA not in youtube["caption"]
 
 
-def test_the_receipt_records_all_three(cfg, run, queued):
+def test_the_receipt_records_all_four(cfg, run, queued):
     """`queued.json` is the duplicate guard, and a row it does not mention is a
     row nothing will notice was made twice."""
     main._enqueue_run(cfg, run, approved=True)
@@ -137,6 +144,7 @@ def test_the_receipt_records_all_three(cfg, run, queued):
     receipt = json.loads((run / "queued.json").read_text())
     assert receipt["youtube_id"] == 2
     assert receipt["tiktok_id"] == 3
+    assert receipt["facebook_id"] == 4
 
 
 def test_no_open_id_queues_the_other_two_and_says_nothing(cfg, run, queued):
@@ -145,7 +153,7 @@ def test_no_open_id_queues_the_other_two_and_says_nothing(cfg, run, queued):
     TikTok the same way it skips YouTube without a channel id."""
     main._enqueue_run(cfg.model_copy(update={"tiktok_open_id": ""}), run, approved=True)
 
-    assert accounts(queued) == ["instagram", CHANNEL]
+    assert accounts(queued) == ["instagram", CHANNEL, PAGE_ID]
 
 
 def test_a_refused_tiktok_row_does_not_strand_the_reel(cfg, run, queued, monkeypatch, capsys):
@@ -167,3 +175,42 @@ def test_a_refused_tiktok_row_does_not_strand_the_reel(cfg, run, queued, monkeyp
 
     assert (run / "queued.json").exists()
     assert "would not take the TikTok row" in capsys.readouterr().out
+
+
+def test_facebook_gets_the_video_and_the_caption_the_reel_got(cfg, run, queued):
+    """The one destination where the Instagram copy ports verbatim. A Page has
+    followers, the word is the same word, and the caption is already written
+    for a Meta feed, which is why there is no `facebook_description` next to
+    the other two rewrites."""
+    main._enqueue_run(cfg, run, approved=True)
+
+    instagram, _youtube, _tiktok, facebook = queued
+    assert facebook["video_name"] == instagram["video_name"]
+    assert facebook["caption"] == instagram["caption"]
+
+
+def test_no_page_id_queues_the_other_three_and_says_nothing(cfg, run, queued):
+    """Driven by FACEBOOK_PAGE_ID in the render host's .env, and without it the
+    fan-out skips Facebook the same way it skips the other two optional ones."""
+    main._enqueue_run(cfg.model_copy(update={"facebook_page_id": ""}), run, approved=True)
+
+    assert accounts(queued) == ["instagram", CHANNEL, OPEN_ID]
+
+
+def test_a_refused_facebook_row_does_not_strand_the_reel(cfg, run, queued, monkeypatch, capsys):
+    """Last in the fan-out and still best effort. The Reel's row is committed
+    and its cooldown started by the time this runs."""
+    calls = {"n": 0}
+
+    def refuse_the_fourth(video_name, link, cfg, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 4:
+            return None
+        return {"id": calls["n"], "state": "draft", "detail": "queued"}
+
+    monkeypatch.setattr(main.gateway, "enqueue", refuse_the_fourth)
+
+    main._enqueue_run(cfg, run, approved=True)
+
+    assert (run / "queued.json").exists()
+    assert "would not take the Facebook row" in capsys.readouterr().out

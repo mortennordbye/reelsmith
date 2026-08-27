@@ -30,7 +30,7 @@ from urllib.parse import quote
 
 import aiosqlite
 
-from gateway import db, publisher, schedule, tiktok, youtube
+from gateway import db, facebook, publisher, schedule, tiktok, youtube
 from gateway.config import GatewaySettings
 from gateway.graph import GraphClient
 from gateway.metrics import Metrics
@@ -70,6 +70,7 @@ async def publish_queued(
         db.PLATFORM_INSTAGRAM: publish_queued_instagram,
         db.PLATFORM_YOUTUBE: publish_queued_youtube,
         db.PLATFORM_TIKTOK: publish_queued_tiktok,
+        db.PLATFORM_FACEBOOK: publish_queued_facebook,
     }.get(platform)
 
     if publisher_for is None:
@@ -466,6 +467,119 @@ async def publish_queued_instagram(
     log.info(
         "Published queue %d as %s (%s), watching for %r",
         queued_id, result.media_id, result.permalink or "no permalink", queued["keyword"],
+    )
+    return True, False
+
+
+async def publish_queued_facebook(
+    conn: aiosqlite.Connection,
+    graph: GraphClient,
+    cfg: GatewaySettings,
+    metrics: Metrics,
+    *,
+    account: Any,
+    queued: Any,
+) -> tuple[bool, bool]:
+    """Publish one already-claimed row as a Reel on a Facebook Page.
+
+    **The cheapest of the four, and the reason is the credential.** A Page
+    access token is Meta's shape, which is the shape `accounts` has always
+    held, so there is no credentials table to read and no token to mint. What
+    is on the row is what publishes.
+
+    The same two-commit shape as the other three. `video_id` goes into
+    `container_id` before a single byte is fetched, and every failure past that
+    point is terminal: a retry restarts at `upload_phase=start` and cannot tell
+    a `finish` that never landed from one whose response was lost, and the
+    second of those posts the Reel twice.
+
+    **Meta fetches the video**, so `media_url` is the same seam Instagram and
+    TikTok use and nothing is pushed from here.
+    """
+    queued_id = int(queued["id"])
+    page_id = account["account_id"]
+    token = account["access_token"]
+
+    if not token:
+        # An account row with an empty token is a registration that never
+        # finished, and trying again cannot fix it. Failed rather than retried,
+        # like the missing credentials on the other two paths.
+        await db.set_queue_state(
+            conn, queued_id, db.QUEUE_FAILED, failure="no Facebook Page token stored"
+        )
+        metrics.publish_failures.labels(platform=db.PLATFORM_FACEBOOK).inc()
+        log.error("Queue %d: Facebook Page %s has no stored token", queued_id, page_id)
+        return False, False
+
+    video = media_url(cfg, queued["video_name"])
+    if not video:
+        await db.set_queue_state(conn, queued_id, db.QUEUE_FAILED, failure="no video file")
+        metrics.publish_failures.labels(platform=db.PLATFORM_FACEBOOK).inc()
+        log.error("Queue %d: no video file, nothing to publish", queued_id)
+        return False, False
+
+    try:
+        video_id = await facebook.start_upload(
+            graph.http, page_id=page_id, token=token, api_version=cfg.api_version
+        )
+    except facebook.PublishError as exc:
+        # Nothing was created, so this is the one failure worth retrying.
+        attempts = int(queued["attempts"] or 0)
+        exhausted = attempts >= cfg.max_publish_attempts
+        state = db.QUEUE_FAILED if exhausted else db.QUEUE_APPROVED
+        await db.set_queue_state(conn, queued_id, state, failure=str(exc))
+        metrics.publish_failures.labels(platform=db.PLATFORM_FACEBOOK).inc()
+        log.warning(
+            "Queue %d: no Facebook upload session (attempt %d/%d): %s",
+            queued_id, attempts, cfg.max_publish_attempts, exc,
+        )
+        return False, not exhausted
+
+    await db.set_container(conn, queued_id, video_id)
+
+    try:
+        await facebook.upload_hosted(
+            graph.http,
+            video_id=video_id,
+            token=token,
+            video_url=video,
+            api_version=cfg.api_version,
+            timeout_s=cfg.facebook_upload_timeout_s,
+        )
+        await facebook.finish_upload(
+            graph.http,
+            page_id=page_id,
+            video_id=video_id,
+            token=token,
+            description=str(queued["caption"] or ""),
+            api_version=cfg.api_version,
+        )
+        result = await facebook.await_published(
+            graph.http,
+            video_id=video_id,
+            token=token,
+            api_version=cfg.api_version,
+            poll_interval_s=cfg.facebook_poll_interval_s,
+            timeout_s=cfg.facebook_publish_timeout_s,
+        )
+    except facebook.PublishError as exc:
+        await db.set_queue_state(conn, queued_id, db.QUEUE_FAILED, failure=str(exc))
+        metrics.publish_failures.labels(platform=db.PLATFORM_FACEBOOK).inc()
+        log.error("Queue %d: Facebook failed after the video existed: %s", queued_id, exc)
+        return False, False
+
+    await db.mark_queue_published(
+        conn, queued_id, media_id=result.video_id, permalink=result.permalink
+    )
+    metrics.posts_published.labels(platform=db.PLATFORM_FACEBOOK).inc()
+
+    # No `register_post`, for the reason the YouTube and TikTok paths have
+    # none: that call arms the comment poller, which works through
+    # `graph.instagram.com` on an Instagram media id. A Page video id sitting
+    # in `posts` is exactly the row that loop must never pick up.
+    log.info(
+        "Published queue %d to Facebook Page %s as %s (%s)",
+        queued_id, page_id, result.video_id, result.permalink or "no permalink",
     )
     return True, False
 

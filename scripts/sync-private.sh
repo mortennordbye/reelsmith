@@ -150,6 +150,7 @@ ENV_PROJECTED_KEYS=(
   IG_USER_ID
   YOUTUBE_CHANNEL_ID
   TIKTOK_OPEN_ID
+  FACEBOOK_PAGE_ID
 )
 
 log()  { printf '\033[0;34m==>\033[0m %s\n' "$*"; }

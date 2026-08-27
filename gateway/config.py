@@ -36,8 +36,13 @@ class GatewaySettings(BaseSettings):
 
     # --- Meta API ----------------------------------------------------------
     # Same host and versioning story as pipeline/publisher.py: the Instagram
-    # Login path, no Facebook Page anywhere in it.
+    # Login path. **This host is Instagram's and stays Instagram's.** The Page
+    # path is a different login, a different permission set and a different
+    # token, and it names `graph.facebook.com` as a constant inside
+    # `gateway/facebook.py` rather than reading this. One setting serving two
+    # login paths is a setting that is wrong for one of them.
     graph_host: str = "https://graph.instagram.com"
+    # Shared, because it is genuinely the same Graph API version on both hosts.
     api_version: str = "v23.0"
     graph_timeout_s: float = 20.0
 
@@ -253,6 +258,32 @@ class GatewaySettings(BaseSettings):
     # Shorts are 10 to 20 MB and go up in seconds on any real connection. The
     # ceiling is for a stalled transfer, not a slow one.
     youtube_upload_timeout_s: int = 600
+
+    # --- Facebook -------------------------------------------------------------
+    # **No GATEWAY_FACEBOOK_ENABLED, and that is the same decision YouTube's
+    # absence records.** Publishing here runs only when a slot fires, and a slot
+    # only fires when the scheduler is on, so a flag would gate something that
+    # is already gated. TikTok earned one because its token refresher runs
+    # without a slot; nothing on this path does, because a Page token does not
+    # rotate and there is no refresher to run.
+    #
+    # The insights sweep is the one Facebook thing that runs without a slot, so
+    # it is the one thing with a flag, exactly as on YouTube. On by default: it
+    # only reads, a deployment with no Page asks Meta nothing, and off is the
+    # switch for a Page whose token has died, where the alternative is a failed
+    # call every six hours and a `graph_errors` count that says nothing about
+    # what actually broke.
+    facebook_insights_enabled: bool = True
+    # Meta fetches the video rather than being handed it, so this is a ceiling
+    # on somebody else's download of a 10 to 20 MB file, not on an upload from
+    # here. Wide, because the failure it guards against is a stall.
+    facebook_upload_timeout_s: int = 600
+    # `finish` returning success means the request was accepted, not that a
+    # Reel is visible. Transcoding follows and can fail on its own, so the
+    # publisher waits for `publish_status` the way every other path waits for
+    # its platform to say the post exists.
+    facebook_publish_timeout_s: int = 300
+    facebook_poll_interval_s: int = 5
 
     # --- Storage -----------------------------------------------------------
     db_path: Path = Path("gateway/dev.sqlite3")

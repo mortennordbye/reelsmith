@@ -28,6 +28,10 @@ IGSID = "9876543210"
 CHANNEL = "UCq0Ff3lJ7dK2sWnEv8mXtLp"
 # A TikTok open id, which is what `accounts.account_id` holds on a TikTok row.
 OPEN_ID = "_000TikTokOpenIdLooksLikeThis0000"
+# A Facebook Page id, which is digits and nothing else. Deliberately not the
+# same string as ACCOUNT: a Page and the Instagram account beside it are two
+# ids, and a fixture that shared one would hide a lookup on the wrong column.
+PAGE_ID = "104739283746152"
 
 
 @dataclass
@@ -252,6 +256,130 @@ class FakeTikTok:
 
 
 @dataclass
+class FakeFacebook:
+    """Stands in for the Page path: graph.facebook.com and rupload.facebook.com.
+
+    Not part of `FakeMeta` even though both are Meta, for the reason the code
+    keeps them apart: this is the Facebook Login path with a Page token, and
+    that one is the Instagram Login path with an Instagram token. A fake that
+    served both from one handler would answer a call the real hosts would
+    refuse.
+
+    The interesting boundary is the same one every publisher here draws, and it
+    sits one step earlier than the API's own: `video_id` exists after `start`,
+    and everything after that point is terminal, because a retry restarts from
+    `start` and cannot tell a `finish` that never landed from one whose
+    response was lost.
+    """
+
+    video_id: str = "fb-video-1"
+    permalink: str = "/thenightlybuild/videos/1234567890/"
+    # What `status` reports, in order, one poll each. The last entry repeats
+    # once the list runs out, so a one-item list is a Reel that was ready
+    # immediately.
+    publish_states: list[str] = field(default_factory=lambda: ["published"])
+    video_states: list[str] = field(default_factory=lambda: ["ready"])
+    # A Graph error envelope to answer with, per phase. Meta reports these with
+    # a 4xx and a body, and the body is where the subcode lives.
+    start_error: dict[str, Any] | None = None
+    upload_error: dict[str, Any] | None = None
+    finish_error: dict[str, Any] | None = None
+    status_error: dict[str, Any] | None = None
+    insights_error: dict[str, Any] | None = None
+    # Per video id. A video absent from here has no insights yet, which is a
+    # normal answer for a Reel published minutes ago rather than an error.
+    # Absent from `insights` entirely means Meta returned no `video_insights`
+    # key at all, which is what a renamed field looks like.
+    insights: dict[str, dict[str, Any]] = field(default_factory=dict)
+    comment_counts: dict[str, int] = field(default_factory=dict)
+    no_insights_key: set[str] = field(default_factory=set)
+    # Every phase, in order, so a test can assert the sequence rather than only
+    # the outcome.
+    phases: list[str] = field(default_factory=list)
+    # Every `finish` body, so a test can assert the description and the state.
+    finishes: list[dict[str, str]] = field(default_factory=list)
+    # Every `file_url` header, which is how the video reaches Meta on this path.
+    fetched: list[str] = field(default_factory=list)
+    polls: int = 0
+
+    def handle(self, request: httpx.Request) -> httpx.Response | None:
+        """Answer if this is ours, otherwise None so the others get a look."""
+        url = str(request.url)
+        if url.startswith("https://rupload.facebook.com/"):
+            self.phases.append("upload")
+            self.fetched.append(request.headers.get("file_url", ""))
+            if self.upload_error:
+                return httpx.Response(400, json={"error": self.upload_error})
+            return httpx.Response(200, json={"success": True})
+
+        if not url.startswith("https://graph.facebook.com/"):
+            return None
+
+        if request.url.path.endswith("/video_reels"):
+            body = dict(urllib.parse.parse_qsl(request.content.decode()))
+            phase = body.get("upload_phase", "")
+            self.phases.append(phase)
+            if phase == "start":
+                if self.start_error:
+                    return httpx.Response(400, json={"error": self.start_error})
+                return httpx.Response(
+                    200,
+                    json={
+                        "video_id": self.video_id,
+                        "upload_url": (
+                            f"https://rupload.facebook.com/video-upload/v23.0/{self.video_id}"
+                        ),
+                    },
+                )
+            self.finishes.append(body)
+            if self.finish_error:
+                return httpx.Response(400, json={"error": self.finish_error})
+            return httpx.Response(200, json={"success": True})
+
+        # Anything else on this host is a node read, either the publish status
+        # or the insights, told apart by what was asked for.
+        fields = str(request.url.params.get("fields") or "")
+        node = request.url.path.rstrip("/").split("/")[-1]
+
+        if "video_insights" in fields:
+            self.phases.append("insights")
+            if self.insights_error:
+                return httpx.Response(400, json={"error": self.insights_error})
+            payload: dict[str, Any] = {"permalink_url": self.permalink}
+            if node in self.comment_counts:
+                payload["comments"] = {
+                    "summary": {"total_count": self.comment_counts[node]}
+                }
+            if node not in self.no_insights_key:
+                payload["video_insights"] = {
+                    "data": [
+                        {"name": name, "values": [{"value": value}]}
+                        for name, value in (self.insights.get(node) or {}).items()
+                    ]
+                }
+            return httpx.Response(200, json=payload)
+
+        self.phases.append("status")
+        if self.status_error:
+            return httpx.Response(400, json={"error": self.status_error})
+        index = min(self.polls, len(self.publish_states) - 1)
+        video_index = min(self.polls, len(self.video_states) - 1)
+        self.polls += 1
+        return httpx.Response(
+            200,
+            json={
+                "status": {
+                    "video_status": self.video_states[video_index],
+                    "uploading_phase": {"status": "complete"},
+                    "processing_phase": {"status": "complete"},
+                    "publishing_phase": {"publish_status": self.publish_states[index]},
+                },
+                "permalink_url": self.permalink,
+            },
+        )
+
+
+@dataclass
 class FakeMeta:
     """Stands in for graph.instagram.com.
 
@@ -281,9 +409,10 @@ class FakeMeta:
     not_a_reel: set[str] = field(default_factory=set)
     # The gateway hands one httpx client to every upstream, so one transport
     # has to answer for all of them. Google gets first refusal, then TikTok,
-    # and Meta is the fallthrough.
+    # then the Facebook Page hosts, and Instagram is the fallthrough.
     youtube: FakeYouTube = field(default_factory=FakeYouTube)
     tiktok: FakeTikTok = field(default_factory=FakeTikTok)
+    facebook: FakeFacebook = field(default_factory=FakeFacebook)
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self._handle)
@@ -307,6 +436,14 @@ class FakeMeta:
         bytedance = self.tiktok.handle(request)
         if bytedance is not None:
             return bytedance
+
+        # Before the Instagram paths below, and matched on host rather than on
+        # a path suffix. Both are Meta and several of these paths look alike,
+        # so the host is the only thing that reliably tells the Page path from
+        # the Instagram one.
+        page = self.facebook.handle(request)
+        if page is not None:
+            return page
 
         if path.endswith("/messages") and request.method == "POST":
             if self.fail_sends_with:

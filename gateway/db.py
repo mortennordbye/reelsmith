@@ -532,11 +532,19 @@ _MIGRATIONS: tuple[str, ...] = (
 )
 
 # Which service an account row publishes to. `account_id` holds a Meta user id
-# on an instagram row and a channel id on a youtube one.
+# on an instagram row, a channel id on a youtube one and a Page id on a
+# facebook one.
+#
+# **Two of these are Meta and they are still two rows.** A Page and the
+# Instagram account beside it are different ids, hold different tokens minted
+# through different login paths, and publish through different endpoints. One
+# row with two destinations hanging off it would be the shortcut `platform`
+# exists to refuse.
 PLATFORM_INSTAGRAM = "instagram"
 PLATFORM_YOUTUBE = "youtube"
 PLATFORM_TIKTOK = "tiktok"
-PLATFORMS = (PLATFORM_INSTAGRAM, PLATFORM_YOUTUBE, PLATFORM_TIKTOK)
+PLATFORM_FACEBOOK = "facebook"
+PLATFORMS = (PLATFORM_INSTAGRAM, PLATFORM_YOUTUBE, PLATFORM_TIKTOK, PLATFORM_FACEBOOK)
 
 # The order boards and switcher marks are shown in, everywhere. Not
 # alphabetical and not insertion order: it is the order the fan-out writes
@@ -1800,8 +1808,10 @@ async def record_insights(
     is measured except `avg_view_pct`, which Meta does not report. On a TikTok
     row `reach`, `saved`, `avg_watch_ms`, `total_watch_ms`, `skip_rate` and
     `avg_view_pct` are all 0 because that platform exposes none of them. On a
-    YouTube row it is `reach`, `saved` and `skip_rate`. Nothing downstream may
-    read any of those as a result.
+    YouTube row it is `reach`, `saved` and `skip_rate`. On a Facebook row it is
+    `saved`, `shares`, `skip_rate` and `avg_view_pct`; `shares` is an absence
+    rather than a zero because Meta reports it fused to the comment count.
+    Nothing downstream may read any of those as a result.
     """
     moment = moment or now()
     await conn.execute(
