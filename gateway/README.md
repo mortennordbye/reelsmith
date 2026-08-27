@@ -244,7 +244,15 @@ scheduler is on. `GATEWAY_FACEBOOK_INSIGHTS_ENABLED` exists because the sweep
 is the one thing here that runs without a slot, which is exactly what earned
 TikTok its flag.
 
-`docs/facebook-api-setup.md` is the runbook.
+**Adding any public route means editing homelab too.** `gateway/pages.py`
+serving a path is half the change; the other half is an `Exact` match in
+`k8s/talos/apps/reelsmith/httproute.yaml`, because that route is an allowlist
+and Traefik 404s anything not named in it. Both repos carried that warning and
+the Facebook rollout hit it anyway. Nothing checks it.
+
+`docs/facebook-api-setup.md` is the runbook, and it is a record rather than a
+plan: the trip was walked on 2026-08-27 and what the portal actually did is
+written down there.
 
 ## The five public pages
 

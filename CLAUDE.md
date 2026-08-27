@@ -198,17 +198,14 @@ reasoning behind it is in that doc's later sections,
 `docs/multi-destination-audit.md` and `docs/tiktok-publishing-plan.md`, both of
 which are records of a decision rather than guides.
 
-**Facebook is the fourth. The code is built and the consent trip is walked;
-what is left is a deploy.** `gateway/facebook.py`, the scheduler branch, the
-insights sweep, the panel board and the fan-out all exist and are tested. The
-Page exists, the consent is granted and the Page access token was proved
-against the Graph API on 2026-08-27. It is not registered with the gateway yet,
-because `/api/accounts/facebook` ships with this change and the running image
-predates it, so the order is **deploy, then run
-`scripts/facebook_authorise.py`**, and the already-granted consent makes that a
-click-through.
+**All four publish, since 2026-08-27.** Facebook was wired, deployed and
+registered that afternoon: the Page exists, the consent is granted, the Page
+access token is on the `accounts` row, and there is a slot at 08:10 Oslo like
+the other three. **Nothing has actually published there yet**, so the first
+Reel is the first time this code meets Meta rather than a fake, and the Posts
+page is worth opening the morning after rather than assuming.
 
-Three things that trip cost, all in `docs/facebook-api-setup.md`:
+Five things that rollout cost, all in `docs/facebook-api-setup.md`:
 
 - **A Page has two ids and the obvious one is wrong.** The Page's own URL is
   `profile.php?id=61593782854313` and Business Suite shows a third number;
@@ -216,9 +213,25 @@ Three things that trip cost, all in `docs/facebook-api-setup.md`:
   `GET /me/accounts` returns. Never read a Page id off a URL.
 - **The OAuth dialog bounces to `/forced_account_switch`** if the browser is
   acting as the Page. Consent is granted by the person, not the Page.
-- **The callback 404s until the gateway is deployed** and the trip works
-  anyway, because the code is in the address bar and the page is only a
-  display.
+- **The order is deploy, then authorise.** `/api/accounts/facebook` ships with
+  the code, so registering against an older image is a 404, and the
+  authorisation code it wastes is single use. The consent survives, though, so
+  a second trip on an already-connected app is one click.
+- **The httproute allowlist is in the homelab repo and nothing links the two.**
+  See below; this is the one that will happen again.
+- **A Page is not eligible for a username** until it has followers and a post,
+  so `facebook.com/thenightlybuild` does not exist yet and the public pages
+  link to the numeric URL meanwhile.
+
+**Adding a public route means editing two repos, and only one of them is this
+one.** `gateway/pages.py` serving `/facebook/callback` is half the change; the
+other half is an `Exact` match in `k8s/talos/apps/reelsmith/httproute.yaml` in
+homelab, because that route is an allowlist and Traefik 404s anything not named
+in it. Both repos already carried the warning, in this file for TikTok and in
+that file's own header, and the rollout walked into it anyway. **Nothing checks
+this**, so the next public route will do the same unless somebody looks. It
+cost a merged PR and twenty minutes here, and it would cost a consent trip on a
+platform less forgiving than Meta.
 
 The order in both runbooks is forced rather than preferred. The consent trip is
 what produces the account key, and that key is what the `GATEWAY_SLOTS` line and
@@ -393,10 +406,20 @@ identity. That was invisible at one and unusable at two: the switcher offered
 `thenightlybuild` three times, told apart by a twelve pixel icon, and a second
 identity would have made it six chips reading nearly the same word.
 
-- **`accounts.brand` is the grouping and it is the pipeline's `--account
-  <name>`** (schema 20). The two sides never talk about it, so it is a label
-  rather than a foreign key, and that is the point: a typo puts a board in the
-  wrong group, where a wrong `account_id` publishes to the wrong audience.
+- **`accounts.brand` is the grouping, and every live row holds
+  `thenightlybuild` rather than the pipeline's `--account <name>`** (schema
+  20). This once said it *is* `--account`, which is `nightlybuild`, and that
+  was aspiration rather than fact: the first three rows were registered without
+  an explicit brand, so they took the handle-derived value and that is what the
+  grouping actually keys on. **Match what is in the table, not this
+  sentence.** Registering Facebook with `--brand nightlybuild` on 2026-08-27
+  put its board in a group of its own, which is precisely the failure the next
+  bullet warns about, and it was corrected by re-registering.
+
+  The two sides never talk about it, so it is a label rather than a foreign
+  key, and that is the point: a typo puts a board in the wrong group, where a
+  wrong `account_id` publishes to the wrong audience. Cheap to fix, invisible
+  until somebody opens the panel.
 - **Derived from the handle only when nobody says.** `db.brand_of` strips the
   leading @ and lowercases, because Instagram stores the handle bare and the
   other two store it with an @, so grouping on the raw string made one identity

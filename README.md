@@ -303,7 +303,9 @@ publisher buys. `docs/tiktok-api-setup.md` is the runbook and the portal traps.
 Facebook was the cheapest of the four and the reason is worth stating: a Page
 access token is a token plus an expiry, which is the shape `accounts` has held
 since the first migration, so it needed no credentials table, no token mint and
-no refresher. `docs/facebook-api-setup.md` is the runbook.
+no refresher. Wired and registered on 2026-08-27; nothing has published there
+yet, so its publisher has met a test double and not Meta.
+`docs/facebook-api-setup.md` is the runbook and the record.
 
 **Several accounts, one niche.** `accounts/<name>/` holds an account's `.env`,
 its cooldown store and its voice reference, and `--account` binds a run to one
