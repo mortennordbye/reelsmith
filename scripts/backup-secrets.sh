@@ -187,13 +187,22 @@ resolve_base() {
       # when the mount breaks, so it says what to try rather than what to check.
       mount_smbfs "//${NAS_USER}@${NAS_HOST}/${NAS_SHARE}" "$MNT" || die \
         "SMB mount failed. \`smbutil view //${NAS_USER}@${NAS_HOST}\` tests the login on
-       its own and says more than mount_smbfs does.
+       its own and says more than mount_smbfs does. If that lists the shares, the
+       credential is fine and the mount is not the thing to debug.
 
-       An 'Authentication error' means the server answered and refused the pair, so
-       it is the username or the password and not the network. DSM's auto-block
-       firewalls the address instead, which shows up as a timeout rather than a
-       refusal, and once tripped it refuses the right password too: clear it under
-       Control Panel, Security, Protection.
+       An 'Authentication error' means the server answered and refused, which is
+       two different faults wearing one message:
+
+         - the username or the password is wrong; or
+         - DSM Account Protection has locked the account after a few failed
+           attempts. It returns the same refusal, it rejects the correct password
+           while it lasts, and it expires on its own. That is what happened on
+           2026-08-27: the same user and password that had just been refused
+           listed the shares fine a couple of hours later. Control Panel,
+           Security, Account.
+
+       Auto-block is a third thing and does not look like either. It firewalls the
+       address, so it presents as a timeout rather than a refusal.
 
        Guest is disabled on this NAS, so there is no anonymous way to check the
        share name from here."
