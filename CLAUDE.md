@@ -1022,6 +1022,23 @@ and for every security update, and holds routine majors back for a human.
   does. There was never a network gap between them, only two names for the same
   bytes and no command that said so, which is how the copy on the share reached
   eighteen days stale while the nightly wrote copy against it.
+- **It reaches that share three ways and takes the first that answers**, since
+  2026-08-27. `--via pod` runs `kubectl exec` against the verksted pod, which
+  has the share mounted already, so it needs no NAS password and works off the
+  LAN; `--via dir` uses a mount you made yourself through `NAS_DIR`; `--via
+  smb` is the original `mount_smbfs` route and is the only one that survives
+  the pod being down. The log line says which it took. This is not
+  belt-and-braces: SMB auth started failing with `server rejected the
+  connection: Authentication error` while the share itself was fine and the
+  render host was reading it throughout, and a sync that works only while one
+  password is remembered fails on exactly the day it is needed, which is the
+  same shape as the eighteen day old copy above. The pod route moves bytes as
+  base64 through `sh -c` rather than `kubectl cp`, which shells out to tar and
+  reports a partial copy as success.
+- **Everything is written beside its target and then read back and compared.**
+  One verify loop covers both directions, because "do the two sides agree" is
+  the same question either way, and a truncated write is silent without it.
+  Nothing is ever deleted, so a failed verify is a re-run.
 - **The private half splits by who writes it, and that split is the whole
   safety property.** `PROFILE.md`, `accounts/*/.env` and `accounts/*/ref/*` are
   authored here and pushed. `accounts/*/data/*.json` is written by the render
