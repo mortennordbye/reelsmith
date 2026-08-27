@@ -192,18 +192,40 @@ what produces the open id, and the open id is what the `GATEWAY_SLOTS` line and
 the render host's `TIKTOK_OPEN_ID` are both keyed on, so neither can be written
 ahead of it.
 
-**And it stops at step 3, which is the thing to know before starting.** Tried
-on 2026-08-27: the account, the developer app and a sandbox all exist, and
-`gate.nordbye.it` is a verified URL property, which is the part that survives.
-What does not work is saving the app configuration. Production refuses without
-a demo video of an end to end flow; the sandbox validates clean, reports no
-error, and sends no request at all. The redirect URI lives inside that
-configuration, so `scripts/tiktok_authorise.py` has nowhere to send its
-callback. **"The inbox path needs no audit" is true of the API and false of the
-portal**, and the demo video is not a shortcut, because the interface it is
-meant to record does not exist here. The whole account is in
+**It runs in the sandbox, and production is the part that is refused.** As of
+2026-08-27 the account, the developer app and the sandbox all exist,
+`gate.nordbye.it` is a verified URL property, and **the sandbox configuration
+is saved**: both products, all three scopes, the URLs and the redirect URI,
+checked by reloading the page rather than by the absence of an error. What is
+left is a step a person has to do, which is connecting the content account to
+the sandbox as a target user, and then the consent trip.
+
+Production will not save at all. Its Save validates the App review block, which
+demands a demo video of the end to end flow, and the interface that video is
+meant to record does not exist here: the consent is a CLI script and the
+posting is a background scheduler. So **"the inbox path needs no audit" holds,
+and the sandbox is how it is reached**; a sandbox cannot Direct Post publicly,
+which this deployment does not do anyway.
+
+Three portal facts that cost a session each, all in
 `docs/tiktok-api-setup.md` under *What actually happened when this was
-attempted*.
+attempted*:
+
+- **The scopes do not exist until the products are added.** With no products
+  on the app the Add scopes dialog lists three read scopes and neither
+  `user.info.basic` nor `video.upload`, which reads as a permanent refusal and
+  is not one. Login Kit first, then Content Posting API.
+- **The redirect URI must be https, and loopback is not an exception.** Both
+  `http://127.0.0.1:8723/callback` and the https form of it are rejected by the
+  field. `scripts/tiktok_authorise.py` no longer runs a listener: the browser
+  lands on `GET /tiktok/callback` on the gateway, that page prints the code,
+  and the operator pastes the address back. The httproute allowlist has to
+  carry the path or the consent trip lands on a 404.
+- **A save that sends no request is a failed validation, not a dead button.**
+  The first attempt recorded the sandbox as unsaveable on exactly that
+  evidence. The banner said `This form has 1 error` and the field was
+  `Web/Desktop URL`, which does not appear until the Web platform checkbox is
+  ticked, so it is required and invisible at the same time.
 
 - **A destination is an `accounts` row, not a table.** `accounts.platform` says
   which service and `account_id` is an opaque account key holding a Meta user id
@@ -284,10 +306,18 @@ attempted*.
 
 ### The public pages, and why they are not on GitHub
 
-`GET /`, `/privacy` and `/terms` are served by `gateway/pages.py`. Every
-platform demands a privacy policy URL before it will take an application, and
-TikTok additionally demands terms of service and an official website. They were
-`docs/privacy.md` and `docs/terms.md` until 2026-08-27.
+`GET /`, `/privacy`, `/terms` and `/tiktok/callback` are served by
+`gateway/pages.py`. Every platform demands a privacy policy URL before it will
+take an application, and TikTok additionally demands terms of service and an
+official website. They were `docs/privacy.md` and `docs/terms.md` until
+2026-08-27.
+
+The callback is on the same router for the same reason and is not a legal page:
+**TikTok will not register an OAuth redirect URI that is not https**, so the
+consent trip cannot land on a loopback listener. The page prints the
+authorisation code and does nothing else. It deliberately does not exchange it,
+because the exchange needs the client secret and this service is not told that
+until the account is registered at the end of the same trip.
 
 - **TikTok will not accept a URL on a domain it cannot verify by DNS record**,
   and `github.com` can never be one. The field simply reads "This URL is not

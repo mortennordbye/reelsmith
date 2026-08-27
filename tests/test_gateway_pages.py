@@ -8,6 +8,11 @@ which is what moved them off GitHub and onto this service.
 So the thing to pin is not the wording. It is that the URLs answer, and keep
 answering when the admin panel is off, because the obvious place to have put
 them was a router that only mounts when it is on.
+
+`/tiktok/callback` rides on the same router for the same reason, and carries
+one property of its own: it must never exchange anything. It is a redirect
+target that prints a code, and the tests below say so, because the obvious
+"improvement" to it is to have the gateway finish the trip.
 """
 
 from __future__ import annotations
@@ -102,3 +107,72 @@ async def test_the_pages_carry_no_external_assets(tmp_path):
         body = (await fetch(settings(tmp_path), path)).text
         assert "<script" not in body, path
         assert "stylesheet" not in body, path
+
+
+async def test_the_callback_shows_the_code_it_was_handed(tmp_path):
+    """The page exists so an operator can read the code out of a browser and
+    paste it back. TikTok refuses to register a redirect URI that is not
+    https, so a loopback listener cannot be the target however much simpler it
+    would be to run one."""
+    response = await fetch(
+        settings(tmp_path), "/tiktok/callback?code=abc123&state=xyz789"
+    )
+
+    assert response.status_code == 200
+    assert "abc123" in response.text
+    assert "xyz789" in response.text
+
+
+async def test_the_callback_answers_with_the_admin_panel_off(tmp_path):
+    """Same property as the legal pages, and it matters more here: this URL is
+    saved in the app's configuration in TikTok's portal, and a redirect that
+    404s spends a consent trip."""
+    response = await fetch(
+        settings(tmp_path, admin_enabled=False), "/tiktok/callback?code=abc123"
+    )
+
+    assert response.status_code == 200
+    assert "abc123" in response.text
+
+
+async def test_the_callback_reports_a_refusal_rather_than_a_blank_page(tmp_path):
+    """TikTok sends `error` instead of `code` when the user declines or the
+    app asks for a scope it does not hold. Rendering nothing would look like
+    the code failed to arrive, which points at the wrong half."""
+    body = (
+        await fetch(
+            settings(tmp_path),
+            "/tiktok/callback?error=access_denied&error_description=nope",
+        )
+    ).text
+
+    assert "access_denied" in body
+    assert "nope" in body
+
+
+async def test_the_callback_is_inert_when_nobody_is_authorising(tmp_path):
+    """A stranger reaching it should find a page saying so, not a half
+    rendered form suggesting there is something to fill in."""
+    response = await fetch(settings(tmp_path), "/tiktok/callback")
+
+    assert response.status_code == 200
+    assert "Nothing to do here" in response.text
+
+
+async def test_the_callback_never_calls_tiktok(tmp_path):
+    """The one behaviour worth pinning. Exchanging the code here would need the
+    client secret, which this service is not told until the account is
+    registered at the end of the same trip. The page is a display and nothing
+    else."""
+    meta = FakeMeta()
+    async with meta.client() as fake_meta:
+        app = create_app(settings(tmp_path), http=fake_meta, background=False)
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url=BASE
+            ) as http,
+        ):
+            await http.get("/tiktok/callback?code=abc123&state=xyz789")
+
+    assert meta.calls == []
