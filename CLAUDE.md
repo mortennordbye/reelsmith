@@ -1039,6 +1039,23 @@ and for every security update, and holds routine majors back for a human.
   One verify loop covers both directions, because "do the two sides agree" is
   the same question either way, and a truncated write is silent without it.
   Nothing is ever deleted, so a failed verify is a re-run.
+- **The account `.env` is projected onto the share, not copied.** It is the
+  one file in scope that is partly host specific, in the way the root `.env` is
+  refused for. This laptop's copy holds `IG_ACCESS_TOKEN` and three `YOUTUBE_*`
+  credentials because it can publish directly; the render host enqueues, the
+  gateway publishes and holds its own, and that host's `data/` has never had an
+  `ig_token.json`. `ENV_PROJECTED_KEYS` in the script is what crosses, and it
+  is an **allowlist rather than a list of secrets to strip**, because a
+  security boundary is worth having only if it fails closed: a key nobody
+  considered stays here rather than travelling because it did not look like a
+  secret. The keys left behind are printed, so a new id nobody allowlisted
+  reads as a line rather than as a destination the render host quietly skips.
+  `tests/test_sync_private.py` asserts on the absence of the secrets, because a
+  leak here fails nothing and looks exactly like a successful sync.
+- **`--pull` refuses that file, and this was a live footgun.** The far copy is
+  a projection and holds strictly less, so pulling it over the authored one
+  destroys four credentials on the only machine that has them. The refusal is
+  that one file, not the mode; `PROFILE.md` and the voice still come back.
 - **The private half splits by who writes it, and that split is the whole
   safety property.** `PROFILE.md`, `accounts/*/.env` and `accounts/*/ref/*` are
   authored here and pushed. `accounts/*/data/*.json` is written by the render
