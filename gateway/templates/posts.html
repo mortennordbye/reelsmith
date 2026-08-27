@@ -8,6 +8,7 @@
   numbers keep climbing for days on every platform, so a post from this morning
   is not yet comparable with one from last week.
 </p>
+{% if quip_for(page) %}<p class="quip">{{ quip_for(page) }}</p>{% endif %}
 
 {% for board in boards %}
   {# Shown even for a single board. The heading used to appear only when there

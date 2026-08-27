@@ -364,7 +364,7 @@ async def test_the_pages_render(client, path):
 async def test_the_queue_page_shows_a_queued_post_and_its_keyword(client):
     http, _ = client
     await queue(http)
-    body = (await http.get("/admin/")).text
+    body = (await http.get("/admin/queue")).text
     assert "astral-sh/uv" in body
     assert "UV" in body
 
@@ -382,7 +382,7 @@ async def test_the_queue_page_says_when_the_video_was_made(client):
         rendered_at="2026-08-14T02:31:00+00:00",
     )
 
-    body = (await http.get("/admin/")).text
+    body = (await http.get("/admin/queue")).text
 
     assert "made Fri 14 Aug 02:31" in body
 
@@ -394,7 +394,7 @@ async def test_a_post_with_no_render_on_record_says_when_it_arrived_instead(clie
     http, _ = client
     await queue(http)
 
-    body = (await http.get("/admin/")).text
+    body = (await http.get("/admin/queue")).text
 
     assert "made " not in body
     assert "queued " in body
@@ -413,7 +413,7 @@ async def test_the_youtube_row_gets_the_date_too(client):
         rendered_at="2026-08-14T02:31:00+00:00",
     )
 
-    body = (await http.get("/admin/")).text
+    body = (await http.get("/admin/queue")).text
 
     assert "made Fri 14 Aug 02:31" in body
 
@@ -782,7 +782,7 @@ async def test_the_queue_shows_the_hook_being_reviewed(client):
     http, _ = client
     await queue(http, hook="It reads 40 pages of a PDF in a single pass")
 
-    page = (await http.get("/admin/", headers={"accept": "text/html"})).text
+    page = (await http.get("/admin/queue", headers={"accept": "text/html"})).text
 
     assert "It reads 40 pages of a PDF in a single pass" in page
 
@@ -793,7 +793,7 @@ async def test_a_row_queued_before_the_hook_travelled_shows_no_hook(client):
     http, _ = client
     await queue(http)
 
-    page = (await http.get("/admin/", headers={"accept": "text/html"})).text
+    page = (await http.get("/admin/queue", headers={"accept": "text/html"})).text
 
     assert 'class="hook"' not in page
 
@@ -1261,3 +1261,119 @@ async def test_a_single_board_still_names_its_platform(client):
 
     assert 'class="platform youtube"' in body
     assert 'class="platform instagram"' not in body, "the switcher narrowed to one account"
+
+
+# --- The dashboard ----------------------------------------------------------
+
+
+async def test_the_dashboard_is_the_landing_page(client):
+    """Queue answers "what is next" and Posts answers "how did they do", and
+    neither answers "is the machine running", which is the question somebody
+    opening this actually has."""
+    http, _ = client
+
+    body = (await http.get("/admin/")).text
+
+    assert "Hi Boss" in body
+    assert "Next out" in body
+    assert "The machine" in body
+
+
+async def test_the_dashboard_names_the_next_post_and_when_it_goes(client):
+    """The countdown and the hook together, because the hook is what a person
+    would cancel over and the time is how long they have to do it."""
+    http, app = client
+    await db.add_slot(
+        app.state.db, account_id=ACCOUNT, hour=8, minute=10,
+        tz="Europe/Oslo", jitter_minutes=0, days="0,1,2,3,4,5,6",
+    )
+    await queue(http, approved=True, hook="It reads 40 pages of a PDF in a single pass")
+
+    body = (await http.get("/admin/")).text
+
+    assert "It reads 40 pages of a PDF in a single pass" in body
+    assert "Europe/Oslo" in body, "the slot's own zone, not UTC"
+    # `ago` counts the other way and reported a future slot as a negative
+    # number of seconds, which shipped once as "-56934s from now".
+    assert "-" not in re.search(r'class="cap">\s*(in [^<&]*)', body).group(1)
+
+
+async def test_the_dashboard_says_so_when_nothing_is_scheduled(client):
+    """An empty queue and a queue with no active slot are the same picture from
+    here, and both are better than a blank panel."""
+    http, _ = client
+
+    assert "Nothing scheduled" in (await http.get("/admin/")).text
+
+
+async def test_the_dashboard_scopes_to_one_destination(client):
+    http, app = client
+    await db.upsert_account(
+        app.state.db, account_id="UC-chan", access_token="tok",
+        username="thenightlybuild", platform=db.PLATFORM_YOUTUBE,
+    )
+
+    main = (await http.get("/admin/?account=UC-chan")).text.split("</header>", 1)[-1]
+
+    assert 'class="platform youtube"' in main
+    assert 'class="platform instagram"' not in main
+
+
+async def test_the_dashboard_scores_openings_on_instagram_only(client):
+    """`skip_rate` is 0 on every other platform and that 0 is an absence, not a
+    perfect opening. Feeding it to this board would report a video nobody
+    skipped."""
+    http, app = client
+    await db.upsert_account(
+        app.state.db, account_id="UC-chan", access_token="tok",
+        username="thenightlybuild", platform=db.PLATFORM_YOUTUBE,
+    )
+
+    body = (await http.get("/admin/?account=UC-chan")).text
+
+    assert "Opening retention" not in body
+
+
+# --- The panel's own images -------------------------------------------------
+
+
+async def test_an_asset_is_served_to_a_signed_in_browser(client):
+    http, _ = client
+
+    response = await http.get("/admin/assets/boss-avatar.jpg")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
+    assert "immutable" in response.headers["cache-control"]
+
+
+async def test_an_unknown_asset_is_a_404_rather_than_a_path(client):
+    """An allowlist, so no arrangement of dots and slashes reads a file the
+    panel was never meant to serve."""
+    http, _ = client
+
+    assert (await http.get("/admin/assets/boss.jpg")).status_code == 404
+    assert (await http.get("/admin/assets/..%2f..%2fdb.sqlite3")).status_code == 404
+
+
+async def test_assets_need_the_login_like_everything_else(anon):
+    http, _ = anon
+
+    assert (await http.get("/admin/assets/boss-avatar.jpg")).status_code == 401
+
+
+# --- Reading a counter that has labels --------------------------------------
+
+
+async def test_the_health_page_counts_posts_that_carry_a_platform_label(client):
+    """`posts_published` gained a `platform` label on 2026-08-26, and
+    `prometheus_client` never runs `_metric_init` on a labelled parent, so the
+    read swallowed an AttributeError and the tile said 0 on a service that had
+    published dozens."""
+    http, app = client
+    app.state.metrics.posts_published.labels(platform=db.PLATFORM_INSTAGRAM).inc()
+    app.state.metrics.posts_published.labels(platform=db.PLATFORM_YOUTUBE).inc(2)
+
+    body = (await http.get("/admin/health")).text
+
+    assert ">3<" in body.replace(" ", "").replace("\n", "")

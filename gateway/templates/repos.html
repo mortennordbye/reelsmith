@@ -8,6 +8,7 @@
   what decides whether tonight's batch may pick a repo, so it is the list to
   check before wondering why discovery keeps choosing the same corner of GitHub.
 </p>
+{% if quip_for(page) %}<p class="quip">{{ quip_for(page) }}</p>{% endif %}
 
 {% for board in boards %}
   {% set account = board.account %}

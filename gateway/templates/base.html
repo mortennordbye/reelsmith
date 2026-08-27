@@ -2,68 +2,107 @@
    this page has to render inside a cluster that cannot reach a CDN, and a
    control panel that fails to style itself is a control panel nobody trusts.
 
-   Colours and type are lifted from nordbye.it, so the panel looks like it
-   belongs to the person who owns it rather than to GitHub. It used to be the
-   repo's GitHub-dark palette, which was a reasonable default and shared exactly
-   nothing with anything else its owner runs.
+   **The room is the page.** The backdrop is the photograph of the Manager at
+   his desk, dimmed hard so it never fights a number, and the panels are solid
+   rather than translucent for the same reason. It is served from
+   `/admin/assets/`, behind the same login as everything else here, which is why
+   the login page gets the plain ground instead.
 
-   **This is deliberately not the video's palette.** `CLAUDE.md` keeps the Reels
-   GitHub-dark-adjacent because the audience there stares at that scheme all day
-   and it has to read as native. This page has an audience of one, so the same
-   argument points the other way.
+   **This is deliberately not the video's palette, and not the public pages'
+   either.** `CLAUDE.md` keeps the Reels GitHub-dark-adjacent because the
+   audience there stares at that scheme all day and it has to read as native.
+   `public_base.html` stays sober because four platforms have those URLs on file
+   and a reviewer reads them. This page has an audience of one.
 
-   Fraunces is the site's display face and JetBrains Mono its mono. Neither is
-   fetched: the stacks name them first and fall back to a system serif and a
-   system mono, so a machine that has them gets them and the cluster never asks
-   a CDN for anything. #}
+   Nothing here is fetched. The stacks name a face and fall back to a system
+   one, so a machine that has it gets it and the cluster never asks anyone. #}
 {% from "_icons.html" import platform_icon, platform_name %}
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  {# reelsmith first, so a bookmark still says what the service is. #}
   <title>{% block title %}reelsmith{% endblock %}</title>
   {% block head %}{% endblock %}
   <style>
     :root {
-      /* nordbye.it, .dark */
-      --bg: #0a0a0a; --panel: #141414; --line: #262626; --line-2: #3a3a3a;
-      --ink: #e7e7e7; --dim: #a5a5a5; --faint: #7a7a7a;
-      --accent: #51a45e; --accent-soft: #8ec798; --good: #51a45e;
-      --warn: #bf9752; --bad: #d18c82;
+      --bg: #141220; --panel: #15131c; --panel-2: #1e1b28;
+      --line: #332e44; --line-2: #443d5c;
+      --ink: #f4f2f8; --dim: #b8b2c9; --faint: #847d99;
+      /* Gold, lifted off the frame the sign hangs in. It collides with none of
+         the four platform hues, which cyan would: TikTok is already teal, and
+         an accent one step from a destination badge is an accent that gets read
+         as one. Warn shares it the way `--good` used to share the old green,
+         because "waiting" is what amber means anywhere else. */
+      --accent: #f0b429; --accent-soft: #ffd76e;
+      --good: #56d364; --warn: #f0b429; --bad: #ef6055;
+      /* Used once, on the wordmark inside its frame. A single flourish, not a
+         second accent, so it never has to be told apart from anything. */
+      --neon: #2ee6d6;
       --r-sm: 6px; --r-md: 10px; --r-lg: 18px;
       --serif: Fraunces, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+      --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+      --sans: "Avenir Next", Inter, ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0; background: var(--bg); color: var(--ink);
-      font: 15px/1.6 Inter, ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
-      /* The site's hero wash, at the same angle and opacity. Fixed, so it stays
-         put while a long queue scrolls under it. */
-      background-image:
-        radial-gradient(58% 76% at 24% -8%, #51a45e17, transparent 62%);
-      background-attachment: fixed;
+      font: 15px/1.6 var(--sans);
+      /* Explicit, because the wall behind is a fixed layer and a transparent
+         body would let the page floor show through the gaps at the bottom of a
+         short page. */
+      min-height: 100vh;
     }
+    /* The room. Fixed, so it stays put while a long queue scrolls over it, and
+       under everything at z-index 0. The gradient does the work: light enough
+       at the top that the desk reads, opaque enough by the fold that no panel
+       is ever set on a busy ground. */
+    .wall {
+      position: fixed; inset: 0; z-index: 0;
+      background-position: center top; background-size: cover;
+      background-repeat: no-repeat;
+    }
+    .wall::after {
+      content: ""; position: absolute; inset: 0;
+      background: linear-gradient(180deg,
+        #141220bf 0%, #141220e0 38%, #141220e8 70%, #141220f7 100%);
+    }
+    header, main { position: relative; z-index: 1; }
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     header {
-      border-bottom: 1px solid var(--line); padding: 0 20px;
-      display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
-      background: var(--panel); position: sticky; top: 0; z-index: 5;
+      border-bottom: 1px solid var(--line-2); padding: 0 20px;
+      display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+      background: #141220d9; position: sticky; top: 0; z-index: 5;
     }
+    /* The sign on the wall, frame and all. The word reelsmith rides under it
+       rather than beside it, so the service still names itself on every page. */
     header .brand {
-      font-family: var(--serif); font-weight: 600; font-size: 17px;
-      padding: 14px 0; margin-right: 8px; letter-spacing: .01em;
+      display: inline-block; padding: 5px 13px 6px; margin: 9px 6px 9px 0;
+      border: 3px solid var(--accent);
+      box-shadow: inset 0 0 0 2px var(--bg), 0 0 0 2px #8a6410;
+    }
+    header .brand .wm {
+      display: block; font-family: var(--sans); font-weight: 700; font-size: 19px;
+      letter-spacing: .05em; color: var(--neon); line-height: 1.05;
+    }
+    header .brand .sub {
+      display: block; font-family: var(--mono); font-size: 8.5px;
+      letter-spacing: .22em; text-transform: uppercase; color: var(--faint);
+      margin-top: 3px;
     }
     header nav a {
       display: inline-block; padding: 14px 2px; color: var(--dim);
       border-bottom: 2px solid transparent; margin-right: 16px;
     }
     header nav a.on { color: var(--ink); border-bottom-color: var(--accent); }
+    header nav a:hover { color: var(--ink); text-decoration: none; }
     main { padding: 20px; max-width: 1100px; margin: 0 auto; }
     h1 {
       font-family: var(--serif); font-size: 26px; font-weight: 600;
-      margin: 0 0 6px; letter-spacing: .01em;
+      margin: 0 0 6px; letter-spacing: .01em; text-wrap: balance;
     }
     h2 {
       font-family: var(--serif); font-size: 19px; font-weight: 600;
@@ -83,6 +122,14 @@
       margin: 20px 0 12px; letter-spacing: .01em;
     }
     .sub { color: var(--dim); font-size: 13px; margin: 0 0 20px; }
+    /* One dry line per page, under its heading, where the reader already is.
+       The text lives in `_QUIPS` in `admin.py` and arrives through
+       `quip_for(page)`, so a page gains one by being named in one dict rather
+       than by six templates each carrying their own. */
+    .quip {
+      color: var(--faint); font-size: 12.5px; font-style: italic;
+      margin: 0 0 18px; max-width: 62ch;
+    }
     .card {
       background: var(--panel); border: 1px solid var(--line);
       border-radius: var(--r-md); padding: 15px 17px; margin-bottom: 14px;
@@ -91,38 +138,38 @@
     .row > .grow { flex: 1; min-width: 0; }
     .muted { color: var(--dim); }
     .small { font-size: 13px; }
-    .mono { font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+    .mono { font-family: var(--mono); font-size: 12px; }
     .tag {
       display: inline-block; font-size: 11px; text-transform: uppercase;
       letter-spacing: .04em; padding: 2px 7px; border-radius: 999px;
-      border: 1px solid var(--line); color: var(--dim);
+      border: 1px solid var(--line-2); color: var(--dim);
     }
-    .tag.approved { color: var(--good); border-color: #2f5f37; }
-    .tag.draft { color: var(--warn); border-color: #5c4620; }
-    .tag.failed, .tag.cancelled { color: var(--bad); border-color: #6b3a34; }
-    .tag.published { color: var(--accent-soft); border-color: #3f6b47; }
-    .tag.claimed { color: var(--warn); border-color: #5c4620; }
-    /* Which surface a board describes. Instagram and YouTube are separate
-       account rows publishing on different schedules under different rules, and
-       until this existed the only thing telling two boards apart was a
-       username. Colour alone would not be enough, so the word is always there
-       and the colour only makes it findable at a glance. */
+    .tag.approved { color: var(--good); border-color: #2f6b39; }
+    .tag.draft { color: var(--warn); border-color: #6b5320; }
+    .tag.failed, .tag.cancelled { color: var(--bad); border-color: #71332c; }
+    .tag.published { color: var(--accent-soft); border-color: #6b5320; }
+    .tag.claimed { color: var(--warn); border-color: #6b5320; }
+    /* Which surface a board describes. Instagram, YouTube, TikTok and Facebook
+       are separate account rows publishing on different schedules under
+       different rules, and until this existed the only thing telling two boards
+       apart was a username. Colour alone would not be enough, so the word is
+       always there and the colour only makes it findable at a glance. */
     .platform {
       display: inline-flex; align-items: center; gap: 5px;
       font-size: 11px; text-transform: uppercase;
       letter-spacing: .06em; font-weight: 600; padding: 3px 9px;
       border-radius: var(--r-sm); vertical-align: middle; margin-right: 4px;
     }
-    /* Violet, red and teal rather than anything from the palette above: green,
-       copper and salmon already mean approved, waiting and failed, and a badge
-       that borrows a state colour is a badge that gets misread as a state.
-       Three hues from three parts of the wheel, so they stay separable when
-       two boards sit next to each other and when neither is read in colour. */
+    /* Violet, red, teal and blue rather than anything from the palette above:
+       gold, green and coral already mean waiting, approved and failed, and a
+       badge that borrows a state colour is a badge that gets misread as a
+       state. Four hues from four parts of the wheel, so they stay separable
+       when two boards sit next to each other and when neither is read in
+       colour. Unchanged by the retheme, which is the point of having written
+       down why they were picked. */
     .platform.instagram { color: #c98ae0; background: #241a2b; border: 1px solid #4d3a63; }
     .platform.youtube { color: #ff6b5e; background: #2b1310; border: 1px solid #6b2b24; }
     .platform.tiktok { color: #4fd1c5; background: #10262b; border: 1px solid #24575e; }
-    /* Blue for the fourth, which is both the obvious one for this platform and
-       the only quarter of the wheel the other three left empty. */
     .platform.facebook { color: #7aa2f7; background: #101827; border: 1px solid #29406b; }
     /* The stripe repeats the badge down the left edge, so scrolling past a
        heading does not lose which surface you are looking at. */
@@ -133,26 +180,26 @@
     .board.facebook { border-left: 3px solid #29406b; }
     button, .btn {
       font: inherit; font-size: 13px; padding: 5px 11px; border-radius: var(--r-sm);
-      border: 1px solid var(--line-2); background: #1c1c1c; color: var(--ink);
+      border: 1px solid var(--line-2); background: var(--panel-2); color: var(--ink);
       cursor: pointer;
     }
     button:hover { border-color: var(--accent); color: #fff; }
-    button.primary { background: #2f5f37; border-color: var(--accent); color: #fff; }
-    button.danger { background: #3a1c18; border-color: #6b3a34; }
+    button.primary { background: #5c4413; border-color: var(--accent); color: #fff; }
+    button.danger { background: #3a1c18; border-color: #71332c; }
     button.link { background: none; border: none; color: var(--dim); padding: 5px 4px; }
     form.inline { display: inline; }
     input, select, textarea {
-      font: inherit; font-size: 13px; background: #050505; color: var(--ink);
+      font: inherit; font-size: 13px; background: #0d0b14; color: var(--ink);
       border: 1px solid var(--line); border-radius: var(--r-sm); padding: 5px 8px;
     }
-    textarea { width: 100%; font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; }
+    textarea { width: 100%; font-family: var(--mono); }
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
     th { color: var(--dim); font-weight: 500; font-size: 12px; text-transform: uppercase; }
     tr:last-child td { border-bottom: none; }
     .stat { display: flex; gap: 26px; flex-wrap: wrap; }
     .stat div span { display: block; }
-    .stat .n { font-size: 22px; font-weight: 600; }
+    .stat .n { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
     .stat .l { font-size: 12px; color: var(--dim); }
     /* The account switcher. Sits at the far right of the header so the nav
        keeps its place when a second account appears and the row grows. */
@@ -161,8 +208,9 @@
       color: var(--dim); padding: 3px 9px; border-radius: 999px;
       border: 1px solid transparent;
     }
-    .switcher a.on { color: var(--ink); border-color: var(--line-2); background: #1c1c1c; }
-    /* Same three hues as the board badges, so the picker and the heading it
+    .switcher a:hover { text-decoration: none; color: var(--ink); }
+    .switcher a.on { color: var(--ink); border-color: var(--line-2); background: var(--panel-2); }
+    /* Same four hues as the board badges, so the picker and the heading it
        selects agree without the header growing a second word. */
     .switcher .mark.instagram { color: #c98ae0; }
     .switcher .mark.youtube { color: #ff6b5e; }
@@ -175,20 +223,20 @@
     .switcher .group {
       display: inline-flex; align-items: center; gap: 2px;
       padding: 2px 4px 2px 0; border-radius: 999px;
-      /* Faint even when unselected, so a name and the three marks beside it
-         read as one identity rather than as four separate choices. */
+      /* Faint even when unselected, so a name and the four marks beside it
+         read as one identity rather than as five separate choices. */
       border: 1px solid var(--line);
     }
-    .switcher .group.on { border-color: var(--line-2); background: #161616; }
+    .switcher .group.on { border-color: var(--line-2); background: var(--panel); }
     .switcher .group .name { padding: 3px 8px; }
-    .switcher .group .name.on { background: #242424; }
+    .switcher .group .name.on { background: var(--panel-2); }
     /* Square-ish rather than pill, so a mark never reads as a second name. */
     .switcher .mark {
       display: inline-flex; padding: 4px 5px; border-radius: var(--r-sm);
       border: 1px solid transparent; line-height: 0;
     }
-    .switcher .mark:hover { background: #242424; }
-    .switcher .mark.on { background: #242424; border-color: var(--line-2); }
+    .switcher .mark:hover { background: var(--panel-2); }
+    .switcher .mark.on { background: var(--panel-2); border-color: var(--line-2); }
     /* A paused destination stays visible and stops asking to be clicked. Not
        hidden: a board that vanished would read as a bug rather than a pause. */
     .switcher .mark.off { opacity: .4; }
@@ -196,7 +244,10 @@
        a thumbnail beside it and a table would fight the video element. */
     .metrics { display: flex; gap: 20px; flex-wrap: wrap; margin: 8px 0 0; }
     .metrics div { min-width: 54px; }
-    .metrics .n { font-size: 17px; font-weight: 600; display: block; }
+    .metrics .n {
+      font-size: 17px; font-weight: 600; display: block;
+      font-variant-numeric: tabular-nums;
+    }
     .metrics .l {
       font-size: 11px; color: var(--dim); text-transform: uppercase;
       letter-spacing: .04em;
@@ -216,8 +267,7 @@
        JavaScript between the page loading and the page having content. */
     .chart { width: 100%; height: auto; display: block; margin: 4px 0 2px; }
     .chart .axis {
-      font-size: 10px; fill: var(--faint); font-family: "JetBrains Mono",
-      ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 10px; fill: var(--faint); font-family: var(--mono);
     }
     /* Text wears text tokens. The one exception is the threshold label, which
        names the line beside it and would otherwise be a caption floating free
@@ -249,11 +299,11 @@
        reader wants is which one won, not a shape to compare across rows. */
     .breakdown { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
     .breakdown .part {
-      font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+      font-family: var(--mono);
       font-size: 10px; color: var(--faint); border: 1px solid var(--line);
       border-radius: var(--r-sm); padding: 1px 5px; white-space: nowrap;
     }
-    .breakdown .part.dim { color: var(--warn); border-color: #5c4620; }
+    .breakdown .part.dim { color: var(--warn); border-color: #6b5320; }
     /* Something the panel still stores and no longer acts on. Dimmer than
        muted, so it reads as a footnote rather than as a current instruction. */
     .dormant {
@@ -264,7 +314,7 @@
     video { width: 150px; border-radius: var(--r-sm); border: 1px solid var(--line); display: block; }
     details summary { cursor: pointer; color: var(--dim); font-size: 13px; }
     .banner {
-      border: 1px solid #6b3a34; background: #2a1512; color: #e8a89f;
+      border: 1px solid #71332c; background: #2a1512; color: #f0a79f;
       border-radius: var(--r-md); padding: 10px 14px; margin-bottom: 16px; font-size: 14px;
     }
     /* The queue is the reason to open this, so it stays readable on a phone:
@@ -290,16 +340,29 @@
          land inside 120 pixels of height and stop being separable. */
       .chart { min-width: 520px; }
     }
+    @media (prefers-reduced-motion: reduce) {
+      * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    }
+    {% block style %}{% endblock %}
   </style>
 </head>
 <body>
+  {# Behind the login, like everything else on `router`, so the login page gets
+     the plain ground rather than a broken image request. #}
+  {% if page != 'login' %}
+    <div class="wall" style="background-image:url('{{ url_for('asset', name='boss-room.jpg') }}')"></div>
+  {% endif %}
   <header>
-    <span class="brand">reelsmith</span>
+    <span class="brand">
+      <span class="wm">SLOPENGINE</span>
+      <span class="sub">reelsmith</span>
+    </span>
     {% if page != 'login' %}
       {# The account choice rides on every link, or navigating away from an
          account silently widens the page back to all of them. #}
       {% set q = scope.query if scope else '' %}
       <nav>
+        <a href="{{ url_for('dashboard_page') }}{{ q }}" class="{{ 'on' if page == 'dashboard' }}">Dashboard</a>
         <a href="{{ url_for('queue_page') }}{{ q }}" class="{{ 'on' if page == 'queue' }}">Queue</a>
         <a href="{{ url_for('posts_page') }}{{ q }}" class="{{ 'on' if page == 'posts' }}">Posts</a>
         <a href="{{ url_for('insights_page') }}{{ q }}" class="{{ 'on' if page == 'insights' }}">Insights</a>
@@ -312,9 +375,9 @@
          a switcher offering one option is furniture.
 
          Two levels, because an identity is not a destination. One original
-         account posts to three platforms and is three `accounts` rows, so the
-         flat version of this listed `thenightlybuild` three times, told apart
-         by a twelve pixel icon, and a second identity would have made it six.
+         account posts to four platforms and is four `accounts` rows, so the
+         flat version of this listed `thenightlybuild` four times, told apart
+         by a twelve pixel icon, and a second identity would have made it eight.
          The name selects the identity across every platform; a mark selects
          one of them. #}
       {% if scope and scope.accounts | length > 1 %}
@@ -326,7 +389,7 @@
                  class="name {{ 'on' if scope.brand == b.name and not scope.selected }}">{{
                  b.name }}</a>
               {% for a in b.accounts %}
-                {# Icon only, and a title on every one, because three marks in a
+                {# Icon only, and a title on every one, because four marks in a
                    row is the whole point of the compact form and the label is
                    what a screen reader and a hover get instead. #}
                 <a href="?account={{ a['account_id'] }}"

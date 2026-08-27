@@ -766,6 +766,63 @@ Two things about the queue are load bearing and easy to undo by accident:
   which `CLAIM_STALE_AFTER` makes visible after an hour but nothing undoes for
   you.
 
+### The panel is called SLOPENGINE and the landing page is a dashboard
+
+Since 2026-08-27 the panel has a face: a wordmark reading **SLOPENGINE** in a
+gold frame with `reelsmith` under it, a photograph of the account's mascot as
+the page's backdrop, and a Dashboard at `/admin/` that summarises the other six
+pages. It is the internal panel only. **The public pages are deliberately
+untouched**, because four platforms hold those URLs on file and a reviewer
+reads them; `public_base.html` and its four templates keep their sober styling
+and share nothing with `base.html`.
+
+- **`/admin/` is the dashboard and the queue moved to `/admin/queue`.** Every
+  in-panel link goes through `url_for`, so the templates needed no edits, but a
+  bookmark straight to the old queue lands on the dashboard now. Login and
+  `do_login` redirect to the dashboard; `_back` still falls back to the queue,
+  which is where the controls are.
+- **The dashboard adds no query of its own.** Every number on it is a call one
+  of the other pages already makes, which is what stops it disagreeing with the
+  page it summarises. `_machine` and `_retention` in `admin.py` are the only
+  new arithmetic and both are thin joins over existing readers.
+- **The machine strip starts at the first step the gateway can see.**
+  Discovery matches a few thousand repositories a night and ranks them down to
+  a handful, and both numbers live on the render host and never arrive here.
+  Putting them on the strip would be putting a number on the page that nothing
+  could check, so it starts at "committed" and says so underneath.
+- **The dashboard scores openings on Instagram only, explicitly.** Same rule as
+  `/api/results` and the Insights page, and for the same reason: `skip_rate` is
+  0 on every other platform and that 0 is an absence. `_retention` returns
+  `None` when the scope holds no Instagram row, and the board disappears rather
+  than reporting a video nobody skipped.
+- **The accent is gold because cyan would collide with TikTok.** The Room's
+  wordmark is neon cyan, and making that the functional accent would have put
+  links, the nav underline and the primary button one step from the TikTok
+  badge's teal. Gold is off all four platform hues. The four platform colours
+  themselves are unchanged by the retheme, which is the point of having written
+  down why they were picked.
+- **The panel's images ship in `gateway/assets/` and are served behind the
+  login.** `/admin/assets/{name}` is on `router`, so it inherits the same auth
+  as everything else, and the name is checked against an allowlist rather than
+  cleaned. Not data URIs: the room photograph is 210 KB and `base.html` renders
+  on every page, so inlining it would put it in every response and no cache
+  would ever help. The login page therefore gets the plain ground, since an
+  unauthenticated browser cannot fetch the wall.
+- **One dry line per page, from `_QUIPS` in `admin.py`.** The pages call
+  `quip_for(page)` under their own standfirst. **Nothing on the Posts page may
+  say reach, saves or skipped**: a YouTube account reports none of the three
+  and `test_gateway_youtube_insights` asserts the words appear nowhere on that
+  page, because a zero beside an unmeasured metric reads as a result. A joke
+  does not earn an exception to that.
+- **`_counter` could not read a labelled counter, and Health had been showing
+  zero for a month.** `posts_published` and `publish_failures` gained a
+  `platform` label on 2026-08-26, `prometheus_client` never runs
+  `_metric_init` on a labelled parent, so `metric._value` raised
+  `AttributeError`, the read swallowed it and returned 0. Fixed by summing
+  `_metrics.values()`. The symptom was a tile reading 0 on a service that had
+  published dozens, which looks exactly like a service that has published
+  nothing.
+
 ### The panel answers two different questions
 
 Queue and Posts list things. Insights compares them, and the split is

@@ -8,6 +8,7 @@
   day, and moves by up to its jitter so the account is not posting at the same
   second every evening.
 </p>
+{% if quip_for(page) %}<p class="quip">{{ quip_for(page) }}</p>{% endif %}
 
 {% for board in boards %}
   {% set account = board.account %}
