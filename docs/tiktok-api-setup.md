@@ -580,12 +580,15 @@ curl -s -X POST "https://open.tiktokapis.com/v2/post/publish/video/init/" \
 is the audit, and seeing it is the proof that everything else is wired
 correctly.
 
-## The audit submission, as configured on 2026-08-28
+## The audit submission, parked on 2026-08-28
 
 Started because the inbox path costs a manual tap in the TikTok app every day,
 and the audit is the only sanctioned way to remove it. **Everything below is
-entered and one field short of submittable.** The missing field is the demo
-video, which is the only part a person has to make.
+entered and one field short of submittable, and it was put on hold there.** The
+missing field is the demo video.
+
+**Read "Why it was parked" at the end of this section before restarting it.**
+The blocker is not the demo video itself. It is where the video has to be shot.
 
 **Save validates the whole App review block, so until the video is uploaded
 nothing on this form is persisted.** That is not a quirk to work around, it is
@@ -656,14 +659,50 @@ requested. Turn the flag on for the recording, with
 `GATEWAY_TIKTOK_PRIVACY_LEVEL=SELF_ONLY`, which is the pre-audit behaviour and
 posts privately to the creator's own profile.
 
-### The risk that has not gone away
+### Why it was parked
 
-The App Review Guidelines reject applications "designed for private/personal
-use only", and this is one person's panel posting to one account they own. The
-submission may be refused on exactly that ground and no amount of configuration
-changes it. What is different from the last reading of this file is that the
-refusal would now be a decision by a reviewer who watched the integration work,
-rather than an assumption made because no demo could be produced at all.
+**The demo has to be shot at the declared domain, and the panel is not there.**
+The requirement is exact: "make sure the domain of the website shown in the demo
+video matches the website URL you provide". The interface being demonstrated is
+the admin panel, and `k8s/talos/apps/reelsmith/httproute.yaml` in homelab is an
+allowlist that names `/webhook`, `/media`, `/covers`, `/api`, `/healthz`, `/`,
+`/privacy`, `/terms` and the two OAuth callbacks. **`/admin` is deliberately
+absent.** Internally it answers fine; publicly it is a 404, which is the point
+of it.
+
+So finishing the audit means putting the queue, the accounts and the publish
+controls on the public internet, behind one bearer token. Time-boxing that to
+the length of a recording makes it survivable, and it is still a real cost.
+
+**What it buys is probably a refusal.** The guidelines reject applications
+"designed for private/personal use only". The whole review model assumes a
+consumer product with many users: it asks for a public interface, a user in the
+loop, and a domain that ties the demo to the verified property. None of those
+questions has a natural answer for one person's automation posting to their own
+account. That is a category mismatch rather than a misconfiguration, and no
+amount of wiring fixes it.
+
+Against that, the tap costs about ten seconds a day.
+
+### What restarting it costs
+
+Not a repeat of 2026-08-28. Left in place deliberately:
+
+- The Direct Post switch is **on** for both the production and the sandbox
+  configurations.
+- `video.publish` is **granted** to the stored token, verified against
+  `creator_info`, and inert while `GATEWAY_TIKTOK_DIRECT_POST` is off.
+- `SCOPES` in `scripts/tiktok_authorise.py` already asks for it, so no consent
+  trip is needed unless the token chain breaks.
+
+So restarting is: expose `/admin`, flip the flag, record, submit, revert the
+exposure. The table above is what the form needs re-typed into it, because the
+portal never persisted it.
+
+**The question worth asking first is whether TikTok earns the tap at all.** It
+is the one platform that exposes no retention metric, so it feeds nothing back
+into the loop every other decision here is argued from, and as of this date the
+account has no followers and no published videos.
 
 ## Operational facts
 
