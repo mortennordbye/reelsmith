@@ -6,14 +6,18 @@ addressed by digest, so one MP4 still goes up once however many rows point at
 it, and the nightly needs no second render and no extra step to keep four
 surfaces fed.
 
-**Which render goes where is a decision, not a detail.** YouTube gets
-`out-no-cta.mp4`, because a follow ask on a surface that calls following
-subscribing reads wrong. TikTok gets `out.mp4`, because it is a feed like
-Instagram's and the word is the same word. Facebook gets `out.mp4` and the
-Instagram caption unchanged, because a Page has followers and the copy is
-already written for a Meta feed. That is stated here as well as in the code,
-because "whichever variable was nearest" is exactly how it would otherwise be
-decided.
+**All four get the same MP4, and that is the decision rather than the
+default.** YouTube used to get a second render, `out-no-cta.mp4`, that stopped
+before the ask, because a follow ask on a surface that calls following
+subscribing reads wrong. That was dropped on 2026-08-28 in favour of one video
+everywhere; the wrong word on YouTube is accepted until the queue standing
+behind it has drained and the ending itself is revisited.
+
+**The copy still differs, and that part is unchanged.** YouTube's description
+drops the ask and names the repo, TikTok folds the same ask into its one
+field, and Facebook takes the Instagram caption verbatim. That is stated here
+as well as in the code, because "whichever variable was nearest" is exactly how
+it would otherwise be decided.
 """
 
 from __future__ import annotations
@@ -93,9 +97,6 @@ def queued(monkeypatch) -> Recorded:
     monkeypatch.setattr(main.gateway, "fetch_queue", lambda cfg: [])
     monkeypatch.setattr(main.gateway, "keyword_for", lambda name, cfg: "TOOL")
     monkeypatch.setattr(main.scraper, "mark_featured", lambda cfg, name: None)
-    # No Remotion. The trimmed render is the YouTube path's own step and its
-    # absence is the documented fallback, tested separately below.
-    monkeypatch.setattr(main.renderer, "render_without_cta", lambda spec, d, cfg: None)
     rows.uploads = uploads
     return rows
 
@@ -112,20 +113,21 @@ def test_one_render_makes_four_rows(cfg, run, queued):
 
 def test_the_media_goes_up_once(cfg, run, queued):
     """`/api/media` names a file by its own digest, so four rows pointing at
-    one video is one upload. Without the trimmed YouTube render there is
-    nothing else to send."""
+    one video is one upload. Nothing else is rendered, so there is nothing
+    else to send."""
     main._enqueue_run(cfg, run, approved=True)
 
     assert queued.uploads == ["out.mp4"]
 
 
-def test_tiktok_gets_the_video_with_the_ask(cfg, run, queued):
-    """Stated rather than inherited. YouTube gets the trimmed render because
-    the ask reads wrong there; TikTok is a feed like Instagram's."""
+def test_every_destination_gets_the_same_video(cfg, run, queued):
+    """The whole point of the fan-out, and the thing a second render for one
+    platform quietly undid. Pinned rather than assumed: the YouTube row took
+    its file from a different variable for a month, and the only symptom of
+    that going wrong was a Short nobody watched carrying the wrong ask."""
     main._enqueue_run(cfg, run, approved=True)
 
-    instagram, _youtube, tiktok, _facebook = queued
-    assert tiktok["video_name"] == instagram["video_name"]
+    assert len({row["video_name"] for row in queued}) == 1
 
 
 def test_tiktok_keeps_the_ask_in_its_caption_and_youtube_does_not(cfg, run, queued):

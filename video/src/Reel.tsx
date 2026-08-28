@@ -257,9 +257,11 @@ export const Reel: React.FC<VideoSpec> = (spec) => {
           video's final frame is scene content, which loops cleanly back into
           the hook.
 
-          A version with no ask at all is a second render with showFollowCta
-          false, not a cut of this one: an ask visible from the middle cannot also
-          be absent from a truncation of the same file. See renderer.render_without_cta. */}
+          showFollowCta false renders the same video with no ask at all. Nothing
+          sets it today: all four destinations take this file, ask included. It
+          stays because a version without the ask can only ever be a second
+          render and never a cut of this one, an ask visible from the middle
+          being unable to be absent from a truncation of the same file. */}
       {spec.showFollowCta && ctaFrom !== undefined ? (
         <Sequence
           from={ctaFrom}

@@ -147,10 +147,15 @@ async def test_an_already_resolved_row_keeps_being_read(conn, meta, cfg, metrics
     queued_id = await publish(conn)
     videos(meta, {"id": "v-777", "title": TITLE, "view_count": 100})
 
+    # Both readings are pinned, and the second has to be the later one, because
+    # `latest_insights` answers with the newest date rather than the last write.
+    # The first was left unpinned until 2026-08-28, which dated it "today" and
+    # left the second permanently in the past, so this passed until the day
+    # after it was written and then reported 100 views as the latest reading.
     async with meta.client() as http:
         await insights.refresh_tiktok_account(
             conn, GraphClient(http, cfg), cfg, metrics,
-            await db.get_account(conn, OPEN_ID),
+            await db.get_account(conn, OPEN_ID), on="2026-08-26",
         )
         videos(meta, {"id": "v-777", "title": TITLE, "view_count": 1614})
         await insights.refresh_tiktok_account(

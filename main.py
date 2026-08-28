@@ -1464,7 +1464,7 @@ def _enqueue_run(cfg: Settings, run_dir: Path, *, approved: bool) -> None:
     youtube_result = _enqueue_youtube(
         cfg,
         run_dir,
-        fallback_video_name=video_url.rsplit("/", 1)[-1],
+        video_name=video_url.rsplit("/", 1)[-1],
         link=repo.url if repo else "",
         caption=caption,
         cover_name=cover_url.rsplit("/", 1)[-1] if cover_url else None,
@@ -1533,45 +1533,11 @@ def _enqueue_run(cfg: Settings, run_dir: Path, *, approved: bool) -> None:
         )
 
 
-def _youtube_video_name(cfg: Settings, run_dir: Path, fallback: str) -> str:
-    """Upload the version without the ask, or fall back to the full one.
-
-    The Reel says "comment ANYDOC if you want the link" out loud, in the
-    captions, and on a chip that runs from halfway to the last frame. YouTube
-    has no private replies, so that is a promise nothing on the surface can
-    keep. `renderer.render_without_cta` renders it again without any of them,
-    reusing the voiceover so nothing goes back through TTS.
-
-    Falling back rather than failing when there is no such version: a Short
-    carrying an ask it cannot honour is a smaller problem than no Short.
-    """
-    spec_path = run_dir / "video.json"
-    if not spec_path.exists():
-        return fallback
-
-    spec = VideoSpec.model_validate_json(spec_path.read_text())
-    with console.status("Rendering the version without the ask..."):
-        trimmed = renderer.render_without_cta(spec, run_dir, cfg)
-    if trimmed is None:
-        console.print(
-            "[yellow]No version without the ask.[/] "
-            "[dim]The Short gets the full video, ask included.[/]"
-        )
-        return fallback
-
-    with console.status("Uploading the version without the ask..."):
-        url = gateway.upload_media(trimmed, f"{run_dir.name}-no-cta", cfg)
-    if not url:
-        console.print("[yellow]Could not upload the trimmed video.[/] [dim]Using the full one.[/]")
-        return fallback
-    return url.rsplit("/", 1)[-1]
-
-
 def _enqueue_youtube(
     cfg: Settings,
     run_dir: Path,
     *,
-    fallback_video_name: str,
+    video_name: str,
     link: str,
     caption: str,
     cover_name: str | None = None,
@@ -1582,10 +1548,16 @@ def _enqueue_youtube(
 ) -> dict | None:
     """Queue the same render on the YouTube channel, if one is configured.
 
-    Not quite the same file: the Short gets a copy that stops before the ask,
-    since the keyword mechanic has no equivalent there. Everything else is
-    identical, and `/api/media` names files by their own digest, so nothing is
-    uploaded twice.
+    **The same file every other destination gets.** It used to be a second
+    render, `out-no-cta.mp4`, that stopped before the ask, because "follow"
+    points a YouTube viewer at a button that surface calls subscribing. That
+    was dropped on 2026-08-28: one video goes to all four, the ask included.
+    The wording is still wrong on this surface and is accepted for now, which
+    is a decision about the ending of the video rather than about the fan-out,
+    and it is meant to be settled once the queue standing behind it has drained.
+
+    `/api/media` names files by their own digest, so four rows pointing at one
+    MP4 is one upload.
 
     **Best effort, and loudly so.** The Reel is the primary surface and its row
     is already committed by the time this runs, so a YouTube failure must not
@@ -1607,7 +1579,7 @@ def _enqueue_youtube(
     title = VideoScript.model_validate_json(script_path.read_text()).hook
 
     result = gateway.enqueue(
-        _youtube_video_name(cfg, run_dir, fallback_video_name),
+        video_name,
         link,
         cfg,
         caption=gateway.youtube_description(caption, link),
@@ -1654,13 +1626,11 @@ def _enqueue_tiktok(
 ) -> dict | None:
     """Queue the same render on TikTok, if an open id is configured.
 
-    **TikTok gets `out.mp4`, the version with the ask**, and that is a decision
-    rather than whichever variable was nearest. YouTube gets `out-no-cta.mp4`
-    because a follow ask reads wrong on a surface that calls it subscribing.
-    TikTok is a feed like Instagram's, the word is the same word, and the ask
-    is the account's current call to action there too. So this takes the
-    Instagram file, which `/api/media` has already stored by digest and will
-    not store twice.
+    **TikTok gets `out.mp4`, the same file every other destination gets.**
+    That is now true of all four rather than of three, so it costs no argument
+    here: TikTok is a feed like Instagram's, the word is the same word, and the
+    ask is the account's current call to action there too. `/api/media` has
+    already stored that file by digest and will not store it twice.
 
     **Best effort, and loudly so**, exactly like the YouTube fan-out. The Reel
     is the primary surface and its row is committed by the time this runs, so a
@@ -1728,12 +1698,13 @@ def _enqueue_facebook(
     """Queue the same render on a Facebook Page, if one is configured.
 
     **Facebook gets `out.mp4` and the Instagram caption unchanged**, and that
-    is a decision rather than whichever variable was nearest. YouTube gets the
-    trimmed render and a rewritten description because a follow ask reads wrong
-    on a surface that calls it subscribing. TikTok gets the full video and its
-    own single field. A Page has followers, the word is the same word, and the
-    caption is already written for a Meta feed, so this is the one destination
-    where the Instagram copy ports verbatim and no third shape is needed.
+    is a decision rather than whichever variable was nearest. Every destination
+    now takes the same MP4; the copy is what still differs, and YouTube gets a
+    rewritten description because a follow ask reads wrong on a surface that
+    calls it subscribing, while TikTok folds the same ask into its own single
+    field. A Page has followers, the word is the same word, and the caption is
+    already written for a Meta feed, so this is the one destination where the
+    Instagram copy ports verbatim and no third shape is needed.
 
     That is also why there is no `facebook_description` in `pipeline/gateway.py`
     next to the other two. A function that returns its argument is a place for
