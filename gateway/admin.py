@@ -963,6 +963,11 @@ def _gauge_time(metric: Any) -> datetime | None:
 # --------------------------------------------------------------------------
 
 
+# Publishes started by hand, held only so the event loop cannot collect a task
+# nobody is awaiting. Discarded on completion; the row's state is the record.
+_in_flight: set[asyncio.Task] = set()
+
+
 async def _require_row(request: Request, queued_id: int) -> Any:
     row = await db.get_queued(request.app.state.db, queued_id)
     if row is None:
@@ -993,6 +998,84 @@ async def approve(request: Request, queued_id: int) -> Any:
         request.app.state.db, queued_id, db.QUEUE_APPROVED, reset_attempts=retrying
     )
     log.info("Queue %d armed from the admin UI", queued_id)
+    return _back(request)
+
+
+@router.post("/queue/{queued_id}/publish")
+async def publish_now(request: Request, queued_id: int) -> Any:
+    """Send this post now, without waiting for its slot.
+
+    **The control that was missing.** Everything else here decides what the
+    scheduler will do later; there was no way to say "go", so a row whose
+    failure you had just fixed still cost a day to find out about, and the only
+    lever was deleting its `slot_fires` row by hand against the live database.
+    That is how 2026-08-28 was spent: TikTok refused the first Reel ever queued
+    to it, the cause was fixed within the hour, and nothing in the panel could
+    ask it to try again.
+
+    **It does not touch the slot.** Today's fire stays claimed and tomorrow's
+    fires normally, because this answers "publish this row" rather than
+    "pretend the slot has not run". A row sent this way and then published by
+    its slot as well is the one thing worth being careful about, and claiming
+    the row is what stops it: `claim_queued` moves it out of `approved` before
+    anything is sent, so a tick landing mid-flight finds nothing to take.
+
+    **It returns before the post exists.** An upload plus a status poll runs to
+    minutes and a request held that long is a proxy timeout wearing a failure's
+    clothes, so the work goes to a task and the panel is told to come back. The
+    row's own state is the progress bar: `claimed` while it runs, then
+    `published` or `failed` with the reason attached, which is the same thing a
+    slot-fired publish leaves behind.
+    """
+    row = await _require_row(request, queued_id)
+    if row["state"] not in (db.QUEUE_DRAFT, db.QUEUE_APPROVED, db.QUEUE_FAILED):
+        # Published is done, claimed is either in flight or stale, and both are
+        # decisions this button must not make. `cancel` is where a stale claim
+        # is resolved, by a person who has read it.
+        return _back(request)
+    if row["container_id"]:
+        # The same line the scheduler draws. Something exists at the platform
+        # and may already be live, so re-sending risks a duplicate that nothing
+        # here could detect afterwards.
+        log.warning(
+            "Queue %d has container %s, so publish now was refused", queued_id, row["container_id"]
+        )
+        return _back(request)
+
+    account = await db.get_account(request.app.state.db, str(row["account_id"]))
+    if account is None:
+        log.error("Queue %d names account %s, which is gone", queued_id, row["account_id"])
+        return _back(request)
+
+    # Armed first, because `claim_queued` only takes a row that is approved,
+    # and a draft or a failed row reaching here is one a person just asked to
+    # send. Attempts are reset for the same reason `approve` resets them: this
+    # is a new decision rather than a continuation of the last one's budget.
+    if row["state"] != db.QUEUE_APPROVED:
+        await db.set_queue_state(
+            request.app.state.db, queued_id, db.QUEUE_APPROVED, reset_attempts=True
+        )
+    if not await db.claim_queued(request.app.state.db, queued_id):
+        log.info("Queue %d was taken by a tick before publish now could claim it", queued_id)
+        return _back(request)
+
+    claimed = await db.get_queued(request.app.state.db, queued_id)
+    log.info("Queue %d published by hand from the admin UI", queued_id)
+    task = asyncio.create_task(
+        scheduler.publish_queued(
+            request.app.state.db,
+            request.app.state.graph,
+            request.app.state.cfg,
+            request.app.state.metrics,
+            account=account,
+            queued=claimed,
+        )
+    )
+    # Held so the loop cannot collect it mid-publish, and discarded when it is
+    # done. Without the reference this is a task that can vanish between the
+    # upload and the status poll.
+    _in_flight.add(task)
+    task.add_done_callback(_in_flight.discard)
     return _back(request)
 
 
