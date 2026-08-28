@@ -153,6 +153,13 @@ class FakeTikTok:
     # Every init body, so a test can assert whether post_info was sent at all.
     inits: list[dict[str, Any]] = field(default_factory=list)
     init_urls: list[str] = field(default_factory=list)
+    # Every chunk PUT to the upload URL, so a test can prove the bytes went and
+    # went whole. TikTok takes the video as a push now, not as a fetch.
+    uploads: list[bytes] = field(default_factory=list)
+    upload_ranges: list[str] = field(default_factory=list)
+    # An HTTP status for the upload leg, to exercise the failure that leaves a
+    # publish_id with nothing behind it.
+    upload_status: int = 200
     # Every refresh token this fake was sent, so a test can prove the caller
     # stored the last one it was given.
     refresh_tokens_seen: list[str] = field(default_factory=list)
@@ -161,9 +168,18 @@ class FakeTikTok:
     # than a dataclass, because the parsing is part of what is under test.
     videos: list[dict[str, Any]] = field(default_factory=list)
 
+    # Where `video/init/` says to PUT the bytes. A different host from the API,
+    # the way TikTok's real pre-signed URLs are, so the harness has to claim it
+    # separately or the upload escapes the fake.
+    upload_url: str = "https://open-upload.tiktokapis.com/upload/tt-publish-1"
+
     def handle(self, request: httpx.Request) -> httpx.Response | None:
         """Answer if this is ours, otherwise None so the others get a look."""
         url = str(request.url)
+        if url == self.upload_url:
+            self.uploads.append(request.content)
+            self.upload_ranges.append(request.headers.get("content-range", ""))
+            return httpx.Response(self.upload_status)
         if not url.startswith("https://open.tiktokapis.com"):
             return None
 
@@ -217,7 +233,13 @@ class FakeTikTok:
                 return httpx.Response(200, json=self._error())
             return httpx.Response(
                 200,
-                json={"data": {"publish_id": self.publish_id}, "error": {"code": "ok"}},
+                json={
+                    "data": {
+                        "publish_id": self.publish_id,
+                        "upload_url": self.upload_url,
+                    },
+                    "error": {"code": "ok"},
+                },
             )
 
         # The path, not the whole URL: both of these carry a `fields` query.

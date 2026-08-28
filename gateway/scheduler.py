@@ -240,11 +240,15 @@ async def publish_queued_tiktok(
     `video/init/` returns, TikTok was never asked to make anything and the slot
     gets its turn back. After it, a post may exist and only a person decides.
 
-    **The media is fetched, not pushed**, so this is Meta's shape rather than
-    YouTube's and `media_url` is the same seam. What is different is the token:
-    a TikTok access token lasts 24 hours, so it is minted per publish out of a
-    refresh token the refresher loop keeps alive, and the rotated refresh token
-    is persisted before the publish is attempted.
+    **The media is pushed, not fetched**, so this is YouTube's shape rather
+    than Meta's and the file is read off disk rather than named by URL. It
+    fetched until 2026-08-28: `PULL_FROM_URL` needs the media host verified in
+    the app's URL properties, those are per configuration, and the sandbox
+    configuration this service authenticates as had no verified domain and
+    mints its own signature string. What is different from YouTube is the
+    token: a TikTok access token lasts 24 hours, so it is minted per publish
+    out of a refresh token the refresher loop keeps alive, and the rotated
+    refresh token is persisted before the publish is attempted.
     """
     queued_id = int(queued["id"])
     open_id = account["account_id"]
@@ -277,8 +281,12 @@ async def publish_queued_tiktok(
         log.error("Queue %d: TikTok account %s has no stored credentials", queued_id, open_id)
         return False, False
 
-    video = media_url(cfg, queued["video_name"])
-    if not video:
+    # A path rather than a URL, and checked here rather than at the upload,
+    # because "the file is gone" is a terminal failure and everything inside
+    # the try below is a transport error that may be worth another slot.
+    name = str(queued["video_name"] or "")
+    video = Path(cfg.covers_dir) / name if name else None
+    if video is None or not video.is_file():
         await db.set_queue_state(conn, queued_id, db.QUEUE_FAILED, failure="no video file")
         metrics.publish_failures.labels(platform=db.PLATFORM_TIKTOK).inc()
         log.error("Queue %d: no video file, nothing to publish", queued_id)
@@ -325,7 +333,7 @@ async def publish_queued_tiktok(
         publish_id = await tiktok.start_publish(
             graph.http,
             token=fresh.access_token,
-            video_url=video,
+            video=video,
             title=str(queued["title"] or queued["caption"] or ""),
             direct_post=cfg.tiktok_direct_post,
             privacy_level=privacy,

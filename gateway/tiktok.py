@@ -2,8 +2,16 @@
 
 Three shapes of destination now. **Meta fetches the video** from a public URL,
 which is why this service hosts `/media/*` at all. **YouTube takes pushed
-bytes.** TikTok fetches, like Meta, so nothing new gets hosted and the seam
-already exists.
+bytes, and so does TikTok**, so this is YouTube's shape rather than Meta's.
+
+**It used to fetch, and the change was forced rather than chosen.**
+`PULL_FROM_URL` needs the media's domain verified in the app's URL properties,
+and those are per configuration: `gate.nordbye.it` was verified on the
+production configuration on 2026-08-27 and the credentials this service holds
+are the sandbox's, which had none. The sandbox mints its own signature string,
+so closing that gap meant a second DNS TXT record in another repository. Pushing
+the bytes needs no verified domain, no publicly reachable media and no DNS at
+all, which is three fewer things that can lapse without anything noticing.
 
 **The two paths differ by one field, one endpoint and one success state**, and
 building for both is the whole hedge in `docs/tiktok-api-setup.md`:
@@ -42,6 +50,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import httpx
 
@@ -71,10 +80,12 @@ STATUS_FAILED = "FAILED"
 # is also the proof that everything else is wired correctly, so it reads as a
 # milestone rather than only as an error.
 ERROR_UNAUDITED = "unaudited_client_can_only_post_to_private_accounts"
-# The DNS record nobody did. It names the URL rather than the missing record,
-# and it fails at init rather than at download, so it looks like a bad media
-# URL.
-ERROR_URL_UNVERIFIED = "url_ownership_unverified"
+# TikTok takes a whole video as one chunk up to this size and demands chunks
+# between 5 MB and 64 MB past it. Every Reel this repo renders is about 10 MB
+# against a 13 MB worst case, so the single chunk path is the only one built.
+# Anything larger is refused here rather than sent as a malformed multi chunk
+# upload, because that arrives back as a generic init error naming nothing.
+MAX_SINGLE_CHUNK = 64 * 1024 * 1024
 
 
 class PublishError(RuntimeError):
@@ -278,7 +289,7 @@ async def start_publish(
     http: httpx.AsyncClient,
     *,
     token: str,
-    video_url: str,
+    video: Path,
     title: str,
     direct_post: bool,
     privacy_level: str = "",
@@ -288,17 +299,48 @@ async def start_publish(
     disable_stitch: bool = False,
     cover_timestamp_ms: int = 0,
 ) -> str:
-    """Ask TikTok to fetch the video. Returns the `publish_id`.
+    """Upload the video to TikTok. Returns the `publish_id`.
 
-    Nothing exists on TikTok before this returns, so every failure up to here
-    is safe to retry. After it, a post may exist.
+    Two requests rather than one. `video/init/` reserves a `publish_id` and
+    hands back a one hour `upload_url`, and the bytes go to that URL as a
+    single chunk. The upload URL is pre-signed, so it carries no access token
+    of its own.
+
+    **Nothing exists on TikTok until the bytes land**, which is what keeps the
+    retry rule the same as it was under `PULL_FROM_URL`. A `publish_id` with no
+    upload behind it never becomes a post and TikTok expires it, so a failure
+    at init or during the upload is safe to retry and only a failure after the
+    upload has been accepted is not.
 
     `post_info` is what separates the two paths, and it is left off entirely
     rather than sent empty: the inbox endpoint does not take it and sending one
     is a different request, not a harmless extra.
     """
+    try:
+        size = video.stat().st_size
+    except OSError as exc:
+        raise PublishError(f"Cannot read {video}: {exc}") from exc
+    if size == 0:
+        raise PublishError(f"{video} is empty, so there is nothing to publish")
+    if size > MAX_SINGLE_CHUNK:
+        # Refused rather than chunked. Building a multi chunk uploader for a
+        # case this repo has never produced would be untested code on the path
+        # that publishes, and the honest failure names the real limit.
+        raise PublishError(
+            f"{video.name} is {size / 1048576:.1f} MB and this uploads a single "
+            f"chunk up to {MAX_SINGLE_CHUNK / 1048576:.0f} MB"
+        )
+
     body: dict = {
-        "source_info": {"source": "PULL_FROM_URL", "video_url": video_url},
+        "source_info": {
+            "source": "FILE_UPLOAD",
+            "video_size": size,
+            # One chunk, so the chunk is the whole file and there is exactly
+            # one of it. TikTok rejects a `chunk_size` under 5 MB unless it is
+            # also the whole video, which it always is here.
+            "chunk_size": size,
+            "total_chunk_count": 1,
+        },
     }
     if direct_post:
         post_info: dict = {
@@ -343,18 +385,62 @@ async def start_publish(
                 "else is wired correctly; set the privacy level to SELF_ONLY or use "
                 "the inbox path until the audit lands."
             )
-        elif code == ERROR_URL_UNVERIFIED:
-            log.error(
-                "TikTok will not fetch %s: the domain is not verified in the app's "
-                "URL properties. This is a DNS record, not a bad media URL.",
-                video_url,
-            )
         raise PublishError(f"Publish refused: {code} {message}".strip(), code=code)
 
-    publish_id = str((payload.get("data") or {}).get("publish_id") or "")
+    data = payload.get("data") or {}
+    publish_id = str(data.get("publish_id") or "")
     if not publish_id:
         raise PublishError(f"Publish returned no publish_id: {payload}")
+    upload_url = str(data.get("upload_url") or "")
+    if not upload_url:
+        raise PublishError(f"Publish returned no upload_url: {payload}")
+
+    await _upload(http, upload_url=upload_url, video=video, size=size)
+    log.info("Uploaded %s to TikTok as %s (%.1f MB)", video.name, publish_id, size / 1048576)
     return publish_id
+
+
+async def _upload(
+    http: httpx.AsyncClient, *, upload_url: str, video: Path, size: int
+) -> None:
+    """PUT the whole file to the URL `video/init/` handed back.
+
+    No `authorization` header: the URL is pre-signed and adding one is how a
+    signed upload turns into a 403 that reads like an expired token.
+
+    `Content-Range` is required even for a single chunk, and it is the closed
+    interval TikTok's own examples use, so a one byte file is `bytes 0-0/1`.
+
+    A failure here leaves a `publish_id` with nothing behind it, which TikTok
+    expires on its own, so this raises with `publish_started` left false and
+    the row is retried rather than stranded.
+    """
+    try:
+        payload = video.read_bytes()
+    except OSError as exc:
+        raise PublishError(f"Cannot read {video}: {exc}") from exc
+
+    try:
+        response = await http.put(
+            upload_url,
+            content=payload,
+            headers={
+                "content-type": "video/mp4",
+                "content-range": f"bytes 0-{size - 1}/{size}",
+            },
+            # Generous, because this is the one call that moves megabytes and
+            # the slot it runs in fires once a day. A retry costs another whole
+            # upload, so waiting is cheaper than giving up early.
+            timeout=300,
+        )
+    except httpx.HTTPError as exc:
+        raise PublishError(f"Could not upload {video.name} to TikTok: {exc}") from exc
+
+    if response.status_code >= 400:
+        raise PublishError(
+            f"TikTok refused the upload of {video.name}: "
+            f"{response.status_code} {response.text[:200]}"
+        )
 
 
 async def fetch_status(
