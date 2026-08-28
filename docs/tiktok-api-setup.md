@@ -181,12 +181,25 @@ transient condition.
      validates in the browser and sends no request when it fails. A dead button
      and a failed validation look identical from the network tab.
    - **A verified URL property for `https://gate.nordbye.it`**, in the URL
-     properties widget, plus the DNS record it hands you. The publisher uses
-     `PULL_FROM_URL`, so without this every post fails at init with
-     `url_ownership_unverified`, which names the URL rather than the missing
-     record. The gateway already serves the MP4 unauthenticated at
-     `GET /media/{name}` off `GATEWAY_PUBLIC_BASE_URL`, verified reachable with
-     range support on 2026-08-27, so this is one DNS record and no new hosting.
+     properties widget, plus the DNS record it hands you. **This is no longer
+     needed for publishing**, since 2026-08-28: the publisher pushes the bytes
+     with `FILE_UPLOAD` rather than having TikTok fetch them, so no post
+     depends on a verified domain. It is still what the three legal URLs and
+     the OAuth callback are checked against.
+
+     **Read the next bullet before doing this one.**
+   - **URL properties are per configuration, and that is the trap.** Verifying
+     `gate.nordbye.it` on the production configuration does nothing for the
+     sandbox, which mints a *different* signature string and therefore needs a
+     second TXT record on the same name. The portal states it once, as "You
+     must verify URL properties for all configurations with a URL", and the API
+     never mentions configurations at all: it answers
+     `url_ownership_unverified` and names the URL, which sends you to check
+     DNS, where you find the record present and correct.
+
+     This cost the first TikTok Reel ever queued, on 2026-08-28. Production had
+     been verified the day before, the gateway authenticates as the sandbox,
+     and the credentials say which: **a sandbox client key starts `sb`.**
 
 4. **Connect the account to the sandbox as a target user**, from Sandbox
    settings, Add account. It redirects to a TikTok login, so it needs the
@@ -343,7 +356,9 @@ cheap hedge rather than throwaway work.
    Posting API**, so it proves the wiring and nothing about visibility. On the
    inbox path that costs nothing, since the creator publishes from the app.
 
-7. **A verified domain or URL prefix**, if you use `PULL_FROM_URL`. Add the
+7. **A verified domain or URL prefix**, if you use `PULL_FROM_URL`. This
+   publisher does not, so this is here for the legal URLs and as the record of
+   why the fetch path was abandoned. Add the
    property in the URL properties widget on the app, then add the signature
    string TikTok gives you to the domain's DNS. A verified domain covers every
    path under it and its subdomains; a verified URL prefix covers only URLs with
@@ -442,7 +457,8 @@ posting real videos before the gate opens.
 4. **`PULL_FROM_URL` fails as `url_ownership_unverified`**, which names the URL
    rather than the missing DNS record, and it fails at init rather than at
    download. The failure looks like a bad media URL and is a portal step nobody
-   did.
+   did, on a configuration nobody thought about. **This is why the publisher
+   uses `FILE_UPLOAD` instead**, since 2026-08-28.
 5. **The caption goes in `title`, and it is 2,200 UTF-16 runes.** There is no
    separate description field, so the caption and the hashtags share one string
    with the link. This is a third shape after Instagram's caption and YouTube's
@@ -498,10 +514,18 @@ Nothing about the renderer has to change. Measured against what
 | Resolution | 360 to 4096 on both axes | 1080x1920 |
 | Duration | 3 seconds to 10 minutes, and never past `max_video_post_duration_sec` | about 30 to 45 seconds |
 
-`FILE_UPLOAD` chunking, if it is ever needed: 5 MB minimum, 64 MB maximum with a
-final chunk up to 128 MB, at most 1,000 chunks, and a video under 5 MB goes as a
-single chunk. With `PULL_FROM_URL` none of that applies, which is the second
-reason to prefer it after the one about not pushing bytes twice.
+`FILE_UPLOAD` chunking: 5 MB minimum, 64 MB maximum with a final chunk up to
+128 MB, at most 1,000 chunks, and a video under 5 MB goes as a single chunk.
+**None of it is implemented and that is deliberate.** A whole video up to 64 MB
+is one chunk, renders here are about 10 MB against a 13 MB worst case, and
+`tiktok.MAX_SINGLE_CHUNK` refuses anything larger by name rather than shipping
+a multi chunk uploader that nothing would ever exercise. TikTok answers a
+malformed multi chunk init with a generic error naming nothing, so the local
+refusal is the more useful failure.
+
+This paragraph used to end by calling chunking the second reason to prefer
+`PULL_FROM_URL`. That preference did not survive contact with the portal: see
+the URL properties bullets above.
 
 ## What comes back, and what does not
 

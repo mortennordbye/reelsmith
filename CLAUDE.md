@@ -350,6 +350,34 @@ attempted*:
   `skip_rate` are absences rather than results, and the Posts page renders the
   column set for the platform so a TikTok post is not shown as one that got
   zero reach and zero saves.
+- **TikTok takes pushed bytes, not a URL, and that was forced rather than
+  chosen.** `PULL_FROM_URL` refuses at init with `url_ownership_unverified`
+  unless the media's host is a verified URL property on the app, and **URL
+  properties are per configuration**. `gate.nordbye.it` was verified on the
+  *production* configuration on 2026-08-27; the credentials this service holds
+  are the sandbox's, whose client key starts `sb`, and that configuration had
+  no verified property at all. The portal says so in one line, "You must verify
+  URL properties for all configurations with a URL", and nothing else does.
+
+  The first TikTok Reel ever queued failed on exactly this, on 2026-08-28,
+  three attempts and then the row. **The sandbox mints its own signature
+  string** rather than reusing production's, so closing the gap meant a second
+  TXT record on `gate.nordbye.it` in the homelab repo, which is the cross repo
+  coupling this file already warns about for httproutes. `FILE_UPLOAD` needs no
+  verified domain, no publicly reachable media and no DNS, so it was cheaper
+  than the record and removes three things that can lapse silently. The
+  unverified sandbox property is left sitting in the portal with its signature
+  string, so the fetch path is one DNS record away if it is ever wanted back.
+
+  **One chunk, up to 64 MB.** Renders are about 10 MB against a 13 MB worst
+  case, so `MAX_SINGLE_CHUNK` refuses anything larger rather than shipping an
+  untested multi chunk uploader on the publish path.
+- **Nothing exists on TikTok until the bytes land**, which is why the retry
+  rule survived the change. `video/init/` only reserves a `publish_id`, and one
+  with no upload behind it is expired by TikTok rather than becoming a post, so
+  a failure at init *or during the upload* is safe to retry and only a failure
+  after the upload was accepted is not. That is the same line
+  `publisher.PublishError` draws for Meta.
 - **The publish id is not a video id**, which is a shape Meta never had.
   `status/fetch` reports the post finished and returns neither an id nor a URL,
   so the row carries its `publish_id` until the insights sweep lists the
@@ -492,10 +520,12 @@ consolidate later.
   and `github.com` can never be one. The field simply reads "This URL is not
   verified" and the form refuses to save. That is what moved them, not a
   preference for HTML.
-- **One verification covers all four URLs.** A verified domain carries its
-  subdomains, and `gate.nordbye.it` is already the host TikTok pulls media from
-  for `PULL_FROM_URL`, so the media and the three documents need one record
-  between them rather than one each.
+- **One verification covers all four URLs, and it no longer has to cover the
+  media.** A verified domain carries its subdomains, so the three documents and
+  the OAuth callback need one record between them rather than one each. It used
+  to carry the MP4 as well, because TikTok fetched it with `PULL_FROM_URL`;
+  since 2026-08-28 the bytes are pushed, so the media does not depend on this
+  record at all. See the URL properties bullet under the four destinations.
 - **The router mounts unconditionally, unlike the admin panel.** The obvious
   home was `admin.public`, which already serves the one page that cannot require
   a login, but that router is only included when `GATEWAY_ADMIN_ENABLED` is on.

@@ -24,13 +24,28 @@ from gateway import db, poller, tiktok
 from gateway.metrics import Metrics
 from tests.gateway_harness import OPEN_ID, FakeMeta, settings
 
-VIDEO_URL = "https://gate.example.test/media/abc.mp4"
 TITLE = "Ponytail makes your coding agent stop and ask"
+# Small enough to assert on byte for byte. What matters is that the whole file
+# reaches TikTok, not how big it is.
+VIDEO_BYTES = b"an mp4, more or less"
 
 
 @pytest.fixture
 def cfg(tmp_path):
     return settings(tmp_path)
+
+
+@pytest.fixture
+def video(tmp_path):
+    """A file on disk, because TikTok is pushed rather than fetched.
+
+    It used to be a URL string. `PULL_FROM_URL` needs the media host verified
+    in the app's URL properties and those are per configuration, so the sandbox
+    credentials this service holds could not use it.
+    """
+    path = tmp_path / "abc.mp4"
+    path.write_bytes(VIDEO_BYTES)
+    return path
 
 
 @pytest.fixture
@@ -153,21 +168,21 @@ async def test_the_meta_refresher_does_not_see_a_tiktok_account(conn, meta):
 # --- Two paths that end differently -----------------------------------------
 
 
-async def test_the_inbox_path_sends_no_post_info(meta):
+async def test_the_inbox_path_sends_no_post_info(meta, video):
     """Left off entirely rather than sent empty. The inbox endpoint does not
     take it, so an empty one is a different request rather than a harmless
     extra."""
     async with meta.client() as http:
         await tiktok.start_publish(
-            http, token="act", video_url=VIDEO_URL, title=TITLE, direct_post=False
+            http, token="act", video=video, title=TITLE, direct_post=False
         )
 
     assert meta.tiktok.init_urls == [tiktok.INBOX_INIT_URL]
     assert "post_info" not in meta.tiktok.inits[0]
-    assert meta.tiktok.inits[0]["source_info"]["source"] == "PULL_FROM_URL"
+    assert meta.tiktok.inits[0]["source_info"]["source"] == "FILE_UPLOAD"
 
 
-async def test_the_direct_path_carries_the_privacy_level_it_was_given(meta):
+async def test_the_direct_path_carries_the_privacy_level_it_was_given(meta, video):
     """It has to be one of the options `creator_info` returned, or the post
     fails `privacy_level_option_mismatch`, which reads like a bad constant and
     is actually a stale read."""
@@ -175,7 +190,7 @@ async def test_the_direct_path_carries_the_privacy_level_it_was_given(meta):
         await tiktok.start_publish(
             http,
             token="act",
-            video_url=VIDEO_URL,
+            video=video,
             title=TITLE,
             direct_post=True,
             privacy_level="SELF_ONLY",
@@ -237,7 +252,7 @@ async def test_a_failed_status_stops_rather_than_polling_on(meta):
 # --- Failure on the right side of the line ----------------------------------
 
 
-async def test_a_refusal_at_init_is_retryable(meta):
+async def test_a_refusal_at_init_is_retryable(meta, video):
     """Nothing exists on TikTok before `video/init/` returns, so the slot gets
     its turn back. This is the same line `publisher.PublishError` draws for
     Meta and `youtube.UploadError` for Google."""
@@ -246,12 +261,69 @@ async def test_a_refusal_at_init_is_retryable(meta):
     async with meta.client() as http:
         with pytest.raises(tiktok.PublishError) as exc:
             await tiktok.start_publish(
-                http, token="act", video_url=VIDEO_URL, title=TITLE, direct_post=True,
+                http, token="act", video=video, title=TITLE, direct_post=True,
                 privacy_level="PUBLIC_TO_EVERYONE",
             )
 
     assert exc.value.publish_started is False
     assert exc.value.code == tiktok.ERROR_UNAUDITED
+
+
+async def test_the_whole_file_is_uploaded_in_one_chunk(meta, video):
+    """The bytes are the publish. `video/init/` only reserves a `publish_id`,
+    and a `publish_id` with nothing behind it never becomes a post."""
+    async with meta.client() as http:
+        await tiktok.start_publish(
+            http, token="act", video=video, title=TITLE, direct_post=False
+        )
+
+    source = meta.tiktok.inits[0]["source_info"]
+    assert source["video_size"] == len(VIDEO_BYTES)
+    assert source["chunk_size"] == len(VIDEO_BYTES)
+    assert source["total_chunk_count"] == 1
+    assert meta.tiktok.uploads == [VIDEO_BYTES]
+    # The closed interval TikTok's own examples use, so the last byte is
+    # size - 1 rather than size.
+    assert meta.tiktok.upload_ranges == [f"bytes 0-{len(VIDEO_BYTES) - 1}/{len(VIDEO_BYTES)}"]
+
+
+async def test_a_failed_upload_is_retryable(meta, video):
+    """The other half of the line `test_a_refusal_at_init_is_retryable` draws.
+    A `publish_id` exists by now, but TikTok expires one it never received
+    bytes for, so nothing was published and the slot gets its turn back."""
+    meta.tiktok.upload_status = 500
+
+    async with meta.client() as http:
+        with pytest.raises(tiktok.PublishError) as exc:
+            await tiktok.start_publish(
+                http, token="act", video=video, title=TITLE, direct_post=False
+            )
+
+    assert exc.value.publish_started is False
+    assert "refused the upload" in str(exc.value)
+
+
+async def test_a_video_past_the_single_chunk_ceiling_is_refused_before_init(
+    meta, tmp_path, monkeypatch
+):
+    """Refused here rather than chunked. A multi chunk uploader for a case this
+    repo has never produced would be untested code on the publish path, and
+    TikTok answers a malformed one with a generic init error naming nothing.
+
+    The ceiling is moved rather than the file grown: the real one is 64 MB and
+    writing that to disk to prove a bounds check is a slow test that measures
+    the filesystem."""
+    monkeypatch.setattr(tiktok, "MAX_SINGLE_CHUNK", 8)
+    big = tmp_path / "big.mp4"
+    big.write_bytes(b"0" * 16)
+
+    async with meta.client() as http:
+        with pytest.raises(tiktok.PublishError, match="single chunk"):
+            await tiktok.start_publish(
+                http, token="act", video=big, title=TITLE, direct_post=False
+            )
+
+    assert meta.tiktok.inits == [], "nothing was asked for"
 
 
 async def test_a_failure_after_the_publish_id_is_not(meta):
@@ -289,7 +361,7 @@ async def test_creator_info_reports_what_may_be_asked_for(meta):
     assert info.username == "nightlybuild"
 
 
-async def test_a_title_past_the_limit_is_trimmed_rather_than_refused(meta):
+async def test_a_title_past_the_limit_is_trimmed_rather_than_refused(meta, video):
     """2,200 UTF-16 runes carrying the ask, the link and the hashtags together.
     The hook is capped well inside it upstream, so reaching this bound means
     something odd rather than something fatal."""
@@ -297,7 +369,7 @@ async def test_a_title_past_the_limit_is_trimmed_rather_than_refused(meta):
         await tiktok.start_publish(
             http,
             token="act",
-            video_url=VIDEO_URL,
+            video=video,
             title="x" * (tiktok.MAX_TITLE + 50),
             direct_post=True,
             privacy_level="SELF_ONLY",

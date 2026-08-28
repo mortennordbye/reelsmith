@@ -43,6 +43,22 @@ def cfg(tmp_path):
     )
 
 
+@pytest.fixture(autouse=True)
+def staged_media(cfg):
+    """The file every row in this file queues, on disk where the publisher
+    looks for it.
+
+    Autouse, because this file is about routing rather than about media, and
+    the file existing is a precondition of publishing rather than anything
+    under test. It became one on 2026-08-28: TikTok is pushed rather than
+    fetched now, so the publisher reads the bytes instead of naming a URL, and
+    a row whose file is missing fails before it reaches any of the assertions
+    here.
+    """
+    cfg.covers_dir.mkdir(parents=True, exist_ok=True)
+    (cfg.covers_dir / "a.mp4").write_bytes(b"an mp4, more or less")
+
+
 @pytest.fixture
 def meta():
     return FakeMeta()
