@@ -580,6 +580,130 @@ curl -s -X POST "https://open.tiktokapis.com/v2/post/publish/video/init/" \
 is the audit, and seeing it is the proof that everything else is wired
 correctly.
 
+## The audit submission, parked on 2026-08-28
+
+Started because the inbox path costs a manual tap in the TikTok app every day,
+and the audit is the only sanctioned way to remove it. **Everything below is
+entered and one field short of submittable, and it was put on hold there.** The
+missing field is the demo video.
+
+**Read "Why it was parked" at the end of this section before restarting it.**
+The blocker is not the demo video itself. It is where the video has to be shot.
+
+**Save validates the whole App review block, so until the video is uploaded
+nothing on this form is persisted.** That is not a quirk to work around, it is
+why this section exists: the configuration below had to be recorded somewhere
+that survives a page reload, because the portal will not hold it.
+
+| Field | Value |
+|---|---|
+| App name | `The Nightly Build` |
+| App icon | `brand/avatars/b-moon.png`, the account's own avatar, 1024x1024 |
+| Category | Photo & Video |
+| Description (120 max) | Schedules short videos about trending open source developer tools and posts them to the creator's own TikTok account. |
+| Terms of Service URL | `https://gate.nordbye.it/terms` |
+| Privacy Policy URL | `https://gate.nordbye.it/privacy` |
+| Platforms | Web only |
+| Web/Desktop URL | `https://gate.nordbye.it` |
+| Redirect URI | `https://gate.nordbye.it/tiktok/callback` |
+| Products | Login Kit, Content Posting API |
+| Direct Post | on |
+| Scopes | `user.info.basic`, `video.publish`, `video.upload`, `video.list` |
+
+Four things cost a round trip each and are worth knowing before the next
+attempt:
+
+- **`video.publish` is not in the scopes picker.** Searching the Add scopes
+  dialog for "video" offers `video.list` and nothing else. It appears in the
+  scope list the moment the **Direct Post** switch inside the Content Posting
+  API product is turned on, which is the only thing that grants it. Turning
+  that switch on is therefore the whole point of the submission.
+- **Content Posting API cannot be added before Login Kit.** Its Add button is
+  disabled and the reason is one line of grey text. Same ordering the sandbox
+  needed.
+- **Ticking Web reveals a required Web/Desktop URL** that does not exist until
+  the checkbox is ticked, so the form can be invalid because of a field that is
+  not on the page. Already recorded above for the sandbox; it is the same trap
+  on production.
+- **Only Web is ticked, deliberately.** Android or iOS obliges a mobile demo
+  video, and the guidelines say a mobile demo must start by showing the app
+  being opened. There is no mobile app.
+
+### What the demo video has to show
+
+From the portal's own requirements: mp4 or mov, up to 5 files of 50 MB, it must
+use **the sandbox**, it must show the website where the feature is actually
+integrated, the domain on screen must match the Web/Desktop URL above, and it
+must show the user interface and the user interactions. So a screen recording
+of `gate.nordbye.it/admin`, with the address bar visible.
+
+The shot list, in order:
+
+1. The browser address bar showing `gate.nordbye.it`, then the admin panel.
+2. The Queue page, showing a queued video with its title and its slot.
+3. Press **Publish now** on the TikTok row.
+4. The row changing to claimed and then published.
+5. The video on the connected TikTok account.
+
+**Step 3 is the shot the whole submission turns on**, because it is the only
+one that shows a user interface performing a Content Posting API call. It did
+not exist before 2026-08-28: the panel had no control that published anything,
+which is what made the demo video impossible and the sandbox look permanent.
+
+**One thing has to change before recording.** The panel currently runs
+`GATEWAY_TIKTOK_DIRECT_POST=false`, so pressing Publish now demonstrates
+`video.upload` into the inbox rather than the `video.publish` direct post the
+submission is asking for. Recording the inbox path to justify a direct post
+scope would be showing the reviewer a different thing from the one being
+requested. Turn the flag on for the recording, with
+`GATEWAY_TIKTOK_PRIVACY_LEVEL=SELF_ONLY`, which is the pre-audit behaviour and
+posts privately to the creator's own profile.
+
+### Why it was parked
+
+**The demo has to be shot at the declared domain, and the panel is not there.**
+The requirement is exact: "make sure the domain of the website shown in the demo
+video matches the website URL you provide". The interface being demonstrated is
+the admin panel, and `k8s/talos/apps/reelsmith/httproute.yaml` in homelab is an
+allowlist that names `/webhook`, `/media`, `/covers`, `/api`, `/healthz`, `/`,
+`/privacy`, `/terms` and the two OAuth callbacks. **`/admin` is deliberately
+absent.** Internally it answers fine; publicly it is a 404, which is the point
+of it.
+
+So finishing the audit means putting the queue, the accounts and the publish
+controls on the public internet, behind one bearer token. Time-boxing that to
+the length of a recording makes it survivable, and it is still a real cost.
+
+**What it buys is probably a refusal.** The guidelines reject applications
+"designed for private/personal use only". The whole review model assumes a
+consumer product with many users: it asks for a public interface, a user in the
+loop, and a domain that ties the demo to the verified property. None of those
+questions has a natural answer for one person's automation posting to their own
+account. That is a category mismatch rather than a misconfiguration, and no
+amount of wiring fixes it.
+
+Against that, the tap costs about ten seconds a day.
+
+### What restarting it costs
+
+Not a repeat of 2026-08-28. Left in place deliberately:
+
+- The Direct Post switch is **on** for both the production and the sandbox
+  configurations.
+- `video.publish` is **granted** to the stored token, verified against
+  `creator_info`, and inert while `GATEWAY_TIKTOK_DIRECT_POST` is off.
+- `SCOPES` in `scripts/tiktok_authorise.py` already asks for it, so no consent
+  trip is needed unless the token chain breaks.
+
+So restarting is: expose `/admin`, flip the flag, record, submit, revert the
+exposure. The table above is what the form needs re-typed into it, because the
+portal never persisted it.
+
+**The question worth asking first is whether TikTok earns the tap at all.** It
+is the one platform that exposes no retention metric, so it feeds nothing back
+into the loop every other decision here is argued from, and as of this date the
+account has no followers and no published videos.
+
 ## Operational facts
 
 - **Access token 24 hours, refresh token 365 days, and the refresh token
