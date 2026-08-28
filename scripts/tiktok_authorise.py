@@ -73,18 +73,22 @@ REDIRECT_URI = os.environ.get(
 # nothing comes back at all. `user.info.basic` is what makes the open id
 # readable here rather than pasted, and comes with Login Kit.
 #
-# **`video.publish` is deliberately absent.** It is Direct Post, and the app
-# does not hold it: the two scopes above arrive with their products, and
-# `video.publish` arrives only with the Direct Post switch inside the Content
-# Posting API product, which is off here on purpose. Requesting a scope the app
-# does not hold fails the authorisation rather than being quietly dropped, so
-# asking for it here would break the consent trip for the path that does work.
-# Turn the switch on and add it in the same breath as the audit that makes
-# Direct Post do anything but `SELF_ONLY`, not before.
+# **`video.publish` is here since 2026-08-28**, and it was deliberately absent
+# before that. It is Direct Post, and the app only holds it once the Direct
+# Post switch inside the Content Posting API product is on. Requesting a scope
+# the app does not hold fails the authorisation rather than being quietly
+# dropped, so this line and that switch move together or the consent trip
+# breaks for the path that does work.
 #
-# Asking for scopes the app does not use is also a named rejection reason at
-# audit time, so this list should not grow speculatively.
-SCOPES = "user.info.basic,video.upload,video.list"
+# The switch is now on for both configurations, because the audit that makes
+# Direct Post do anything other than `SELF_ONLY` is being applied for. **If
+# that application is refused and the switch goes back off, this line has to go
+# back with it.**
+#
+# Asking for scopes the app does not use is a named rejection reason at audit
+# time, so this list should not grow speculatively. `video.upload` stays
+# because the inbox path is still what runs while the audit is pending.
+SCOPES = "user.info.basic,video.publish,video.upload,video.list"
 
 
 def authorise(client_key: str) -> str:
