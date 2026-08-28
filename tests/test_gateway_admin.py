@@ -474,6 +474,73 @@ async def test_cancel(client):
     assert (await db.get_queued(app.state.db, queued_id))["state"] == db.QUEUE_CANCELLED
 
 
+async def test_publish_now_claims_the_row_without_waiting_for_a_slot(client):
+    """The control that was missing. Everything else here decides what the
+    scheduler does later, so a row whose failure had just been fixed still cost
+    a day to find out about."""
+    http, app = client
+    queued_id = (await queue(http))["id"]
+    await http.post(f"/admin/queue/{queued_id}/approve")
+
+    await http.post(f"/admin/queue/{queued_id}/publish")
+
+    # Claimed the moment the button is pressed, which is what stops a tick
+    # landing mid-flight from taking the same row.
+    state = (await db.get_queued(app.state.db, queued_id))["state"]
+    assert state in (db.QUEUE_CLAIMED, db.QUEUE_PUBLISHED, db.QUEUE_FAILED)
+    assert state != db.QUEUE_APPROVED
+
+
+async def test_publish_now_arms_a_failed_row_first(client):
+    """A failed row is exactly the case this exists for, and `claim_queued`
+    only takes one that is approved."""
+    http, app = client
+    queued_id = (await queue(http))["id"]
+    await db.set_queue_state(app.state.db, queued_id, db.QUEUE_FAILED, failure="nope")
+
+    await http.post(f"/admin/queue/{queued_id}/publish")
+
+    row = await db.get_queued(app.state.db, queued_id)
+    assert row["state"] != db.QUEUE_FAILED or row["failure"] != "nope"
+
+
+async def test_publish_now_leaves_the_slot_alone(client):
+    """It answers "publish this row", not "pretend the slot has not run".
+    Consuming the fire would cost the account a post the next day."""
+    http, app = client
+    queued_id = (await queue(http))["id"]
+    await db.claim_slot_fire(app.state.db, slot_id=1, local_date="2026-08-28")
+
+    await http.post(f"/admin/queue/{queued_id}/publish")
+
+    # Still claimed, so today's slot stays spent and tomorrow's is untouched.
+    assert await db.claim_slot_fire(app.state.db, slot_id=1, local_date="2026-08-28") is False
+
+
+async def test_publish_now_refuses_a_row_with_a_container(client):
+    """The same line the scheduler draws. Something exists at the platform and
+    may already be live, so re-sending risks a duplicate nothing here could
+    detect afterwards."""
+    http, app = client
+    queued_id = (await queue(http))["id"]
+    await db.set_container(app.state.db, queued_id, "container-1")
+
+    await http.post(f"/admin/queue/{queued_id}/publish")
+
+    assert (await db.get_queued(app.state.db, queued_id))["state"] == db.QUEUE_DRAFT
+
+
+async def test_publish_now_refuses_a_published_row(client):
+    """Sending it again is the one outcome that cannot be undone."""
+    http, app = client
+    queued_id = (await queue(http))["id"]
+    await db.mark_queue_published(app.state.db, queued_id, media_id="m1", permalink=None)
+
+    await http.post(f"/admin/queue/{queued_id}/publish")
+
+    assert (await db.get_queued(app.state.db, queued_id))["state"] == db.QUEUE_PUBLISHED
+
+
 async def test_a_published_post_cannot_be_cancelled(client):
     """Deleting the record of something that is live would only make it wrong."""
     http, app = client
@@ -756,6 +823,7 @@ async def test_a_stranger_cannot_read_the_queue(anon):
     [
         ("/admin/queue/1/approve", {}),
         ("/admin/queue/1/cancel", {}),
+        ("/admin/queue/1/publish", {}),
         ("/admin/queue/1/edit", {"caption": "x"}),
         ("/admin/slots/add", {"account_id": ACCOUNT, "hour": "3"}),
         ("/admin/accounts/" + ACCOUNT + "/flags", {"field": "active", "value": "0"}),

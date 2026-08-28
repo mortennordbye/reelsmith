@@ -876,6 +876,26 @@ Queue and Posts list things. Insights compares them, and the split is
 deliberate: a list cannot answer "did that change work" while posts go out on a
 timetable and the prompt changes underneath them.
 
+- **Publish now is the only control that acts rather than schedules**, added
+  2026-08-28. Everything else on the Queue page decides what the scheduler will
+  do later, so a row whose failure you had just fixed still cost a day to find
+  out about, and the only lever was deleting its `slot_fires` row against the
+  live database by hand. It appears on a pending row and, as "Retry now", on a
+  failed one with no container.
+
+  Three things about it are load bearing. **It does not touch the slot**, so
+  today's fire stays claimed and tomorrow's fires normally: it answers "publish
+  this row", not "pretend the slot has not run", and consuming the fire would
+  cost the account a post. **It claims the row before sending**, which is what
+  stops a tick landing mid-flight from taking the same row twice. **It returns
+  before the post exists**, because an upload plus a status poll runs to
+  minutes and a request held that long is a proxy timeout wearing a failure's
+  clothes; the row's own state is the progress bar, `claimed` and then
+  `published` or `failed`, exactly as a slot-fired publish leaves it.
+
+  It refuses a row that already has a `container_id`, which is the same line
+  the scheduler and `cancel` draw: something exists at the platform, it may be
+  live, and no error text proves otherwise.
 - **The hook is on the queue card, and it is not decoration.** Cancelling
   before the slot fires is the only review this account has, and until the hook
   travelled with the video, reviewing meant pressing play on every queued Reel

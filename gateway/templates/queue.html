@@ -121,6 +121,10 @@
                 <button class="link" title="Later in the line">&darr;</button>
               </form>
               <form class="inline" method="post"
+                    action="{{ url_for('publish_now', queued_id=row['id']) }}">
+                <button title="Send it now instead of waiting for the slot">Publish now</button>
+              </form>
+              <form class="inline" method="post"
                     action="{{ url_for('cancel', queued_id=row['id']) }}">
                 <button class="danger">Cancel</button>
               </form>
@@ -194,6 +198,19 @@
                     Retry{% if row['container_id'] %} &#9888;{% endif %}
                   </button>
                 </form>
+                {% if not row['container_id'] %}
+                  {# Retry arms it for the next slot, which is a day away. When
+                     the cause has just been fixed, waiting a day to learn
+                     whether the fix worked is the whole problem. Offered only
+                     with no container, because that is the case the route
+                     itself refuses. #}
+                  <form class="inline" method="post"
+                        action="{{ url_for('publish_now', queued_id=row['id']) }}">
+                    <button title="Send it now instead of waiting for the next slot">
+                      Retry now
+                    </button>
+                  </form>
+                {% endif %}
                 <form class="inline" method="post"
                       action="{{ url_for('cancel', queued_id=row['id']) }}">
                   <button class="link">Give up</button>
