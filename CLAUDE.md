@@ -653,36 +653,53 @@ section is.
   Google, TikTok or Page secret reaches the machine that renders. All three ids
   are in `ENV_PROJECTED_KEYS` in `scripts/sync-private.sh`, and a new one that
   is not reads as a destination the render host quietly skips.
-- **Which render goes where is a decision, not a detail.** YouTube gets
-  `out-no-cta.mp4`, because a follow ask on a surface that calls following
-  subscribing reads wrong. TikTok gets `out.mp4`, because it is a feed like
-  Instagram's and the word is the same word. Facebook gets `out.mp4` **and the
-  Instagram caption unchanged**, because a Page has followers and the copy is
-  already written for a Meta feed. The caption follows the same split:
-  `youtube_description` takes the ask out, `tiktok_title` keeps it, and there is
-  deliberately no `facebook_description`, because a function that returns its
-  argument is a place for the two to drift apart later for no reason. Say so in
-  the code rather than letting it be whichever variable was nearest.
-- **The cut for YouTube is a second render, so it has to restage its own
-  assets.** `video/public/` is staging, and a run prunes every other slug on
-  its way in, so a spec's screenshot and voiceover survive exactly until the
-  next video renders. `render_without_cta` runs at enqueue, after the whole
-  batch, and `renderer.restage_spec_assets` is what puts them back. Without it
-  the failure is silent and shaped like a partial success: a `RenderError`
-  means "no trimmed version", the caller falls back to the full video, and on
-  2026-08-27 the first two Shorts of a three video batch went out carrying an
-  Instagram follow ask while the third, still staged because it rendered last,
-  got the cut. Anything else that re-renders a finished `video.json` needs the
-  same call.
-- **The queue rows made before that fix were left as they were, deliberately.**
-  Eighteen of the twenty six pending YouTube rows point at the Instagram file
-  and eight had already published that way. Recutting them is cheap and the run
-  folders are all still on the render host; repointing them is not, because
-  nothing in the API changes a row's video and the only lever is a hand written
-  `UPDATE` of `video_name` against the live database. Decided 2026-08-27 that a
-  month of Shorts saying follow rather than subscribe is worth less than that
-  write. So a Short from before 2026-08-27 carrying the ask is expected, not a
-  sign the fix regressed.
+- **All four destinations get the same `out.mp4`, since 2026-08-28.** One
+  render, four rows, one upload, and no per platform cut of anything. It is
+  what the fan-out was always meant to be and was true of three of the four;
+  the exception was YouTube.
+- **YouTube used to get a second render and no longer does.** `out-no-cta.mp4`
+  stopped at `ctaFromFrame` and closed on the README hero, because "follow"
+  points a YouTube viewer at a button that surface calls subscribing. It was
+  removed on 2026-08-28 along with `renderer.render_without_cta`,
+  `_scenes_ending_on_hero` and `renderer.restage_spec_assets`, which existed
+  only to serve it. **The wrong word on YouTube is accepted rather than
+  overlooked**, and the decision that settles it is a decision about the ending
+  of the video itself, deliberately deferred until the queue standing behind it
+  has drained. Do not reintroduce a per platform render to fix it; change the
+  ending once, for every surface.
+
+  What that removal cost, if it is ever wanted back: it lives in the history of
+  `pipeline/renderer.py` and `tests/test_renderer.py`, and it is a second
+  Remotion run of about the same length as the first, at enqueue rather than at
+  render. `spec.showFollowCta` and `spec.ctaFromFrame` are still on the model
+  and still read by `Reel.tsx`, so the video half of it is intact; nothing sets
+  `showFollowCta` false today.
+
+  It also took a footgun with it. `video/public/` is staging and a run prunes
+  every other slug on its way in, so a spec's assets survive exactly until the
+  next video renders, and a second render at enqueue time found them gone. That
+  failed silently and shaped like a partial success, a `RenderError` reading as
+  "no trimmed version" and the caller falling back to the full video, which is
+  how the first two Shorts of a three video batch went out with the Instagram
+  ask on 2026-08-27. **Anything that re-renders a finished `video.json` has to
+  restage first**, and there is now nothing in the repo that does.
+- **The copy still differs per platform, and that half is unchanged.**
+  `youtube_description` takes the ask out and names the repo, `tiktok_title`
+  folds the same ask into TikTok's one field, and Facebook takes the Instagram
+  caption verbatim, so there is deliberately no `facebook_description`: a
+  function that returns its argument is a place for the two to drift apart
+  later for no reason. **A description costs no render**, which is why it did
+  not follow the video into being shared: it is the one place left where the
+  ask can still be phrased for the surface it lands on, and dropping it would
+  make YouTube worse rather than more consistent. Say so in the code rather
+  than letting it be whichever variable was nearest.
+- **A Short from before 2026-08-28 may point at either file.** Eighteen of the
+  twenty six pending YouTube rows already pointed at the Instagram video, eight
+  had published that way, and the rest carry the cut. Nothing in the API
+  changes a row's video and the only lever is a hand written `UPDATE` of
+  `video_name` against the live database, so the queue was left exactly as it
+  stood, twice: once on 2026-08-27 and again here. Neither shape in that queue
+  is a sign anything regressed.
 - **`--max-queue` counts the Instagram queue only.** YouTube drains one a day
   against Instagram's three, so its queue grows by design, and a third queue
   draining at its own rate does not change that reasoning. Counted in the
