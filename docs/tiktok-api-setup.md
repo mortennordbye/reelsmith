@@ -580,6 +580,91 @@ curl -s -X POST "https://open.tiktokapis.com/v2/post/publish/video/init/" \
 is the audit, and seeing it is the proof that everything else is wired
 correctly.
 
+## The audit submission, as configured on 2026-08-28
+
+Started because the inbox path costs a manual tap in the TikTok app every day,
+and the audit is the only sanctioned way to remove it. **Everything below is
+entered and one field short of submittable.** The missing field is the demo
+video, which is the only part a person has to make.
+
+**Save validates the whole App review block, so until the video is uploaded
+nothing on this form is persisted.** That is not a quirk to work around, it is
+why this section exists: the configuration below had to be recorded somewhere
+that survives a page reload, because the portal will not hold it.
+
+| Field | Value |
+|---|---|
+| App name | `The Nightly Build` |
+| App icon | `brand/avatars/b-moon.png`, the account's own avatar, 1024x1024 |
+| Category | Photo & Video |
+| Description (120 max) | Schedules short videos about trending open source developer tools and posts them to the creator's own TikTok account. |
+| Terms of Service URL | `https://gate.nordbye.it/terms` |
+| Privacy Policy URL | `https://gate.nordbye.it/privacy` |
+| Platforms | Web only |
+| Web/Desktop URL | `https://gate.nordbye.it` |
+| Redirect URI | `https://gate.nordbye.it/tiktok/callback` |
+| Products | Login Kit, Content Posting API |
+| Direct Post | on |
+| Scopes | `user.info.basic`, `video.publish`, `video.upload`, `video.list` |
+
+Four things cost a round trip each and are worth knowing before the next
+attempt:
+
+- **`video.publish` is not in the scopes picker.** Searching the Add scopes
+  dialog for "video" offers `video.list` and nothing else. It appears in the
+  scope list the moment the **Direct Post** switch inside the Content Posting
+  API product is turned on, which is the only thing that grants it. Turning
+  that switch on is therefore the whole point of the submission.
+- **Content Posting API cannot be added before Login Kit.** Its Add button is
+  disabled and the reason is one line of grey text. Same ordering the sandbox
+  needed.
+- **Ticking Web reveals a required Web/Desktop URL** that does not exist until
+  the checkbox is ticked, so the form can be invalid because of a field that is
+  not on the page. Already recorded above for the sandbox; it is the same trap
+  on production.
+- **Only Web is ticked, deliberately.** Android or iOS obliges a mobile demo
+  video, and the guidelines say a mobile demo must start by showing the app
+  being opened. There is no mobile app.
+
+### What the demo video has to show
+
+From the portal's own requirements: mp4 or mov, up to 5 files of 50 MB, it must
+use **the sandbox**, it must show the website where the feature is actually
+integrated, the domain on screen must match the Web/Desktop URL above, and it
+must show the user interface and the user interactions. So a screen recording
+of `gate.nordbye.it/admin`, with the address bar visible.
+
+The shot list, in order:
+
+1. The browser address bar showing `gate.nordbye.it`, then the admin panel.
+2. The Queue page, showing a queued video with its title and its slot.
+3. Press **Publish now** on the TikTok row.
+4. The row changing to claimed and then published.
+5. The video on the connected TikTok account.
+
+**Step 3 is the shot the whole submission turns on**, because it is the only
+one that shows a user interface performing a Content Posting API call. It did
+not exist before 2026-08-28: the panel had no control that published anything,
+which is what made the demo video impossible and the sandbox look permanent.
+
+**One thing has to change before recording.** The panel currently runs
+`GATEWAY_TIKTOK_DIRECT_POST=false`, so pressing Publish now demonstrates
+`video.upload` into the inbox rather than the `video.publish` direct post the
+submission is asking for. Recording the inbox path to justify a direct post
+scope would be showing the reviewer a different thing from the one being
+requested. Turn the flag on for the recording, with
+`GATEWAY_TIKTOK_PRIVACY_LEVEL=SELF_ONLY`, which is the pre-audit behaviour and
+posts privately to the creator's own profile.
+
+### The risk that has not gone away
+
+The App Review Guidelines reject applications "designed for private/personal
+use only", and this is one person's panel posting to one account they own. The
+submission may be refused on exactly that ground and no amount of configuration
+changes it. What is different from the last reading of this file is that the
+refusal would now be a decision by a reviewer who watched the integration work,
+rather than an assumption made because no demo could be produced at all.
+
 ## Operational facts
 
 - **Access token 24 hours, refresh token 365 days, and the refresh token
