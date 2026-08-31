@@ -14,7 +14,7 @@ certifi==2026.7.22
     # via
     #   httpcore
     #   httpx
-click==8.4.2
+click==8.5.0
     # via uvicorn
 fastapi==0.141.1
     # via -r gateway/requirements.in
@@ -28,7 +28,7 @@ httptools==0.8.0
     # via -r gateway/requirements.in
 httpx==0.28.1
     # via -r gateway/requirements.in
-idna==3.18
+idna==3.19
     # via
     #   anyio
     #   httpx
@@ -38,16 +38,16 @@ markupsafe==3.0.3
     # via jinja2
 prometheus-client==0.26.0
     # via -r gateway/requirements.in
-pydantic==2.13.4
+pydantic==2.13.5
     # via
     #   -r gateway/requirements.in
     #   fastapi
     #   pydantic-settings
-pydantic-core==2.46.4
+pydantic-core==2.46.5
     # via pydantic
 pydantic-settings==2.15.0
     # via -r gateway/requirements.in
-python-dotenv==1.2.2
+python-dotenv==1.2.3
     # via pydantic-settings
 python-multipart==0.0.32
     # via -r gateway/requirements.in
@@ -59,14 +59,14 @@ typing-extensions==4.16.0
     #   pydantic
     #   pydantic-core
     #   typing-inspection
-typing-inspection==0.4.2
+typing-inspection==0.4.4
     # via
     #   fastapi
     #   pydantic
     #   pydantic-settings
 tzdata==2026.3
     # via -r gateway/requirements.in
-uvicorn==0.52.1
+uvicorn==0.52.4
     # via -r gateway/requirements.in
 uvloop==0.22.1
     # via -r gateway/requirements.in
