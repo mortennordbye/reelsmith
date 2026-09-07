@@ -183,6 +183,13 @@ class Settings(BaseSettings):
     breakout_window_days: int = 90
     pushed_window_days: int = 7
     repo_cooldown_days: int = 30
+    # GitHub has far more candidates than one post a day needs, so a repeat
+    # should have to earn it rather than win on a level playing field the
+    # moment its cooldown lifts. Extends the ramp in `UsedRepos.penalty`: score
+    # rebuilds linearly over this many days after `repo_cooldown_days`, so a
+    # repo needs a real velocity spike, not just an expired cooldown, to
+    # outrank content that has never run before.
+    repo_cooldown_recovery_days: int = 30
     # How many *usable* candidates a query has to yield, and how deep it may
     # page to find them. Two numbers rather than one because the cooldown list
     # eats a stars-sorted result set from the top: the repos we featured last

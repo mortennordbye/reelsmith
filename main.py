@@ -865,13 +865,22 @@ def _show_covered(cfg: Settings) -> None:
     for full_name, used_on in rows:
         age = (today - date.fromisoformat(used_on)).days
         left = cfg.repo_cooldown_days - age
-        status = f"[yellow]blocked, {left}d left[/]" if left > 0 else "[green]free again[/]"
+        recovering_left = cfg.repo_cooldown_days + cfg.repo_cooldown_recovery_days - age
+        if left > 0:
+            status = f"[yellow]blocked, {left}d left[/]"
+        elif recovering_left > 0:
+            status = f"[yellow]recovering, {recovering_left}d to full score[/]"
+        else:
+            status = "[green]free again[/]"
         table.add_row(full_name, used_on, status)
 
     console.print(table)
     console.print(
         f"[dim]Blocked repos are dropped during discovery, before any README is fetched. "
-        f"Cooldown is {cfg.repo_cooldown_days} days (REPO_COOLDOWN_DAYS).[/]"
+        f"Recovering ones are eligible but scored down until the ramp finishes. "
+        f"Cooldown is {cfg.repo_cooldown_days} days (REPO_COOLDOWN_DAYS), "
+        f"recovery is {cfg.repo_cooldown_recovery_days} more "
+        f"(REPO_COOLDOWN_RECOVERY_DAYS).[/]"
     )
 
 

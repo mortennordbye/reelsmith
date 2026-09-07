@@ -212,10 +212,10 @@ def test_a_repo_used_today_is_blocked(tmp_path):
 def test_the_cooldown_expires_on_the_boundary_day(tmp_path):
     store = UsedRepos(tmp_path / "used.json", cooldown_days=30)
     store.mark_used("a/b", TODAY - timedelta(days=30))
-    assert store.penalty("a/b", TODAY) == 1.0
+    assert store.is_covered("a/b", TODAY) is False
 
     store.mark_used("c/d", TODAY - timedelta(days=29))
-    assert store.penalty("c/d", TODAY) == 0.0
+    assert store.is_covered("c/d", TODAY) is True
 
 
 def test_marks_survive_a_reload(tmp_path):
@@ -318,16 +318,38 @@ def test_a_covered_repo_is_recognised_before_it_is_scored(tmp_path):
     assert store.is_covered("c/d", TODAY) is False
 
 
-def test_is_covered_and_the_penalty_cannot_disagree(tmp_path):
-    """Both express one rule. Two answers to "may we use this" is a bug waiting."""
+def test_is_covered_and_the_penalty_agree_while_inside_the_window(tmp_path):
+    """Both express the hard gate. Two answers to "may we use this at all" is a bug
+    waiting, but once the gate lifts `penalty` is free to keep ramping (below)."""
     store = UsedRepos(tmp_path / "used.json", cooldown_days=30)
     store.mark_used("fresh/repo", TODAY)
-    store.mark_used("edge/repo", TODAY - timedelta(days=30))
     store.mark_used("inside/repo", TODAY - timedelta(days=29))
 
-    for name in ("fresh/repo", "edge/repo", "inside/repo", "never/seen"):
+    for name in ("fresh/repo", "inside/repo", "never/seen"):
         blocked = store.is_covered(name, TODAY)
-        assert store.penalty(name, TODAY) == (0.0 if blocked else 1.0), name
+        assert blocked == (name != "never/seen")
+        if blocked:
+            assert store.penalty(name, TODAY) == 0.0
+
+
+def test_penalty_ramps_back_up_after_the_gate_lifts(tmp_path):
+    """A repeat has to earn its way back rather than snap straight to even
+    footing with a repo that has never run, which is what let a repo
+    trending again a month later outrank fresh content on velocity alone."""
+    store = UsedRepos(tmp_path / "used.json", cooldown_days=30, recovery_days=30)
+    store.mark_used("a/b", TODAY - timedelta(days=30))  # gate just lifted
+
+    assert store.is_covered("a/b", TODAY) is False
+    assert store.penalty("a/b", TODAY) == 0.0
+    assert store.penalty("a/b", TODAY + timedelta(days=15)) == pytest.approx(0.5)
+    assert store.penalty("a/b", TODAY + timedelta(days=29)) < 1.0
+    assert store.penalty("a/b", TODAY + timedelta(days=30)) == 1.0
+
+
+def test_a_zero_recovery_window_is_the_old_binary_behaviour(tmp_path):
+    store = UsedRepos(tmp_path / "used.json", cooldown_days=30, recovery_days=0)
+    store.mark_used("a/b", TODAY - timedelta(days=30))
+    assert store.penalty("a/b", TODAY) == 1.0
 
 
 def test_covered_lists_everything_ever_made_newest_first(tmp_path):
