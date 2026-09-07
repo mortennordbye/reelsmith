@@ -47,7 +47,7 @@ def calls(monkeypatch) -> dict[str, list[str]]:
 
     monkeypatch.setattr(main, "_render_one", fake_render)
     monkeypatch.setattr(main, "_enqueue_run", fake_enqueue)
-    monkeypatch.setattr(main.scraper, "covered_repos", lambda cfg: [])
+    monkeypatch.setattr(main.scraper, "covered_now", lambda cfg: [])
     return seen
 
 
@@ -141,14 +141,30 @@ def test_a_folder_moved_aside_by_hand_is_left_alone(cfg, calls):
 
 def test_a_repo_already_on_cooldown_is_skipped(cfg, calls, monkeypatch):
     """The receipt is per folder; a sibling that shipped is invisible to it."""
+    still_covered = (date.today() - timedelta(days=5)).isoformat()
     monkeypatch.setattr(
-        main.scraper, "covered_repos", lambda cfg: [("acme/tool", "2026-08-14")]
+        main.scraper, "covered_now", lambda cfg: [("acme/tool", still_covered)]
     )
     run_dir(cfg, "acme-tool", script_json="{}")
 
     main._recover(cfg, approve=True, max_queue=None)
 
     assert calls["enqueued"] == []
+
+
+def test_a_repo_whose_cooldown_expired_is_not_skipped(cfg, calls, monkeypatch):
+    """An expired cooldown is history, not a block on shipping the re-render.
+
+    `covered_now` is the date-aware view; a repo aged out of it must still
+    reach the gateway, or a legitimately re-discovered repeat is rendered
+    for nothing every time its cooldown lapses.
+    """
+    monkeypatch.setattr(main.scraper, "covered_now", lambda cfg: [])
+    run_dir(cfg, "acme-tool", script_json="{}")
+
+    main._recover(cfg, approve=True, max_queue=None)
+
+    assert calls["enqueued"] == ["acme-tool"]
 
 
 def test_two_folders_for_one_repo_only_queue_once(cfg, calls):
