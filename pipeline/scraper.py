@@ -170,6 +170,20 @@ class UsedRepos:
         """
         return sorted(self._data.items(), key=lambda kv: kv[1], reverse=True)
 
+    def covered_now(self, on: date | None = None) -> list[tuple[str, str]]:
+        """Only what is still inside its cooldown window, newest first.
+
+        `covered()` answers "have we done this one" and never expires an
+        entry, which is right for `--covered`/`--history` but wrong for a
+        caller asking "may we ship this again right now" -- that caller wants
+        `is_covered`'s date check, not the full-history record.
+        """
+        return [
+            (name, used_on)
+            for name, used_on in self.covered()
+            if self.is_covered(name, on)
+        ]
+
     def mark_used(self, full_name: str, on: date | None = None) -> None:
         self._data[full_name] = (on or date.today()).isoformat()
         self.save()
@@ -769,6 +783,11 @@ def unmark_featured(cfg: Settings, full_name: str) -> str | None:
 def covered_repos(cfg: Settings) -> list[tuple[str, str]]:
     """Every repo we have committed to a post about, newest first."""
     return UsedRepos(cfg.used_repos_path, cfg.repo_cooldown_days).covered()
+
+
+def covered_now(cfg: Settings, on: date | None = None) -> list[tuple[str, str]]:
+    """Repos still inside their cooldown window, newest first."""
+    return UsedRepos(cfg.used_repos_path, cfg.repo_cooldown_days).covered_now(on)
 
 
 # --------------------------------------------------------------------------

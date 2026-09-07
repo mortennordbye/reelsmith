@@ -778,7 +778,7 @@ def _recover(cfg: Settings, *, approve: bool, max_queue: int | None) -> None:
     stamps = {
         (date.today() - timedelta(days=n)).isoformat() for n in range(_RECOVER_DAYS)
     }
-    covered = {name for name, _ in scraper.covered_repos(cfg)}
+    covered = {name for name, _ in scraper.covered_now(cfg)}
 
     pending_runs: list[Path] = []
     for day_dir in sorted(p for p in cfg.build_dir.iterdir() if p.name in stamps):

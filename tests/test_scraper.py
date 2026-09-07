@@ -363,6 +363,19 @@ def test_covered_lists_everything_ever_made_newest_first(tmp_path):
     assert store.is_covered("old/one", TODAY) is False
 
 
+def test_covered_now_drops_what_has_aged_out(tmp_path):
+    """The filter a caller wants before refusing to re-ship a render.
+
+    `covered()` keeps `old/one` forever; a caller asking "is this still
+    spoken for" needs the ones still inside the window, not the full record.
+    """
+    store = UsedRepos(tmp_path / "used.json", cooldown_days=30)
+    store.mark_used("old/one", TODAY - timedelta(days=200))
+    store.mark_used("new/one", TODAY)
+
+    assert [name for name, _ in store.covered_now(TODAY)] == ["new/one"]
+
+
 # --------------------------------------------------------------------------
 # find_trending_repos -- enrichment has to cover the whole batch
 # --------------------------------------------------------------------------
