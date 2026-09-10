@@ -366,6 +366,15 @@ visual_cues
       terminal   code=the tool being run, code_language="bash"
       stat       stat_value=a short number/figure, stat_label=what it measures
       bullets    bullets=2 to 4 lines, each 6 words or fewer
+      diagram    diagram_nodes=2 to 5 named steps of this project's own
+                 pipeline, in order, each under 28 characters. Opt in: ask for
+                 it only when the README documents a real flow worth drawing.
+                 Every node must be a component THIS project names. Generic
+                 boxes are rejected by the parser and fail the run, because
+                 "Input, Tool, Output" is a slide with arrows on it and would
+                 be true of every project in the category. If there is no
+                 documented pipeline, use code or terminal instead. That is
+                 the expected answer most of the time.
 
     **Every word of spoken_script is burned onto the video as captions**, synced
     to the voice, along the bottom of the frame. The viewer is already reading

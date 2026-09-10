@@ -18,7 +18,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from config import get_settings
 
@@ -104,6 +104,10 @@ class CueKind(StrEnum):
     # as the opening shot, not requested by Claude -- so it is intentionally
     # absent from the scriptwriter prompt.
     SCREENSHOT = "screenshot"
+    # A named flow from the project's own README. Opt in: Claude asks for it
+    # only when the project actually documents a pipeline worth drawing, and
+    # `_diagram_nodes` refuses the generic version rather than rendering it.
+    DIAGRAM = "diagram"
 
 
 class VisualCue(BaseModel):
@@ -122,6 +126,24 @@ class VisualCue(BaseModel):
     code_language: str | None = None
     stat_value: str | None = None
     stat_label: str | None = None
+    diagram_nodes: list[str] = Field(default_factory=list)
+
+
+# The words that turn a diagram into a slide. Every one of these is a box an
+# LLM will draw for any project in any category, which is exactly the failure a
+# diagram is supposed to avoid: "Input -> Tool -> Output" is the slide-deck
+# motif this account already refuses, redrawn with arrows.
+_GENERIC_NODES = frozenset(
+    {
+        "input", "inputs", "output", "outputs", "data", "result", "results",
+        "user", "users", "tool", "tools", "model", "models", "api", "app",
+        "client", "server", "database", "db", "start", "end", "process",
+        "processing", "request", "response", "source", "sources", "step",
+    }
+)
+
+MAX_DIAGRAM_NODES = 5
+MAX_DIAGRAM_NODE_CHARS = 28
 
 
 class VideoScript(BaseModel):
@@ -186,6 +208,52 @@ class VideoScript(BaseModel):
     def word_count(self) -> int:
         return len(self.spoken_script.split())
 
+    @model_validator(mode="after")
+    def _check_diagram_nodes(self) -> VideoScript:
+        """A diagram has to name this project's own parts, or it is not one.
+
+        The cue is opt in, which is what makes refusing here cheap: the honest
+        response to a project that documents no pipeline is to not ask for a
+        diagram, so the correction is to drop the cue rather than to invent
+        better labels for it.
+
+        Rejected rather than cleaned, for the reason the dash validator gives.
+        A node reading "Input" cannot be fixed by editing the string; the whole
+        cue is the problem, and a diagram of boxes that would be true of any
+        project in the category is the slide-deck motif this account already
+        refuses, redrawn with arrows.
+        """
+        for cue in self.visual_cues:
+            if cue.kind is not CueKind.DIAGRAM:
+                if cue.diagram_nodes:
+                    raise ValueError(
+                        f"a {cue.kind.value} cue carries diagram_nodes; "
+                        "only a diagram cue may have them"
+                    )
+                continue
+
+            nodes = [n.strip() for n in cue.diagram_nodes if n and n.strip()]
+            if not 2 <= len(nodes) <= MAX_DIAGRAM_NODES:
+                raise ValueError(
+                    f"a diagram cue needs 2 to {MAX_DIAGRAM_NODES} nodes, got "
+                    f"{len(nodes)}. If the project documents no pipeline worth "
+                    "drawing, use a code or terminal cue instead."
+                )
+            for node in nodes:
+                if len(node) > MAX_DIAGRAM_NODE_CHARS:
+                    raise ValueError(
+                        f"diagram node {node!r} is {len(node)} chars; keep each under "
+                        f"{MAX_DIAGRAM_NODE_CHARS} so it stays legible on a phone"
+                    )
+                if node.casefold() in _GENERIC_NODES:
+                    raise ValueError(
+                        f"diagram node {node!r} is generic and would be true of any "
+                        "project. Name this project's own components, from its "
+                        "README, or drop the diagram cue and use code or terminal."
+                    )
+            cue.diagram_nodes = nodes
+        return self
+
 
 # --------------------------------------------------------------------------
 # Step 4 -- captions
@@ -222,6 +290,7 @@ class Scene(BaseModel):
     statValue: str | None = None  # noqa: N815
     statLabel: str | None = None  # noqa: N815
     imageSrc: str | None = None  # noqa: N815  - path relative to video/public/
+    diagramNodes: list[str] = Field(default_factory=list)  # noqa: N815
 
 
 class RepoMeta(BaseModel):

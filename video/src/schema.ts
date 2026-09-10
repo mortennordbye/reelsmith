@@ -25,6 +25,7 @@ export const cueKindSchema = z.enum([
   "bullets",
   "terminal",
   "screenshot",
+  "diagram",
 ]);
 
 /** One Shiki-highlighted token. Produced in calculateMetadata, never by Python. */
@@ -46,6 +47,13 @@ export const sceneSchema = z.object({
   statLabel: z.string().nullable().optional(),
   /** Path relative to video/public/, for screenshot scenes. */
   imageSrc: z.string().nullable().optional(),
+  /**
+   * A named flow from the project's own README, 2 to 5 nodes. Opt in: the
+   * scriptwriter asks for it only when there is a real pipeline to draw, and
+   * `_check_diagram_nodes` on the Python side refuses the generic version
+   * rather than letting "Input -> Tool -> Output" render.
+   */
+  diagramNodes: z.array(z.string()).optional(),
   /** Injected by calculateMetadata; absent in the JSON Python writes. */
   tokens: z.array(z.array(codeTokenSchema)).optional(),
 });

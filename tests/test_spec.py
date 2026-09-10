@@ -7,10 +7,11 @@ second late reads as "the edit feels slightly off", not as a bug.
 
 from __future__ import annotations
 
+import pytest
 from conftest import candidate, captions_from, script
 
 from config import Settings
-from pipeline.models import CueKind
+from pipeline.models import CueKind, VideoScript, VisualCue
 from pipeline.spec import (
     MIN_SCENE_SECONDS,
     _align_to_captions,
@@ -348,3 +349,63 @@ def test_no_page_leaves_the_framed_hero_alone():
     spec = _spec_with_page(page_src=None, page_aspect=None)
     assert spec.pageSrc is None
     assert spec.scenes[0].imageSrc == "hero.png"
+
+
+# --- The diagram cue --------------------------------------------------------
+#
+# Opt in, and the guard is the whole point of it. A diagram whose boxes would
+# be true of any project in the category is the slide-deck motif this account
+# already refuses, redrawn with arrows, so the parser rejects it rather than
+# rendering it. The correction is to drop the cue, not to relabel the boxes.
+
+
+def _script_with_diagram(nodes):
+    return VideoScript(
+        hook="a hook that says something",
+        spoken_script="some words that carry the beat",
+        visual_cues=[VisualCue(kind=CueKind.DIAGRAM, spoken_excerpt="x", diagram_nodes=nodes)],
+    )
+
+
+def test_a_diagram_of_the_project_s_own_parts_is_accepted():
+    script = _script_with_diagram(["Bull agent", "Bear agent", "Risk manager"])
+    assert script.visual_cues[0].diagram_nodes == ["Bull agent", "Bear agent", "Risk manager"]
+
+
+@pytest.mark.parametrize("generic", ["Input", "output", "TOOL", "Database", "step"])
+def test_generic_nodes_are_refused_whatever_their_case(generic):
+    with pytest.raises(ValueError, match="generic"):
+        _script_with_diagram([generic, "Risk manager"])
+
+
+def test_a_diagram_needs_at_least_two_nodes():
+    with pytest.raises(ValueError, match="2 to 5 nodes"):
+        _script_with_diagram(["Risk manager"])
+
+
+def test_a_diagram_caps_at_five_nodes():
+    with pytest.raises(ValueError, match="2 to 5 nodes"):
+        _script_with_diagram([f"Stage {i}" for i in range(6)])
+
+
+def test_a_node_too_long_to_read_on_a_phone_is_refused():
+    with pytest.raises(ValueError, match="legible on a phone"):
+        _script_with_diagram(["Risk manager", "A" * 29])
+
+
+def test_only_a_diagram_cue_may_carry_nodes():
+    """Otherwise the field is a place for a stray value nothing renders."""
+    with pytest.raises(ValueError, match="only a diagram cue"):
+        VideoScript(
+            hook="a hook",
+            spoken_script="some words",
+            visual_cues=[
+                VisualCue(kind=CueKind.BULLETS, bullets=["a"], diagram_nodes=["Risk manager"])
+            ],
+        )
+
+
+def test_the_nodes_reach_the_spec():
+    spec = _spec_with_page(page_src=None, page_aspect=None)
+    assert all(s.diagramNodes == [] for s in spec.scenes)
+    assert CueKind.DIAGRAM.value == "diagram"
