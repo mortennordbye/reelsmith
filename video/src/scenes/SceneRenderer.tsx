@@ -308,6 +308,104 @@ const ScreenshotScene: React.FC<{
   );
 };
 
+/**
+ * A named flow from the project's own README.
+ *
+ * The nodes arrive in order and the connector between two of them draws itself
+ * as the second lands, so the shape of the thing is built in front of the
+ * viewer rather than appearing whole. That timing is the entire reason this is
+ * a scene and not a still: a diagram that fades in as one block is a slide.
+ *
+ * What keeps it from being one anyway is enforced on the Python side, not
+ * here. `_check_diagram_nodes` refuses nodes that would be true of any project
+ * in the category, so by the time a spec reaches this component the labels are
+ * the project's own components. Do not add a fallback that renders a generic
+ * flow when they are missing; the absence of a real one is the answer.
+ */
+const DiagramScene: React.FC<{ scene: Scene }> = ({ scene }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const nodes = scene.diagramNodes ?? [];
+  if (nodes.length === 0) return null;
+
+  // Stagger, in frames. Slow enough to read each label before the next lands,
+  // and the whole flow is complete well inside a typical cue.
+  const STEP = 12;
+
+  return (
+    <Stage>
+      {scene.title ? (
+        <div
+          style={{
+            fontFamily: theme.font.display,
+            fontSize: theme.size.sceneSubtitle,
+            color: theme.color.muted,
+            marginBottom: 34,
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+          }}
+        >
+          {scene.title}
+        </div>
+      ) : null}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "stretch" }}>
+        {nodes.map((node, i) => {
+          const s = spring({
+            frame: frame - i * STEP,
+            fps,
+            config: { damping: 200, stiffness: 170, mass: 0.5 },
+          });
+          // The connector belongs to the node below it and draws as that node
+          // arrives, so the line never points at nothing.
+          const link = interpolate(frame - i * STEP, [-STEP, 0], [0, 1], {
+            extrapolateLeft: "clamp",
+            extrapolateRight: "clamp",
+          });
+          return (
+            <React.Fragment key={i}>
+              {i > 0 ? (
+                <div
+                  style={{
+                    alignSelf: "center",
+                    width: 4,
+                    height: 44,
+                    borderRadius: 2,
+                    backgroundColor: theme.color.accent,
+                    transformOrigin: "top center",
+                    transform: `scaleY(${link})`,
+                    opacity: 0.9,
+                  }}
+                />
+              ) : null}
+              <div
+                style={{
+                  padding: "28px 34px",
+                  borderRadius: theme.radius,
+                  border: `2px solid ${theme.color.border}`,
+                  backgroundColor: theme.color.surface,
+                  fontFamily: theme.font.mono,
+                  // Mono, and ligatures off for the reason CodeBlock gives:
+                  // these are component names and an operator fused into one
+                  // glyph stops looking like what the reader would type.
+                  fontVariantLigatures: "none",
+                  fontFeatureSettings: '"liga" 0, "calt" 0',
+                  fontSize: theme.size.bullet,
+                  color: theme.color.text,
+                  textAlign: "center",
+                  opacity: s,
+                  transform: `translateY(${interpolate(s, [0, 1], [22, 0])}px)`,
+                }}
+              >
+                {node}
+              </div>
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </Stage>
+  );
+};
+
 export const SceneRenderer: React.FC<{
   scene: Scene;
   repo: RepoMeta;
@@ -334,6 +432,8 @@ export const SceneRenderer: React.FC<{
       return <CodeScene scene={scene} terminal={false} />;
     case "terminal":
       return <CodeScene scene={scene} terminal />;
+    case "diagram":
+      return <DiagramScene scene={scene} />;
     default:
       // Unknown kind from a newer Python side: render nothing rather than
       // crashing the whole video.

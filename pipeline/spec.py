@@ -339,6 +339,7 @@ def build_spec(
                 codeLanguage=cue.code_language,
                 statValue=cue.stat_value,
                 statLabel=cue.stat_label,
+                diagramNodes=cue.diagram_nodes,
             )
         )
 
