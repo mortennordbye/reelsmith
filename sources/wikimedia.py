@@ -273,8 +273,16 @@ def artefacts(
         },
         client,
     )
+    # **Restored to the order asked for.** The API answers with a page map in
+    # its own order, so the portrait a caller deliberately put first came back
+    # somewhere in the middle, and the first live render opened on a map of
+    # Canaan rather than on the printing manual the script was about.
+    order = {name.lower(): i for i, name in enumerate(names)}
     out = []
-    for page in ((data.get("query") or {}).get("pages") or {}).values():
+    for page in sorted(
+        ((data.get("query") or {}).get("pages") or {}).values(),
+        key=lambda page: order.get(str(page.get("title", "")).lower(), len(order)),
+    ):
         info = (page.get("imageinfo") or [{}])[0]
         meta = info.get("extmetadata") or {}
         out.append(

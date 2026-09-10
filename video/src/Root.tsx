@@ -4,6 +4,8 @@ import React from "react";
 import { Composition, type CalculateMetadataFunction } from "remotion";
 
 import { Cover, type CoverProps } from "./Cover";
+import { Episode } from "./episode/Episode";
+import { type EpisodeSpec, parseEpisodeSpec } from "./episodeSchema";
 import { Reel } from "./Reel";
 import { highlightScenes } from "./highlight";
 import { parseVideoSpec } from "./schema";
@@ -113,6 +115,53 @@ const calculateCoverMetadata: CalculateMetadataFunction<CoverProps> = async ({ p
   };
 };
 
+/**
+ * The second niche's placeholder, for the same reason the reel has one: the
+ * Studio errors on open rather than previewing if a field the renderer touches
+ * is missing.
+ */
+const EPISODE_PLACEHOLDER: EpisodeSpec = {
+  version: 1,
+  slug: "placeholder",
+  createdOn: "2026-01-01",
+  width: 1080,
+  height: 1920,
+  fps: 30,
+  durationInFrames: 300,
+  hook: "Load a real episode.json to preview",
+  audioSrc: "",
+  subject: "Somebody",
+  lived: "1600 to 1670",
+  source: "A primary source",
+  artefacts: [{ src: "", w: 1080, h: 1920, title: "", licence: "", credit: "" }],
+  shots: [
+    {
+      start: 0,
+      durationInFrames: 300,
+      line: "A line",
+      kind: "situation",
+      art: 0,
+      crop: null,
+      fit: "cover",
+      step: null,
+    },
+  ],
+  endcardName: "",
+  endcardHandle: "",
+  endcardTagline: "",
+};
+
+const calculateEpisodeMetadata: CalculateMetadataFunction<EpisodeSpec> = async ({ props }) => {
+  const spec = parseEpisodeSpec(props);
+  return {
+    durationInFrames: spec.durationInFrames,
+    fps: spec.fps,
+    width: spec.width,
+    height: spec.height,
+    props: spec,
+  };
+};
+
 export const RemotionRoot: React.FC = () => (
   <>
     <Composition
@@ -134,6 +183,16 @@ export const RemotionRoot: React.FC = () => (
       height={PLACEHOLDER.height}
       defaultProps={{ ...PLACEHOLDER, showHook: true }}
       calculateMetadata={calculateCoverMetadata}
+    />
+    <Composition
+      id="Episode"
+      component={Episode}
+      durationInFrames={EPISODE_PLACEHOLDER.durationInFrames}
+      fps={EPISODE_PLACEHOLDER.fps}
+      width={EPISODE_PLACEHOLDER.width}
+      height={EPISODE_PLACEHOLDER.height}
+      defaultProps={EPISODE_PLACEHOLDER}
+      calculateMetadata={calculateEpisodeMetadata}
     />
   </>
 );
