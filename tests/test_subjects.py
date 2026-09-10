@@ -143,7 +143,10 @@ def test_the_cooldown_key_says_which_catalogue_it_came_from():
 @pytest.fixture
 def cfg(tmp_path, monkeypatch) -> Settings:
     monkeypatch.setattr(Settings, "data_dir", property(lambda self: tmp_path))
-    return Settings(account="thewholequote", _env_file=None)
+    # A placeholder name, not a real account. This repo is public and the
+    # account identities are the private half; a handle in a fixture here is
+    # the same link PROFILE.md refuses to let a shared voice make.
+    return Settings(account="secondaccount", _env_file=None)
 
 
 def test_the_pool_is_people_rather_than_statements(cfg, monkeypatch):

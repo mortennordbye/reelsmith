@@ -550,3 +550,29 @@ def discover(
     merged = ranked + [p for p in proposals if p.qid not in seen]
     merged.sort(key=lambda c: c.score, reverse=True)
     return merged
+
+
+def lookup(name: str, *, client: httpx.Client | None = None) -> SubjectCandidate | None:
+    """One named subject, checked and enriched. None when it does not survive.
+
+    The same checks a proposal passes, because a name typed by a person is a
+    claim from memory too. It is how `--episode --subject "Joseph Moxon"`
+    cannot quietly write an episode about somebody who died in 1994.
+    """
+    article, qid, portrait = wm.article_for(name, client=client)
+    person = wm.person_for(qid, article, portrait, client=client)
+    if not person or not person.public_domain:
+        return None
+    views = wm.pageviews(person.article, client=client)
+    candidate = SubjectCandidate(
+        qid=person.qid,
+        name=person.label,
+        article=person.article,
+        description=person.description,
+        born=person.born,
+        died=person.died,
+        portrait=person.portrait,
+        views_recent=sum(views[-7:]),
+        velocity=round(wm.velocity(views), 4),
+    )
+    return score(enrich(candidate, client=client))

@@ -15,6 +15,7 @@ the middle of a finished MP4.
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from enum import StrEnum
 
@@ -308,6 +309,150 @@ class VideoScript(BaseModel):
                     )
             cue.diagram_nodes = nodes
         return self
+
+
+class EpisodeScript(BaseModel):
+    """One episode of the second niche, with the format's arc in the model.
+
+    `VideoScript` is a hook plus a block of prose, because a video about a
+    repository is one argument. This niche's arc took a whole session to find
+    and every failed cut failed the same way, so it is fields rather than
+    prose: a model that returns an aphorism and stops cannot satisfy this
+    schema, and the two beats that went missing longest, coming back to the
+    viewer and the steps, are required rather than hoped for.
+
+    **The steps have to come from the source.** Advice invented here and
+    dressed in a historical costume is exactly the thing the account claims not
+    to be, and it is the one rule no validator can enforce, so `source` is
+    required and the prompt is written around it.
+    """
+
+    hook: str = Field(
+        description=f"On screen for the first 3 seconds, under {MAX_HOOK_CHARS} chars"
+    )
+    situation: str = Field(
+        description="The viewer's own situation, in the second person. Not the quote."
+    )
+    who: str = Field(
+        description="Who they were and when, so the quote can mean something"
+    )
+    quote: str = Field(description="The quote, in their own words, verbatim")
+    plain: str = Field(description="The same thing in plain words")
+    did: str = Field(description="What they actually did about it, taken from the source")
+    back: str = Field(description="Back to the viewer, in the second person")
+    steps: list[str] = Field(
+        description="Exactly 3 steps, derived from the source rather than invented"
+    )
+    source: str = Field(description="The primary source, named so a viewer could check it")
+    caption_text: str = Field(default="", description="The post caption, with hashtags")
+
+    @property
+    def lines(self) -> list[str]:
+        """The spoken script in arc order, one line per sentence.
+
+        Split per sentence because the shot boundaries are derived from where
+        the lines actually end, which is what puts the first cut inside the
+        three seconds `skip_rate` scores without anybody choosing a number.
+        """
+        out: list[str] = []
+        for part in (self.situation, self.who, self.quote, self.plain, self.did, self.back):
+            for sentence in _sentences(part):
+                out.extend(_breathe(sentence))
+        out.extend(self.steps)
+        return out
+
+    @property
+    def word_count(self) -> int:
+        return sum(len(line.split()) for line in self.lines)
+
+    @field_validator("hook")
+    @classmethod
+    def _hook_length(cls, v: str) -> str:
+        v = v.strip().rstrip(".")
+        if len(v) > MAX_HOOK_CHARS:
+            raise ValueError(f"hook is {len(v)} chars; keep it under {MAX_HOOK_CHARS}")
+        return v
+
+    @field_validator("steps")
+    @classmethod
+    def _three_steps(cls, v: list[str]) -> list[str]:
+        if len(v) != 3:
+            raise ValueError(f"steps must be exactly 3, got {len(v)}")
+        return v
+
+    @field_validator("hook", "situation", "who", "quote", "plain", "did", "back", "steps")
+    @classmethod
+    def _no_colons_or_dashes(cls, v, info: ValidationInfo):
+        """The same rule as `VideoScript`, and it reaches the quote too.
+
+        **That is a real editorial cost and it is taken knowingly.** A quotation
+        is evidence and keeping its own words matters, but the captions burned
+        into the video are generated from what is spoken, and a dash in a
+        seventeenth century sentence is invisible to a listener and clutter on
+        screen. The way out is choosing the clause that carries the point,
+        which is what a 45 second video wanted anyway, rather than rewriting
+        the quotation.
+        """
+        values = v if isinstance(v, list) else [v]
+        for item in values:
+            found = sorted({c for c in item if c in _BANNED_PUNCTUATION})
+            if found:
+                raise ValueError(
+                    f"{info.field_name} contains {', '.join(repr(c) for c in found)}; "
+                    f"rewrite without colons or dashes, or quote the clause that has none"
+                )
+        return v
+
+
+# Longest a single spoken line may run before it is broken at a comma. One line
+# is one shot, so a 36 word sentence is an 11 second shot, and the first live
+# episode produced exactly that: a quotation from 1683 that the human edit of
+# the prototype had split across two shots at its own comma.
+MAX_LINE_WORDS = 18
+
+
+def _breathe(sentence: str) -> list[str]:
+    """Break an over long sentence at its own punctuation, keeping every word.
+
+    **Not a rewrite.** A quotation is evidence and its words are not ours to
+    change, but where it is spoken and where it is cut are ours, and the format
+    cuts on where a line ends. Splitting at a comma is what a person reading it
+    aloud does anyway.
+
+    It splits at the boundary nearest the middle rather than filling greedily
+    to the limit. Greedy filling broke "mends on, on, on" between the second and
+    third "on", which is the one place in that sentence a reader would never
+    pause.
+    """
+    words = sentence.split()
+    if len(words) <= MAX_LINE_WORDS:
+        return [sentence]
+
+    breaks = [m.end() for m in re.finditer(r"[,;]\s+", sentence)]
+    if not breaks:
+        return [sentence]
+
+    middle = len(sentence) / 2
+    at = min(breaks, key=lambda pos: abs(pos - middle))
+    left, right = sentence[:at].strip(), sentence[at:].strip()
+    return _breathe(left) + _breathe(right)
+
+
+def _sentences(text: str) -> list[str]:
+    """Split on sentence ends, keeping the punctuation.
+
+    Deliberately simple. The input is written to this account's own rules, so
+    it has no abbreviations, no ellipses and no decimals to trip on.
+    """
+    out, current = [], ""
+    for char in text.strip():
+        current += char
+        if char in ".?!":
+            out.append(current.strip())
+            current = ""
+    if current.strip():
+        out.append(current.strip())
+    return out
 
 
 # --------------------------------------------------------------------------
