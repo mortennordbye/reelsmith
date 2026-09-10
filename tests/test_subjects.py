@@ -207,3 +207,84 @@ def test_covered_subjects_cost_no_request(cfg, monkeypatch):
 
     assert asked == ["Two"]
     assert [c.name for c in ranked] == ["Two"]
+
+
+def test_velocity_on_a_tiny_base_is_not_believed():
+    """The first live proposal run put a printer with 64 views in a week at the
+    top on a velocity of 2.04, which is nine extra readers. A ratio computed on
+    a small base is noise wearing a signal's clothes."""
+
+    def scored(views: int) -> float:
+        return subjects.score(
+            SubjectCandidate(qid="Q1", name="x", article="x", velocity=2.0, views_recent=views)
+        ).score_breakdown["velocity"]
+
+    assert scored(64) < scored(1_000) < scored(subjects.VELOCITY_FLOOR)
+    assert scored(subjects.VELOCITY_FLOOR) == scored(50_000)
+
+
+def test_a_proposal_that_is_not_a_person_is_dropped(cfg, monkeypatch):
+    """The whole reason the model is allowed to propose at all. It is better
+    than a query at knowing which lives make an episode and worse at being
+    right about who existed, so every name it gives back is looked up."""
+    from pipeline import claude as claude_cli
+
+    monkeypatch.setattr(
+        claude_cli,
+        "run",
+        lambda prompt, schema, cfg, system, research=None: {"result": json.dumps(
+            {"subjects": [
+                {"name": "Joseph Moxon", "why": "printer", "source": "Mechanick Exercises"},
+                {"name": "The Invisible College", "why": "a society", "source": "letters"},
+            ]}
+        )},
+    )
+    monkeypatch.setattr(
+        subjects.wm,
+        "article_for",
+        lambda name, client=None: ("Joseph Moxon", "Q3057690", "moxon.jpg")
+        if name == "Joseph Moxon"
+        else ("The Invisible College", "Q123", ""),
+    )
+    monkeypatch.setattr(
+        subjects.wm,
+        "person_for",
+        lambda qid, article, portrait, client=None: wm.Person(
+            qid=qid, label=article, article=article, died=1691
+        )
+        if qid == "Q3057690"
+        else None,
+    )
+    monkeypatch.setattr(subjects.wm, "pageviews", lambda a, client=None, days=60: [10] * 60)
+    monkeypatch.setattr(subjects, "enrich", lambda c, client=None: c)
+
+    proposed = subjects.propose(cfg, client=None)
+
+    assert [c.name for c in proposed] == ["Joseph Moxon"]
+
+
+def test_a_proposal_too_recent_to_quote_is_dropped(cfg, monkeypatch):
+    """A subject dead under a century is one whose translations and
+    photographs are probably still in copyright, which is the one legal risk
+    this format carries that account 1 never did."""
+    from pipeline import claude as claude_cli
+
+    monkeypatch.setattr(
+        claude_cli,
+        "run",
+        lambda prompt, schema, cfg, system, research=None: {"result": json.dumps(
+            {"subjects": [{"name": "Recent Person", "why": "x", "source": "y"}]}
+        )},
+    )
+    monkeypatch.setattr(
+        subjects.wm, "article_for", lambda name, client=None: ("Recent Person", "Q9", "")
+    )
+    monkeypatch.setattr(
+        subjects.wm,
+        "person_for",
+        lambda qid, article, portrait, client=None: wm.Person(
+            qid=qid, label=article, article=article, died=date.today().year - 20
+        ),
+    )
+
+    assert subjects.propose(cfg, client=None) == []

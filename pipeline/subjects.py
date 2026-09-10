@@ -53,6 +53,14 @@ OCCUPATIONS = (
     "wd:Q11063",  # astronomer
     "wd:Q1234713",  # theologian
     "wd:Q49757",  # poet
+    "wd:Q201788",  # historian
+    "wd:Q18805",  # naturalist
+    "wd:Q39631",  # physician
+    "wd:Q81096",  # engineer
+    "wd:Q205375",  # inventor
+    "wd:Q11774202",  # essayist
+    "wd:Q1930187",  # journalist
+    "wd:Q13582652",  # explorer
 )
 
 # How well known a subject has to be before it is worth ranking at all,
@@ -68,6 +76,10 @@ MIN_SITELINKS = 60
 RANK_DEPTH = 120
 
 POOL_TTL_DAYS = 30
+
+# Weekly pageviews below which a velocity ratio is not believed in full. Set at
+# the point where a doubling is a few hundred people rather than a few dozen.
+VELOCITY_FLOOR = 2_000
 
 _QUERY = """
 SELECT DISTINCT ?p ?pLabel ?pDescription ?died ?born ?article ?links WHERE {
@@ -188,7 +200,14 @@ def score(candidate: SubjectCandidate) -> SubjectCandidate:
     scored because an episode with one picture is a slideshow, which is the
     failure `PROFILE.md` records from the first prototype.
     """
-    velocity = min(candidate.velocity / 2.0, 1.0) if candidate.velocity else 0.0
+    # **Velocity is damped by how much traffic it is measured on.** The first
+    # live proposal run put a printer with 64 views in a week at the top of the
+    # list on a velocity of 2.04, which is nine extra readers. A ratio computed
+    # on a small base is noise wearing a signal's clothes, and this is the
+    # niche's version of the damped stars per day proxy `sources/github.py`
+    # falls back to before it has real history.
+    confidence = min(candidate.views_recent / VELOCITY_FLOOR, 1.0)
+    velocity = min(candidate.velocity / 2.0, 1.0) * confidence if candidate.velocity else 0.0
     attention = min(candidate.views_recent / 20_000, 1.0)
     encyclopedia = 0.0
     if candidate.sep_revised:
@@ -299,7 +318,9 @@ def enrich(
     )
 
 
-def inspect(cfg: Settings, *, top: int = 15, depth: int = RANK_DEPTH) -> list[SubjectCandidate]:
+def inspect(
+    cfg: Settings, *, top: int = 15, depth: int = RANK_DEPTH, ai: bool = True
+) -> list[SubjectCandidate]:
     """Rank tonight's subjects and print the table. Returns the full ranking.
 
     The counterpart to `scraper.inspect_candidates`, and the same promise: it
@@ -313,13 +334,12 @@ def inspect(cfg: Settings, *, top: int = 15, depth: int = RANK_DEPTH) -> list[Su
     console = Console()
     covered = set(scraper.covered_repos(cfg))
 
-    with console.status("Reading the catalogue..."):
-        ranked = rank(cfg, depth=depth, covered=covered)
+    with console.status("Reading the catalogue and asking for proposals..."):
+        ranked = discover(cfg, depth=depth, ai=ai, covered=covered)
 
     table = Table(title=f"Subjects for {date.today().isoformat()}", header_style="bold")
     table.add_column("#", justify="right", style="dim")
-    table.add_column("Subject", style="cyan", no_wrap=True)
-    table.add_column("Born", justify="right")
+    table.add_column("Subject", style="cyan", no_wrap=True, max_width=30)
     table.add_column("Died", justify="right")
     table.add_column("Views 7d", justify="right")
     table.add_column("Velocity", justify="right")
@@ -331,7 +351,6 @@ def inspect(cfg: Settings, *, top: int = 15, depth: int = RANK_DEPTH) -> list[Su
         table.add_row(
             str(i),
             c.name,
-            str(c.born) if c.born is not None else "?",
             str(c.died) if c.died is not None else "?",
             f"{c.views_recent:,}",
             f"{c.velocity:.2f}",
@@ -355,3 +374,179 @@ def inspect(cfg: Settings, *, top: int = 15, depth: int = RANK_DEPTH) -> list[Su
             "[dim]The catalogue or the metrics API is down.[/]"
         )
     return ranked
+
+
+# --------------------------------------------------------------------------
+# The other way of finding a subject
+# --------------------------------------------------------------------------
+
+PROPOSAL_SYSTEM = """You find subjects for a short video account about advice
+with a citation. Every episode is one person who wrote something down and then
+did something about it, told from a primary source a viewer could go and check.
+
+What makes a subject work:
+- They are long dead, so their own words are free to quote.
+- There is a specific sentence of theirs worth hearing, in their own words.
+- There is a documented thing they DID about it, in a source, not an inference.
+- There is something real to look at: a manuscript, a notebook, a letter, a
+  drawing, an instrument, a photograph of their own work.
+
+What makes a subject fail:
+- The famous names of a philosophy syllabus. Aristotle, Plato, Kant, Nietzsche,
+  Marx and Descartes are already over covered everywhere and are not wanted.
+- Anyone whose advice has to be invented or extrapolated to be useful.
+- A quote whose attribution is disputed, or that only exists on quote sites.
+
+Prefer people a working software engineer would find surprising: engineers,
+physicians, naturalists, cartographers, printers, nurses, instrument makers,
+explorers, translators. Someone whose problem rhymes with a working life.
+
+Return only people you can name a real primary source for."""
+
+PROPOSAL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "subjects": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The person, as Wikipedia names them",
+                    },
+                    "why": {
+                        "type": "string",
+                        "description": "One sentence on the episode it makes",
+                    },
+                    "source": {
+                        "type": "string",
+                        "description": "The primary source the quote and the action come from",
+                    },
+                },
+                "required": ["name", "why", "source"],
+            },
+        }
+    },
+    "required": ["subjects"],
+}
+
+
+def propose(
+    cfg: Settings,
+    *,
+    n: int = 8,
+    avoid: set[str] | None = None,
+    client: httpx.Client | None = None,
+) -> list[SubjectCandidate]:
+    """Ask Claude for subjects the catalogue would never surface, then check them.
+
+    **This is the answer to "why not just ask the model".** The model is better
+    than a query at the thing a query cannot do, which is knowing that a
+    cartographer's notebook makes an episode and a philosopher's syllabus entry
+    does not. It is worse than a query at the thing this account exists to be
+    good at, which is being right about who said what: a proposal is a claim
+    from memory, and the format's whole discipline is that every claim arrives
+    with a source.
+
+    So the two are used for what each is good at. Claude proposes, and every
+    proposal is then put through the same checks a catalogue subject passes:
+    it has to resolve to a real person on Wikidata, be dead long enough for
+    their words to be free, and have public domain artefacts to look at.
+    Anything that fails is dropped rather than corrected, because a subject the
+    encyclopedias cannot confirm is one this account cannot audit.
+
+    The quote itself is still not taken on trust here. Discovery says who
+    tonight is about; the scriptwriter fetches what they actually wrote.
+    """
+    from pipeline import claude as claude_cli
+
+    avoid = avoid or set()
+    prompt = (
+        f"Propose {n} subjects for tonight, each a different kind of person and a "
+        f"different century where you can manage it.\n\n"
+        f"Already covered, so do not propose them: "
+        f"{', '.join(sorted(avoid)) if avoid else 'nothing yet'}."
+    )
+    try:
+        # **No web search, deliberately, and it is the verification that pays
+        # for that.** Researching eight proposals took past the 420 second
+        # timeout on the first live run, and it was buying confidence that
+        # Wikidata is about to provide for nothing: every name is looked up
+        # below, and one the encyclopedias cannot confirm is dropped whether or
+        # not the model read a page about it. What research is genuinely needed
+        # for is the quote and the documented action, and that is the
+        # scriptwriter's call, against the primary source, later.
+        envelope = claude_cli.run(
+            prompt, PROPOSAL_SCHEMA, cfg, system=PROPOSAL_SYSTEM, research=False
+        )
+        proposals = claude_cli.payload(envelope).get("subjects", [])
+    except claude_cli.ClaudeError as exc:
+        # The catalogue is the fallback, not the other way round. A night with
+        # no proposals ranks what Wikidata already knows about.
+        log.warning("No proposals: %s", exc)
+        return []
+
+    checked: list[SubjectCandidate] = []
+    for proposal in proposals:
+        name = (proposal.get("name") or "").strip()
+        if not name:
+            continue
+        article, qid, portrait = wm.article_for(name, client=client)
+        person = wm.person_for(qid, article, portrait, client=client)
+        if not person:
+            log.info("Dropped %r: not a person on Wikidata", name)
+            continue
+        if not person.public_domain:
+            log.info("Dropped %r: died %s, too recent to quote freely", name, person.died)
+            continue
+        candidate = SubjectCandidate(
+            qid=person.qid,
+            name=person.label,
+            article=person.article,
+            description=person.description or proposal.get("why", ""),
+            born=person.born,
+            died=person.died,
+            portrait=person.portrait,
+        )
+        if candidate.key in avoid:
+            continue
+        views = wm.pageviews(candidate.article, client=client)
+        candidate = candidate.model_copy(
+            update={
+                "views_recent": sum(views[-7:]),
+                "velocity": round(wm.velocity(views), 4),
+            }
+        )
+        checked.append(score(enrich(candidate, client=client)))
+
+    log.info("Proposed %d, %d survived checking", len(proposals), len(checked))
+    return checked
+
+
+def discover(
+    cfg: Settings,
+    *,
+    depth: int = RANK_DEPTH,
+    ai: bool = True,
+    client: httpx.Client | None = None,
+    covered: set[str] | None = None,
+) -> list[SubjectCandidate]:
+    """Both ways of finding a subject, merged and scored on one scale.
+
+    The catalogue is what makes tonight possible at all; the proposals are what
+    stop every night being another name off the same syllabus. They are ranked
+    together rather than one being a fallback for the other, because a proposal
+    that nobody is reading about should lose to a catalogue subject that
+    somebody is, and the score already says which is which.
+    """
+    covered = covered or set()
+    ranked = rank(cfg, depth=depth, client=client, covered=covered)
+    if not ai:
+        return ranked
+
+    seen = {c.qid for c in ranked} | covered
+    proposals = propose(cfg, avoid=covered | {c.name for c in ranked[:20]}, client=client)
+    merged = ranked + [p for p in proposals if p.qid not in seen]
+    merged.sort(key=lambda c: c.score, reverse=True)
+    return merged

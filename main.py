@@ -135,7 +135,13 @@ def run(
     ] = False,
     show_subjects: Annotated[
         bool,
-        typer.Option("--subjects", help="Rank tonight's subjects for a niche that is not GitHub"),
+        typer.Option(
+            "--subjects",
+            help=(
+                "Rank tonight's subjects for a niche that is not GitHub. "
+                "--no-research skips the proposals."
+            ),
+        ),
     ] = False,
     history: Annotated[
         bool,
@@ -302,7 +308,7 @@ def run(
     if show_subjects:
         from pipeline import subjects
 
-        subjects.inspect(cfg)
+        subjects.inspect(cfg, ai=cfg.claude_research)
         return
 
     if covered:

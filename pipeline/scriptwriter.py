@@ -25,13 +25,13 @@ from __future__ import annotations
 import inspect
 import json
 import logging
-import subprocess
 import time
 from typing import Any
 
 from pydantic import ValidationError
 
-from config import Settings, resolve_claude_cli
+from config import Settings
+from pipeline import claude as claude_cli
 from pipeline import results
 from pipeline.models import RepoCandidate, VideoScript
 from pipeline.results import PastPost
@@ -495,57 +495,18 @@ def prompt_source() -> str:
 
 
 def _run_claude(prompt: str, schema: dict[str, Any], cfg: Settings) -> dict[str, Any]:
-    cmd = [
-        resolve_claude_cli(),
-        "-p", prompt,
-        "--json-schema", json.dumps(schema),
-        "--output-format", "json",
-        "--model", cfg.claude_model,
-        "--effort", cfg.claude_effort,
-        "--append-system-prompt", SYSTEM_PROMPT,
-    ]
-    # Research is what makes this better than a plain API call: Claude Code can
-    # look the project up rather than paraphrasing its README.
-    cmd += ["--allowedTools", "WebSearch WebFetch"] if cfg.claude_research else [
-        "--allowedTools", ""
-    ]
+    """The shared runner, with this module's own errors on the way out.
 
-    log.info("Invoking Claude Code (model=%s, research=%s)", cfg.claude_model, cfg.claude_research)
+    The invocation moved to `pipeline/claude.py` when subject discovery became
+    its second caller. The exception types stay here, because everything that
+    catches them is talking about a script rather than about a CLI.
+    """
     try:
-        proc = subprocess.run(  # noqa: S603 - argv list, no shell
-            cmd, capture_output=True, text=True, timeout=cfg.claude_timeout_s, check=False
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise ScriptGenerationError(
-            f"Claude Code did not finish within {cfg.claude_timeout_s}s. "
-            f"Raise CLAUDE_TIMEOUT_S, or set CLAUDE_RESEARCH=false to skip web search."
-        ) from exc
-
-    if proc.returncode != 0:
-        # stdout, not just stderr. With --output-format json the CLI puts its
-        # error envelope on stdout, so reporting stderr alone produced a blank
-        # message and the real reason had to be dug out of ~/.claude/projects.
-        raise TransientScriptError(
-            f"claude exited {proc.returncode}.\n"
-            f"stderr: {proc.stderr[:400]}\n"
-            f"stdout: {proc.stdout[:400]}\n"
-            f"If this says you are not authenticated, run `claude` once interactively "
-            f"to sign in."
-        )
-
-    try:
-        envelope: dict[str, Any] = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        raise ScriptGenerationError(
-            f"Could not parse Claude Code output as JSON: {proc.stdout[:500]}"
-        ) from exc
-
-    if envelope.get("is_error") or envelope.get("subtype") != "success":
-        raise ScriptGenerationError(
-            f"Claude Code reported failure "
-            f"(subtype={envelope.get('subtype')}): {str(envelope.get('result'))[:500]}"
-        )
-    return envelope
+        return claude_cli.run(prompt, schema, cfg, system=SYSTEM_PROMPT)
+    except claude_cli.TransientClaudeError as exc:
+        raise TransientScriptError(str(exc)) from exc
+    except claude_cli.ClaudeError as exc:
+        raise ScriptGenerationError(str(exc)) from exc
 
 
 def _run_claude_with_retry(
