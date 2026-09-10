@@ -13,7 +13,7 @@ import {
 import { Background } from "./components/Background";
 import { Captions } from "./components/Captions";
 import { OpeningSceneContext, SceneRenderer } from "./scenes/SceneRenderer";
-import { theme } from "./theme";
+import { browserChromeHeight, safeTop, theme } from "./theme";
 import type { VideoSpec } from "./types";
 
 /** The hook overlay owns the first 3 seconds -- the only part most viewers see. */
@@ -27,6 +27,9 @@ import type { VideoSpec } from "./types";
  * spend all of it on one static text card.
  */
 const HOOK_SECONDS = 2.4;
+
+/** How far below the hook band the scrim fades out, in pixels. */
+const HOOK_FADE = 180;
 
 const Hook: React.FC<{ text: string }> = ({ text }) => {
   const frame = useCurrentFrame();
@@ -59,7 +62,28 @@ const Hook: React.FC<{ text: string }> = ({ text }) => {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  const scrim = interpolate(resolve, [0, 1], [0.55, 0.25]);
+  // Denser than it was, and the strip is what pays for it. When the hook sat
+  // centred over the hero, every point of scrim was charged against the one
+  // element the shot existed to show, so 0.55 falling to 0.25 was the most it
+  // could afford and the comment below is written about that trade. A strip
+  // darkens the top quarter and leaves the rest of the page untouched, so the
+  // hook can be properly legible over a full-bleed README -- which is a busy,
+  // light-on-dark page of real text rather than the small card on empty
+  // background this used to sit on.
+  //
+  // Near opaque, and that is a decision rather than a slider being nudged.
+  // A GitHub README is mostly dark and then suddenly is not: the brightest
+  // thing on the page is a row of white shields badges, and maintainers put it
+  // directly under the title, which is exactly where the strip lands. 0.78 was
+  // legible over prose and unreadable over AutoResearch's two award badges, so
+  // the floor has to clear the worst case rather than the common one.
+  //
+  // What it costs is the top ~300px of the page for 2.4 seconds. What it used
+  // to cost, when the hook was centred, was the whole hero for the entire
+  // window skip rate scores. Recognition is carried by the chrome, which stays
+  // sharp, and by the rest of the page, which is now full bleed, scrolling and
+  // visible for the remaining twenty four seconds.
+  const scrim = interpolate(resolve, [0, 1], [0.97, 0.93]);
   const blur = interpolate(resolve, [0, 1], [2, 0]);
   // Fade out over the last 12 frames rather than cutting, which reads as a
   // glitch at this size.
@@ -71,48 +95,95 @@ const Hook: React.FC<{ text: string }> = ({ text }) => {
   );
 
   return (
-    <AbsoluteFill
-      style={{
-        justifyContent: "center",
-        alignItems: "center",
-        paddingLeft: theme.padding,
-        paddingRight: theme.padding,
-        paddingBottom: 240,
-        // Scrim plus defocus rather than a heavy flat overlay, and both ease
-        // off across the hold. The point of opening on the real GitHub page is
-        // that the viewer recognises it, so burying it under 72% black defeats
-        // the exercise, and burying it under anything for the full three
-        // seconds defeats it during the seconds that decide.
-        backgroundColor: `rgba(1,4,9,${scrim})`,
-        backdropFilter: `blur(${blur}px)`,
-        WebkitBackdropFilter: `blur(${blur}px)`,
-        opacity: exit,
-      }}
-    >
+    <AbsoluteFill style={{ opacity: exit }}>
+      {/*
+        The hook sits in a band at the top rather than centred on the hero.
+        Centred, it covered the project's own wordmark for the entire window
+        `skip_rate` scores, and cleared at frame 90 at exactly the moment the
+        page suddenly looked good. CLAUDE.md already forbids this composition
+        for the cover stills, for the same reason and in stronger words:
+        "Nothing may cover it. Centring was tried and it buried the one element
+        the cover exists to show." The video had the rule and did not apply it.
+
+        The scrim is a gradient that is dense behind the text and gone by the
+        middle of the frame, so the hero is legible underneath the hook rather
+        than after it. A flat full-frame scrim is what made the old opening a
+        dark rectangle with words on it.
+      */}
       <div
         style={{
-          fontFamily: theme.font.display,
-          fontSize: theme.size.hook,
-          fontWeight: 900,
-          color: theme.color.text,
-          textAlign: "center",
-          lineHeight: 1.08,
-          letterSpacing: "-0.04em",
-          textShadow: "0 8px 40px rgba(0,0,0,0.9)",
-          transform: `scale(${interpolate(enter, [0, 1], [0.88, 1])})`,
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          // Below the platform's chrome and below the browser title bar, so
+          // the hook never starts on top of the window it is sitting in.
+          paddingTop: safeTop + browserChromeHeight + 36,
+          paddingLeft: theme.padding,
+          paddingRight: theme.padding,
+          paddingBottom: 28,
+          // Flat, not a gradient. The gradient version put its stops at fixed
+          // percentages of the strip, and the strip's height depends on
+          // whether the hook wrapped to two lines or three, so the fade landed
+          // in a different place for every hook. On a two line hook it began
+          // at 62 percent, which is the second line, and the scrim under that
+          // line measured about 0.46 whatever the nominal value was set to.
+          // That is how a hook stayed unreadable over AutoResearch's award
+          // badges while this number was raised twice.
+          //
+          // The fade is a separate element below, with a height in pixels, so
+          // the text always sits on the full value and the transition is the
+          // same for a one line hook and a three line one.
+          backgroundColor: `rgba(1,4,9,${scrim})`,
+          backdropFilter: `blur(${blur}px)`,
+          WebkitBackdropFilter: `blur(${blur}px)`,
         }}
       >
-        {text}
+        <div
+          style={{
+            fontFamily: theme.font.display,
+            // Smaller than the centred hook was. A strip has a width budget
+            // rather than the whole frame, and 104 wrapped every hook to four
+            // lines here.
+            fontSize: theme.size.hookStrip,
+            fontWeight: 900,
+            color: theme.color.text,
+            // Left aligned, not centred. "Centred, symmetric layouts
+            // throughout" is on this account's own list of generated-video
+            // tells, and a strip is the one place the layout can have an
+            // opinion without costing anything.
+            textAlign: "left",
+            lineHeight: 1.08,
+            letterSpacing: "-0.04em",
+            textShadow: "0 8px 40px rgba(0,0,0,0.9)",
+            transform: `translateY(${interpolate(enter, [0, 1], [-18, 0])}px)`,
+            opacity: enter,
+          }}
+        >
+          {text}
+        </div>
+        <div
+          style={{
+            marginTop: 36,
+            height: 8,
+            width: interpolate(enter, [0, 1], [0, 220]),
+            borderRadius: 4,
+            backgroundColor: theme.color.accent,
+          }}
+        />
+        {/* The fade out of the band, in pixels below it rather than as a
+            percentage stop inside it. See the note on backgroundColor. */}
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: -HOOK_FADE,
+            height: HOOK_FADE,
+            background: `linear-gradient(180deg, rgba(1,4,9,${scrim}) 0%, rgba(1,4,9,0) 100%)`,
+          }}
+        />
       </div>
-      <div
-        style={{
-          marginTop: 44,
-          height: 8,
-          width: interpolate(enter, [0, 1], [0, 220]),
-          borderRadius: 4,
-          backgroundColor: theme.color.accent,
-        }}
-      />
     </AbsoluteFill>
   );
 };
@@ -240,7 +311,12 @@ export const Reel: React.FC<VideoSpec> = (spec) => {
           layout="none"
         >
           <OpeningSceneContext.Provider value={scene.fromFrame === 0}>
-            <SceneRenderer scene={scene} repo={spec.repo} />
+            <SceneRenderer
+              scene={scene}
+              repo={spec.repo}
+              pageSrc={spec.pageSrc}
+              pageAspect={spec.pageAspect}
+            />
           </OpeningSceneContext.Provider>
         </Sequence>
       ))}

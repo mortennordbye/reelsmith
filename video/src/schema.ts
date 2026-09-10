@@ -25,6 +25,7 @@ export const cueKindSchema = z.enum([
   "bullets",
   "terminal",
   "screenshot",
+  "diagram",
 ]);
 
 /** One Shiki-highlighted token. Produced in calculateMetadata, never by Python. */
@@ -46,6 +47,13 @@ export const sceneSchema = z.object({
   statLabel: z.string().nullable().optional(),
   /** Path relative to video/public/, for screenshot scenes. */
   imageSrc: z.string().nullable().optional(),
+  /**
+   * A named flow from the project's own README, 2 to 5 nodes. Opt in: the
+   * scriptwriter asks for it only when there is a real pipeline to draw, and
+   * `_check_diagram_nodes` on the Python side refuses the generic version
+   * rather than letting "Input -> Tool -> Output" render.
+   */
+  diagramNodes: z.array(z.string()).optional(),
   /** Injected by calculateMetadata; absent in the JSON Python writes. */
   tokens: z.array(z.array(codeTokenSchema)).optional(),
 });
@@ -88,6 +96,20 @@ export const videoSpecSchema = z.object({
   repo: repoMetaSchema,
   scenes: z.array(sceneSchema),
   captions: z.array(captionSchema),
+  /**
+   * The whole README as one tall image, for the shot that scrolls it. One per
+   * video rather than one per scene, because every screenshot scene shows the
+   * same page and three copies of a filename is three chances to disagree.
+   *
+   * Optional: without it a screenshot scene falls back to the framed hero, so
+   * a spec written before this field renders exactly as it used to.
+   */
+  pageSrc: z.string().nullable().optional(),
+  /**
+   * height / width of that capture, so the scroll distance is known without
+   * measuring the image during a frame render.
+   */
+  pageAspect: z.number().positive().nullable().optional(),
   /**
    * Whether the follow ask appears as an end card. Was `ctaKeyword`, the word
    * to comment for the link; the ask is a follow now and needs no word.

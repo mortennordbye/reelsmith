@@ -563,22 +563,43 @@ def _render_one(
     # Opening shot: the real GitHub page. Cached across re-runs, and entirely
     # optional -- a capture failure just means the video opens on a card.
     shot_path = run_dir / "repo.png"
+    page_path = run_dir / "repo-page.png"
+    # The aspect of the tall capture is the one thing that cannot be recovered
+    # from the file by anything downstream without decoding it, so it is
+    # written beside the image and cached with it.
+    aspect_path = run_dir / "repo-page.json"
     if not shot_path.exists():
         with console.status("Capturing the GitHub page..."):
-            screenshot.capture_repo(repo.url, shot_path)
+            capture = screenshot.capture_repo(repo.url, shot_path, page_path=page_path)
+        if capture and capture.page_aspect:
+            aspect_path.write_text(json.dumps({"aspect": capture.page_aspect}))
     screenshot_src = (
         renderer.stage_asset(shot_path, cfg.video_dir, repo.slug)
         if shot_path.exists()
         else None
     )
+    page_aspect = None
+    if aspect_path.exists():
+        try:
+            page_aspect = float(json.loads(aspect_path.read_text())["aspect"])
+        except Exception:  # noqa: BLE001 - a bad cache is not a reason to fail a render
+            page_aspect = None
+    page_src = (
+        renderer.stage_asset(page_path, cfg.video_dir, repo.slug)
+        if page_path.exists() and page_aspect
+        else None
+    )
     console.print(
-        f"  [dim]screenshot: {'captured' if screenshot_src else 'unavailable, opening on card'}[/]"
+        f"  [dim]screenshot: {'captured' if screenshot_src else 'unavailable, opening on card'}"
+        f"{', page scrolls' if page_src else ''}[/]"
     )
 
     audio_src = renderer.stage_asset(audio_path, cfg.video_dir, repo.slug)
     video_spec: VideoSpec = spec_mod.build_spec(
         repo, script, caps, duration, audio_src, cfg,
         screenshot_src=screenshot_src,
+        page_src=page_src,
+        page_aspect=page_aspect,
         # The ask is audio no visual cue was written for, so the spec needs to
         # know its words to give it a scene of its own.
         spoken_cta=cta_line,
@@ -778,7 +799,7 @@ def _recover(cfg: Settings, *, approve: bool, max_queue: int | None) -> None:
     stamps = {
         (date.today() - timedelta(days=n)).isoformat() for n in range(_RECOVER_DAYS)
     }
-    covered = {name for name, _ in scraper.covered_repos(cfg)}
+    covered = {name for name, _ in scraper.covered_now(cfg)}
 
     pending_runs: list[Path] = []
     for day_dir in sorted(p for p in cfg.build_dir.iterdir() if p.name in stamps):
@@ -865,13 +886,22 @@ def _show_covered(cfg: Settings) -> None:
     for full_name, used_on in rows:
         age = (today - date.fromisoformat(used_on)).days
         left = cfg.repo_cooldown_days - age
-        status = f"[yellow]blocked, {left}d left[/]" if left > 0 else "[green]free again[/]"
+        recovering_left = cfg.repo_cooldown_days + cfg.repo_cooldown_recovery_days - age
+        if left > 0:
+            status = f"[yellow]blocked, {left}d left[/]"
+        elif recovering_left > 0:
+            status = f"[yellow]recovering, {recovering_left}d to full score[/]"
+        else:
+            status = "[green]free again[/]"
         table.add_row(full_name, used_on, status)
 
     console.print(table)
     console.print(
         f"[dim]Blocked repos are dropped during discovery, before any README is fetched. "
-        f"Cooldown is {cfg.repo_cooldown_days} days (REPO_COOLDOWN_DAYS).[/]"
+        f"Recovering ones are eligible but scored down until the ramp finishes. "
+        f"Cooldown is {cfg.repo_cooldown_days} days (REPO_COOLDOWN_DAYS), "
+        f"recovery is {cfg.repo_cooldown_recovery_days} more "
+        f"(REPO_COOLDOWN_RECOVERY_DAYS).[/]"
     )
 
 

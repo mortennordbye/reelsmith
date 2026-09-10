@@ -107,6 +107,58 @@ The viewer has about two seconds to recognise a snippet and it has to match what
 they would type. Anything else that renders code needs the same treatment
 (`fontVariantLigatures: "none"` plus `fontFeatureSettings: '"liga" 0, "calt" 0'`).
 
+**The shot is the README, full bleed and scrolling.** It was a browser card
+floating in the middle of the frame, which left roughly a third of a 9:16 frame
+empty above and below it. That was not a composition choice, it is what a 16:10
+screenshot leaves behind when it is dropped into a vertical frame, and in a
+format where the frame is the entire product it was a third of the product spent
+on nothing. `capture_repo` now takes two images in one visit: the hero, capped
+at `HERO_MAX_HEIGHT`, which is what `cover.png` is built from, and the whole
+README at `PAGE_MAX_HEIGHT`, which `ReadmePage.tsx` scrolls.
+
+Three things about it are load bearing:
+
+- **The motion is the page moving, not an effect applied to a still.** Motion
+  graphics are cheap to automate, which is why every generated channel has them
+  and why they read as generated. A page scrolling is the artifact doing the
+  only thing a page does. Do not "improve" this by adding easing, parallax or a
+  push-in on top of it.
+- **`pageAspect` is carried, never measured.** The renderer needs the image's
+  aspect to know how far it may scroll, and measuring an image inside a frame
+  render is how one frame ends up different from its neighbour for no visible
+  reason. `spec.py` refuses a page with no aspect rather than guessing, so it is
+  both fields or neither.
+- **The scroll is bounded by speed as well as by the page**, at 96px a second.
+  Proportional scrolling would make a long README scroll faster in a short
+  scene, which is backwards: how fast a page can be read does not depend on how
+  much of it there is.
+
+Two things it deliberately did not change. **The cover still uses the hero**,
+because a still that scrolls is a still and the cover rule below is written
+about the hero; `Cover.tsx` does not pass a page and that is the reason. And
+**the framed `BrowserFrame` is still the fallback**, for a README too short to
+scroll, a capture that failed, and any spec written before `pageSrc` existed.
+
+**Nothing that has to be recognised may sit above `safeTop`.** It is the
+counterpart to `captionBand` and it existed as a bare `paddingTop: 300` in
+`SceneRenderer` for as long as every scene was a card floating in the middle of
+the frame. A full-bleed shot has no padding to hide behind: the browser chrome
+sat at y=0 and read as a window sliced off by the top of the screen, which is a
+rendering fault rather than a design. Instagram puts the back arrow and account
+name there, TikTok its Following tabs, and a notched phone loses more again.
+The window is inset below it with its top two corners rounded, which is what
+makes the inset read as deliberate.
+
+**The bottom dims to 0.93 rather than painting out.** Solid background below the
+caption left a dead band between the last readable line and the words, which is
+the same wasted frame the full-bleed shot exists to recover, moved to the other
+end.
+
+**`repo-page.png` has to be named in `STAGED_ASSET_RE`.** The slug pattern is
+greedy over hyphens, so a rule written for `repo.png` does not cover it, and an
+asset the prune does not recognise is one that is never deleted. It is the
+largest file the pipeline stages.
+
 ## Cover stills
 
 **The cover is the README hero. Nothing may cover it.** That screenshot is the
@@ -755,6 +807,18 @@ section is.
   OOM killer took the container, and with it the batch, the session, and
   `/tmp/nightly.log`. One finished video survived because it was already on
   disk; a script that had been researched and paid for did not get used.
+- **A render host missing its node deps fails every video and looks like a
+  quiet night.** `video/node_modules` went away when the pod was recreated on
+  2026-09-07, and the three nights after it each wrote a script and a voiceover
+  and produced nothing, because the Remotion check is the last step of five.
+  Nothing alerted: every metric the gateway has starts at the queue, so a host
+  rendering nothing is indistinguishable from one where `--max-queue` stopped
+  the batch, which this file calls the normal outcome. It surfaced as views
+  decaying a week later, once the queue drained to empty. `_ensure_node_deps`
+  runs `npm ci` itself now rather than naming the command, since the thing it
+  is protecting has already been paid for by the time it runs. **The class of
+  failure it cannot fix is the one to watch**: anything that makes the render
+  host stop producing is invisible here until the feed goes dark days later.
 - **So queueing is `--recover`, not a list of `--enqueue` lines.** The nightly
   ends with `--recover --approve --max-queue 3`, which sweeps the last two
   days of build folders and finishes whatever each one still owes. It is what

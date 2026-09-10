@@ -106,9 +106,12 @@ class UsedRepos:
     tomorrow.
     """
 
-    def __init__(self, path: Path, cooldown_days: int = 30):
+    def __init__(self, path: Path, cooldown_days: int = 30, recovery_days: int = 30):
         self.path = path
         self.cooldown_days = cooldown_days
+        # After the hard cooldown lifts, `penalty` does not jump straight back
+        # to 1.0 -- see its docstring. This is the length of that ramp.
+        self.recovery_days = recovery_days
         self._data: dict[str, str] = self._load()
 
     def _load(self) -> dict[str, str]:
@@ -135,8 +138,29 @@ class UsedRepos:
         return (today - date.fromisoformat(used_on)).days < self.cooldown_days
 
     def penalty(self, full_name: str, on: date | None = None) -> float:
-        """1.0 if free to use, 0.0 if inside the cooldown window."""
-        return 0.0 if self.is_covered(full_name, on) else 1.0
+        """0.0 inside the cooldown window, ramping linearly to 1.0 over `recovery_days` after.
+
+        The cooldown itself stays a hard gate elsewhere (`is_covered`,
+        discovery, `--recover`): GitHub has far more candidates than the
+        account needs, so a repeat competing on equal footing with something
+        never covered wins on velocity alone the moment its 30 days are up,
+        which is how a repo featured over a month ago (fully off cooldown, by
+        design a legitimate candidate) can still out-score fresh content on a
+        thin night. The ramp does not re-ban a repeat; it makes velocity do
+        more work to justify one, and ordinary fresh candidates keep winning
+        by default.
+        """
+        used_on = self._data.get(full_name)
+        if not used_on:
+            return 1.0
+        today = on or date.today()
+        age = (today - date.fromisoformat(used_on)).days
+        if age < self.cooldown_days:
+            return 0.0
+        recovering = age - self.cooldown_days
+        if recovering >= self.recovery_days:
+            return 1.0
+        return recovering / self.recovery_days
 
     def covered(self) -> list[tuple[str, str]]:
         """Everything we have ever covered, newest first. The record, not the filter.
@@ -145,6 +169,20 @@ class UsedRepos:
         this answers is "have we done this one" rather than "may we do it now".
         """
         return sorted(self._data.items(), key=lambda kv: kv[1], reverse=True)
+
+    def covered_now(self, on: date | None = None) -> list[tuple[str, str]]:
+        """Only what is still inside its cooldown window, newest first.
+
+        `covered()` answers "have we done this one" and never expires an
+        entry, which is right for `--covered`/`--history` but wrong for a
+        caller asking "may we ship this again right now" -- that caller wants
+        `is_covered`'s date check, not the full-history record.
+        """
+        return [
+            (name, used_on)
+            for name, used_on in self.covered()
+            if self.is_covered(name, on)
+        ]
 
     def mark_used(self, full_name: str, on: date | None = None) -> None:
         self._data[full_name] = (on or date.today()).isoformat()
@@ -534,7 +572,7 @@ def collect_candidates(
     token = require_github_token(cfg)
 
     history = StarHistory(cfg.star_history_path)
-    used = UsedRepos(cfg.used_repos_path, cfg.repo_cooldown_days)
+    used = UsedRepos(cfg.used_repos_path, cfg.repo_cooldown_days, cfg.repo_cooldown_recovery_days)
     _sync_covered(cfg, used)
     # Repos whose video already exists but was never queued. Held apart from
     # `used` rather than merged into it: a commitment is a 30 day cooldown and
@@ -745,6 +783,11 @@ def unmark_featured(cfg: Settings, full_name: str) -> str | None:
 def covered_repos(cfg: Settings) -> list[tuple[str, str]]:
     """Every repo we have committed to a post about, newest first."""
     return UsedRepos(cfg.used_repos_path, cfg.repo_cooldown_days).covered()
+
+
+def covered_now(cfg: Settings, on: date | None = None) -> list[tuple[str, str]]:
+    """Repos still inside their cooldown window, newest first."""
+    return UsedRepos(cfg.used_repos_path, cfg.repo_cooldown_days).covered_now(on)
 
 
 # --------------------------------------------------------------------------

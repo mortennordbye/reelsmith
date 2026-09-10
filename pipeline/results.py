@@ -60,8 +60,38 @@ class PastPost:
     shares: int | None = None
 
     @property
+    def saves_per_1k(self) -> float | None:
+        """Saves per thousand views, or None when the gateway did not send them.
+
+        Per thousand rather than raw, because a raw count mostly measures how
+        far the post travelled. Against views rather than reach, which this
+        object does not carry; the two correlate at 0.95 over the 91 settled
+        posts, so the ratio is the same question with a rounder denominator.
+        """
+        if self.saved is None or self.views <= 0:
+            return None
+        return self.saved / self.views * 1000
+
+    @property
     def line(self) -> str:
-        return f"{self.skip_rate:4.1f}%  {self.hook}"
+        """One post, scored on all three things that turned out to predict reach.
+
+        It was skip rate alone until 2026-09-10, which is what every analysis in
+        `IDEAS.md` was argued from and what the scriptwriter was shown. Measured
+        over the 91 settled posts, skip rate is the *weakest* of the three:
+        Spearman against views is -0.53 for skip, +0.70 for average watch, and
+        saves per thousand separate the posts over 500 views from the rest by
+        17.8 to 3.4, where likes per thousand do not separate them at all.
+
+        Skip rate stays, because it is the only one that scores the opening on
+        its own and the hook is what this list is for. The other two are here
+        because a hook that wins the first three seconds and loses the next
+        twenty is a hook this list used to report as a success.
+        """
+        watch = f"{self.avg_watch_s:4.1f}s"
+        saves = self.saves_per_1k
+        saved = "    -" if saves is None else f"{saves:5.1f}"
+        return f"{self.skip_rate:4.1f}%  {watch}  {saved}/1k  {self.hook}"
 
 
 def recipe(cfg: Settings) -> str:

@@ -159,14 +159,28 @@ def _results_block(past: list[PastPost]) -> str:
     return f"""
 ## What this account's own videos did
 
-Each line is a hook that ran on this account, with the share of viewers who
-scrolled past inside the first three seconds. Lower is better.
+Each line is a hook that ran on this account, followed by three numbers: the
+share of viewers who scrolled past inside the first three seconds (lower is
+better), the average time watched, and how many viewers per thousand saved it.
 
 {lines}
 
-Educational videos in this format average 30 to 40 percent. {verdict}
+Educational videos in this format average 30 to 40 percent skip. {verdict}
 
-Two things to take from it. Do not write a variation on any shape above: a
+**Read all three, and do not optimise the first one alone.** Measured over this
+account's 91 settled posts, the skip rate is the weakest predictor of how far a
+post travelled; average watch time is the strongest, and saves per thousand
+separate the posts that reached several hundred people from the ones that did
+not by roughly five to one. Likes do not separate them at all. A hook that wins
+the first three seconds and then loses the next twenty is a hook that shows up
+well in the first column and went nowhere.
+
+So a good opening is one that sets up something the viewer stays for and wants
+to keep, not one that merely stops the scroll. The most reliable way to earn a
+save is to show the exact thing a developer would otherwise have to go and look
+up.
+
+Two things to take from the list. Do not write a variation on any shape above: a
 viewer meets these in sequence and a repeated formula is visible by the third
 one. And look at what separates the better numbers from the worse, then beat
 both.
@@ -268,10 +282,37 @@ characters -- this is validated, and a longer hook fails the run. It must make
 spoken_script
     The voiceover, UNDER {cfg.max_script_words} WORDS. This is a hard limit: it
     becomes roughly 25 to 32 seconds of audio in this voice, and going over
-    means the video runs long. Structure it as: what it is -> the specific
-    problem it solves -> one concrete detail a developer would care about ->
-    what to do next. Write for the ear. No semicolons, no parentheses, and
-    expand symbols ("about 20 percent", not "~20%").
+    means the video runs long. Structure it as: the problem the viewer has ->
+    **what changes for them if they use this** -> one concrete detail a
+    developer would care about -> what to do next. Write for the ear. No
+    semicolons, no parentheses, and expand symbols ("about 20 percent", not
+    "~20%").
+
+    **Say what it does for the viewer's own work, and say it in the first
+    third.** This is the beat the script used to leave implied, and it is the
+    difference between a video somebody watches and a video somebody keeps.
+
+    Measured over this account's 91 settled posts: saves per thousand viewers
+    separate the posts that reached several hundred people from the ones that
+    did not by roughly five to one, 17.8 against 3.4, while likes do not
+    separate them at all. Average watch time is the strongest predictor of
+    reach there is. Nobody saves a description of a repository. They save the
+    thing they expect to need on Tuesday.
+
+    So name the change to their week. Not "it caches embeddings" but "you stop
+    paying to re-embed the same corpus every deploy". Not "it has a CLI" but
+    "you can run it in CI without a browser". Concrete, first person to their
+    situation, and early enough that a viewer deciding at second five has
+    already heard it.
+
+    **Do not turn this into a benefit claim.** "This will make you a better
+    engineer", "a must have for every developer", "level up your workflow" are
+    the register this account exists against, and the same rule that bans hype
+    vocabulary bans them. The test is whether the sentence names a specific
+    thing that is true of this project and would stop being true of a
+    competitor. If it survives being said about any tool in the category, it is
+    a slogan and not a payoff. The whole video is one honest sentence about a
+    real repository; this is the sentence that says who it is honest *for*.
 
     **Never restate the hook.** The hook is already on screen, read in under a
     second, and the viewer is still there because of it. Saying it again in the
@@ -325,6 +366,15 @@ visual_cues
       terminal   code=the tool being run, code_language="bash"
       stat       stat_value=a short number/figure, stat_label=what it measures
       bullets    bullets=2 to 4 lines, each 6 words or fewer
+      diagram    diagram_nodes=2 to 5 named steps of this project's own
+                 pipeline, in order, each under 28 characters. Opt in: ask for
+                 it only when the README documents a real flow worth drawing.
+                 Every node must be a component THIS project names. Generic
+                 boxes are rejected by the parser and fail the run, because
+                 "Input, Tool, Output" is a slide with arrows on it and would
+                 be true of every project in the category. If there is no
+                 documented pipeline, use code or terminal instead. That is
+                 the expected answer most of the time.
 
     **Every word of spoken_script is burned onto the video as captions**, synced
     to the voice, along the bottom of the frame. The viewer is already reading
@@ -345,8 +395,25 @@ visual_cues
     script's own sentences rewritten.
 
     When a beat has nothing to show that the words do not already carry, prefer
-    `code`, `terminal`, `repo_card` or `stat`, which show a thing rather than
-    describe one.
+    `code`, `terminal` or `repo_card`, which show a thing rather than describe
+    one.
+
+    **Use `bullets` and `stat` sparingly: at most two of either across the
+    whole script, and never two of them in a row.** A title over three bullets
+    on a dark background, and a giant number with a small label under it, are
+    the two most recognisable motifs in automated short form video, and this
+    audience has seen a thousand of them. They are cheap for a generator to
+    produce, which is exactly why every generator produces them.
+
+    Be honest about the evidence here, because it is not a retention finding.
+    Across 55 posts whose scene composition could be joined to their numbers,
+    the share of `bullets` and `stat` cues had no relationship to views
+    (Spearman +0.00) and if anything a slightly positive one to watch time. So
+    this rule is not claiming those cues lose viewers. It is a positioning
+    rule: they are what makes a video read as machine made to somebody who
+    stops watching the moment they decide it is. Do not reinstate them as a
+    default on the grounds that the numbers do not forbid it -- the numbers were
+    checked, and they are silent rather than supportive.
 
     Keep each spoken_excerpt to about 15 words. A cue's screen time comes from
     how long its excerpt takes to say, so a 40 word excerpt becomes a ten second

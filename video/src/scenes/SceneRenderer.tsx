@@ -2,8 +2,9 @@ import React from "react";
 import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
 
 import { BrowserFrame } from "../components/BrowserFrame";
+import { ReadmePage } from "../components/ReadmePage";
 import { CodeBlock } from "../components/CodeBlock";
-import { sceneSafeBottom, theme } from "../theme";
+import { safeTop, sceneSafeBottom, theme } from "../theme";
 import type { RepoMeta, Scene } from "../types";
 
 /**
@@ -40,7 +41,7 @@ const Stage: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         // Derived from the caption band in theme.ts, not guessed. See there
         // for why a hardcoded 620 let three line phrases overlap the scene.
         paddingBottom: sceneSafeBottom,
-        paddingTop: 300,
+        paddingTop: safeTop + 70,
         justifyContent: "center",
         alignItems: "center",
         opacity: interpolate(enter, [0, 1], [0, 1]),
@@ -278,7 +279,22 @@ const CodeScene: React.FC<{ scene: Scene; terminal: boolean }> = ({ scene, termi
   </Stage>
 );
 
-const ScreenshotScene: React.FC<{ scene: Scene; repo: RepoMeta }> = ({ scene, repo }) => {
+const ScreenshotScene: React.FC<{
+  scene: Scene;
+  repo: RepoMeta;
+  pageSrc?: string | null;
+  pageAspect?: number | null;
+}> = ({ scene, repo, pageSrc, pageAspect }) => {
+  // The full-bleed scrolling page when the capture produced one. It fills the
+  // frame, where the framed hero left roughly a third of it empty.
+  //
+  // The fallback is not dead code: a README too short to scroll captures no
+  // page, an older spec carries no field, and the cover deliberately does not
+  // pass one, because a still that scrolls is a still and CLAUDE.md's cover
+  // rule is written about the hero.
+  if (pageSrc && pageAspect) {
+    return <ReadmePage src={pageSrc} aspect={pageAspect} url={repo.name} />;
+  }
   if (!scene.imageSrc) return null;
   return (
     <Stage>
@@ -292,10 +308,120 @@ const ScreenshotScene: React.FC<{ scene: Scene; repo: RepoMeta }> = ({ scene, re
   );
 };
 
-export const SceneRenderer: React.FC<{ scene: Scene; repo: RepoMeta }> = ({ scene, repo }) => {
+/**
+ * A named flow from the project's own README.
+ *
+ * The nodes arrive in order and the connector between two of them draws itself
+ * as the second lands, so the shape of the thing is built in front of the
+ * viewer rather than appearing whole. That timing is the entire reason this is
+ * a scene and not a still: a diagram that fades in as one block is a slide.
+ *
+ * What keeps it from being one anyway is enforced on the Python side, not
+ * here. `_check_diagram_nodes` refuses nodes that would be true of any project
+ * in the category, so by the time a spec reaches this component the labels are
+ * the project's own components. Do not add a fallback that renders a generic
+ * flow when they are missing; the absence of a real one is the answer.
+ */
+const DiagramScene: React.FC<{ scene: Scene }> = ({ scene }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const nodes = scene.diagramNodes ?? [];
+  if (nodes.length === 0) return null;
+
+  // Stagger, in frames. Slow enough to read each label before the next lands,
+  // and the whole flow is complete well inside a typical cue.
+  const STEP = 12;
+
+  return (
+    <Stage>
+      {scene.title ? (
+        <div
+          style={{
+            fontFamily: theme.font.display,
+            fontSize: theme.size.sceneSubtitle,
+            color: theme.color.muted,
+            marginBottom: 34,
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+          }}
+        >
+          {scene.title}
+        </div>
+      ) : null}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "stretch" }}>
+        {nodes.map((node, i) => {
+          const s = spring({
+            frame: frame - i * STEP,
+            fps,
+            config: { damping: 200, stiffness: 170, mass: 0.5 },
+          });
+          // The connector belongs to the node below it and draws as that node
+          // arrives, so the line never points at nothing.
+          const link = interpolate(frame - i * STEP, [-STEP, 0], [0, 1], {
+            extrapolateLeft: "clamp",
+            extrapolateRight: "clamp",
+          });
+          return (
+            <React.Fragment key={i}>
+              {i > 0 ? (
+                <div
+                  style={{
+                    alignSelf: "center",
+                    width: 4,
+                    height: 44,
+                    borderRadius: 2,
+                    backgroundColor: theme.color.accent,
+                    transformOrigin: "top center",
+                    transform: `scaleY(${link})`,
+                    opacity: 0.9,
+                  }}
+                />
+              ) : null}
+              <div
+                style={{
+                  padding: "28px 34px",
+                  borderRadius: theme.radius,
+                  border: `2px solid ${theme.color.border}`,
+                  backgroundColor: theme.color.surface,
+                  fontFamily: theme.font.mono,
+                  // Mono, and ligatures off for the reason CodeBlock gives:
+                  // these are component names and an operator fused into one
+                  // glyph stops looking like what the reader would type.
+                  fontVariantLigatures: "none",
+                  fontFeatureSettings: '"liga" 0, "calt" 0',
+                  fontSize: theme.size.bullet,
+                  color: theme.color.text,
+                  textAlign: "center",
+                  opacity: s,
+                  transform: `translateY(${interpolate(s, [0, 1], [22, 0])}px)`,
+                }}
+              >
+                {node}
+              </div>
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </Stage>
+  );
+};
+
+export const SceneRenderer: React.FC<{
+  scene: Scene;
+  repo: RepoMeta;
+  pageSrc?: string | null;
+  pageAspect?: number | null;
+}> = ({ scene, repo, pageSrc, pageAspect }) => {
   switch (scene.kind) {
     case "screenshot":
-      return <ScreenshotScene scene={scene} repo={repo} />;
+      return (
+        <ScreenshotScene
+          scene={scene}
+          repo={repo}
+          pageSrc={pageSrc}
+          pageAspect={pageAspect}
+        />
+      );
     case "repo_card":
       return <RepoCardScene scene={scene} repo={repo} />;
     case "bullets":
@@ -306,6 +432,8 @@ export const SceneRenderer: React.FC<{ scene: Scene; repo: RepoMeta }> = ({ scen
       return <CodeScene scene={scene} terminal={false} />;
     case "terminal":
       return <CodeScene scene={scene} terminal />;
+    case "diagram":
+      return <DiagramScene scene={scene} />;
     default:
       // Unknown kind from a newer Python side: render nothing rather than
       // crashing the whole video.
