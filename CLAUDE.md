@@ -817,6 +817,38 @@ tonight's ranking and commits the account to nothing.
   script errors stayed behind, because everything that catches them is talking
   about a script rather than about a CLI.
 
+#### The script is written against the source, and the arc is in the model
+
+`pipeline/episodes.py` and `EpisodeScript`, built 2026-09-10.
+`python main.py --account <name> --episode` finds tonight's subject, writes the
+episode and leaves `subject.json`, `episode.json` and `caption.txt` in the run
+folder every other stage already reads. `--subject "<name>"` names one instead
+of ranking, and it goes through the same Wikidata checks, so it cannot quietly
+write an episode about somebody who died in 1994.
+
+- **The arc is fields rather than instructions.** A field per beat, so a script
+  that ends on an aphorism cannot satisfy the schema. The two beats that went
+  missing longest while the format was being found, coming back to the viewer
+  and the three steps, are exactly the ones a model drops when it is asked for
+  a script about somebody, and they are required here.
+- **Research is on for this call and off for discovery.** Wikidata checks a
+  proposed subject afterwards; nothing checks a quote. So the model reads a
+  primary source, and `source` is a required field naming it precisely enough
+  that a viewer could find the same page. The first live run cited Project
+  Gutenberg 72217, the section on justifying the mould in Moxon's *Mechanick
+  Exercises*, 1683.
+- **The ban on dashes and colons reaches the quote**, which is a real
+  editorial cost taken knowingly. The burned in captions come from what is
+  spoken, and a dash is invisible to a listener and clutter on screen. The way
+  out is quoting the clause that carries the point, which is what a 45 second
+  video wanted anyway, rather than rewriting the quotation.
+- **A long line is split at its own punctuation, never rewritten.** One line is
+  one shot, so the 36 word quotation the first live episode returned would have
+  been an 11 second shot. It splits at the boundary nearest the middle rather
+  than filling greedily, because greedy filling broke "mends on, on, on"
+  between the second and third "on", which is the one place in that sentence a
+  reader would never pause.
+
 **One open problem is left, and it is not plumbing.** Supply was the other and
 is answered above. An episode's shots are hand picked rectangles inside four
 specific scans, and a generated episode has to choose four artefacts and their

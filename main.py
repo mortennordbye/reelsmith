@@ -217,6 +217,14 @@ def run(
         str | None,
         typer.Option("--adopt", help="Take a hand rendered .mp4 into a run folder"),
     ] = None,
+    episode: Annotated[
+        bool,
+        typer.Option("--episode", help="Write tonight's episode for a niche that is not GitHub"),
+    ] = False,
+    subject: Annotated[
+        str | None,
+        typer.Option("--subject", help="With --episode, name the subject instead of ranking"),
+    ] = None,
     hook: Annotated[
         str | None,
         typer.Option("--hook", help="With --adopt, the opening line skip rate scores"),
@@ -361,6 +369,11 @@ def run(
     if publish:
         _preflight(need_github=False, need_claude=False, need_instagram=True)
         _publish_run(cfg, cfg.build_dir / publish, cover_url=cover_url)
+        return
+
+    if episode:
+        _preflight(need_github=False, need_claude=True)
+        _write_episode(cfg, subject)
         return
 
     if adopt:
@@ -1432,6 +1445,61 @@ def _publish_run(cfg: Settings, run_dir: Path, *, cover_url: str | None = None) 
             "[yellow]No repo.json in this run, so no cooldown was started.[/] "
             "[dim]Run --posted <owner/repo> by hand.[/]"
         )
+
+
+def _write_episode(cfg: Settings, subject_name: str | None) -> Path:
+    """Pick tonight's subject, write the episode, and leave it in a run folder.
+
+    The stage between discovery and a render for the second niche, and it stops
+    where the render does: there is no shot kit that consumes one of these yet,
+    so this writes `subject.json` and `episode.json` and says what is missing
+    rather than pretending a video is one command away.
+
+    The run folder is the same `build/<account>/<date>/<slug>/` every other
+    stage reads, so when the kit exists it has somewhere to read from and
+    `--adopt` has somewhere to put a hand render meanwhile.
+    """
+    from pipeline import episodes, subjects
+
+    console.print("[dim]Finding tonight's subject...[/]")
+    if subject_name:
+        subject = subjects.lookup(subject_name)
+        if subject is None:
+            console.print(
+                f"[bold red]Could not confirm {subject_name!r}[/] "
+                "[dim](not a person on Wikidata, or too recent to quote freely)[/]"
+            )
+            raise typer.Exit(1)
+    else:
+        ranked = subjects.discover(
+            cfg, ai=cfg.claude_research, covered=set(scraper.covered_repos(cfg))
+        )
+        if not ranked:
+            console.print("[bold red]Nothing ranked.[/] [dim]The catalogue is unreachable.[/]")
+            raise typer.Exit(1)
+        subject = ranked[0]
+
+    console.print(f"[bold green]Tonight:[/] {subject.name} [dim]({subject.description})[/]")
+    script = episodes.write(cfg, subject)
+
+    run_dir = cfg.build_dir / date.today().isoformat() / subject.slug
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "subject.json").write_text(subject.model_dump_json(indent=2) + "\n")
+    (run_dir / "episode.json").write_text(script.model_dump_json(indent=2) + "\n")
+    if script.caption_text:
+        (run_dir / "caption.txt").write_text(script.caption_text.strip() + "\n")
+
+    console.print(f"\n[bold]{script.hook}[/]")
+    for line in script.lines:
+        console.print(f"  [dim]{line}[/]")
+    console.print(f"\n[dim]Source: {script.source}[/]")
+    console.print(f"[dim]{script.word_count} words across {len(script.lines)} lines[/]")
+    console.print(f"\n[bold green]Written[/] to {run_dir}")
+    console.print(
+        "[yellow]No renderer for this niche yet.[/] [dim]Speak it with "
+        "tools/spinoff/voice.py and cut it by hand, or wait for the shot kit.[/]"
+    )
+    return run_dir
 
 
 def _adopt_video(cfg: Settings, video: Path, *, hook: str, slug: str | None) -> Path:
