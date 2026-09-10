@@ -1555,6 +1555,29 @@ def _render_episode(cfg: Settings, run_dir: Path, subject, script) -> Path:
     with console.status(f"Rendering {spec.durationInFrames} frames..."):
         renderer.render_episode(spec, out_path, cfg)
     console.print(f"[bold green]Rendered[/] {out_path}")
+
+    if renderer.render_episode_cover(spec, run_dir / "cover.png", cfg):
+        console.print("[dim]Cover still written[/]")
+
+    # **The queue reads `script.json`, not `episode.json`.** Everything after a
+    # render is written about account 1's script: `_enqueue_run` takes the hook
+    # from there and the YouTube leg refuses a row without one, so an episode
+    # that skipped this would queue on Instagram with no hook for the feedback
+    # loop and silently not queue on YouTube at all. Writing both is what makes
+    # a generated episode an ordinary run folder.
+    (run_dir / "script.json").write_text(
+        VideoScript(
+            hook=script.hook,
+            spoken_script=" ".join(script.lines),
+            visual_cues=[],
+            caption_text=script.caption_text,
+        ).model_dump_json(indent=2)
+        + "\n"
+    )
+    console.print(
+        f"[dim]Queue it with --account {cfg.account} "
+        f"--enqueue {run_dir.parent.name}/{run_dir.name} --approve[/]"
+    )
     return out_path
 
 

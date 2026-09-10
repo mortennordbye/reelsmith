@@ -203,6 +203,43 @@ def render_episode(
     return out_path
 
 
+def render_episode_cover(spec, out_path: Path, cfg: Settings) -> Path | None:
+    """One still from the episode, for the cover. None on any failure.
+
+    Best effort, the same as `render_covers` and for the same reason: a failed
+    still must never fail a run that already produced a video. What it costs
+    when it is missing is a queue row that renders as a black player in the
+    panel, which looks exactly like a video that failed.
+
+    Taken past the opening shot's entrance rather than at frame 0, which on the
+    reel side captures a hero at zero opacity and yields an empty background.
+    """
+    video_dir = cfg.video_dir
+    props_path = video_dir / f".props-cover-episode-{spec.slug}.json"
+    props_path.write_text(spec.model_dump_json())
+    frame = min(COVER_FRAME, max(spec.durationInFrames - 1, 0))
+    try:
+        proc = subprocess.run(  # noqa: S603 - argv list, no shell
+            [
+                "npx", "remotion", "still", "Episode", str(out_path.resolve()),
+                f"--props={props_path.resolve()}",
+                f"--frame={frame}",
+                "--log=error",
+            ],
+            cwd=video_dir, capture_output=True, text=True, check=False, timeout=600,
+        )
+    except subprocess.SubprocessError as exc:
+        log.warning("Cover still failed: %s", exc)
+        return None
+    finally:
+        props_path.unlink(missing_ok=True)
+
+    if proc.returncode != 0 or not out_path.exists():
+        log.warning("Cover still failed: %s", (proc.stderr or proc.stdout)[-400:])
+        return None
+    return out_path
+
+
 def render(
     spec: VideoSpec, out_path: Path, cfg: Settings, *, concurrency: int | None = None
 ) -> Path:

@@ -127,3 +127,60 @@ def test_an_adopted_run_queues(cfg, episode, monkeypatch):
     assert [row["link"] for row in rows] == [""]
     assert rows[0]["hook"] == HOOK
     assert (run / "queued.json").exists()
+
+
+def test_a_generated_episode_is_an_ordinary_run_folder(cfg, tmp_path, monkeypatch):
+    """Everything after a render is written about account 1's script.
+    `_enqueue_run` takes the hook from `script.json` and the YouTube leg
+    refuses a row without one, so an episode that wrote only `episode.json`
+    would queue on Instagram with no hook for the feedback loop and silently
+    not queue on YouTube at all."""
+    from pipeline.models import EpisodeScript, SubjectCandidate
+
+    script = EpisodeScript(
+        hook="You fixed it six times and it is still wrong",
+        situation="You have fixed the same thing six times.",
+        who="He cut type in London.",
+        quote="For he does not expect to do it the First time.",
+        plain="Seven goes is not failure.",
+        did="He measured twenty samples against a pattern.",
+        back="Stop judging your seventh try against the first.",
+        steps=["One thing", "A little at a time", "Delete the old result"],
+        source="Moxon, Mechanick Exercises, London 1683.",
+        caption_text="A caption.\n\n#printing",
+    )
+    subject = SubjectCandidate(qid="Q1", name="Joseph Moxon", article="Joseph Moxon", died=1691)
+    run_dir = cfg.build_dir / "2026-09-10" / subject.slug
+    run_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(
+        "pipeline.artefacts.stage",
+        lambda subject, video_dir, prefer="", client=None: [
+            {"src": "a.jpg", "w": 2000, "h": 1342}
+        ],
+    )
+    monkeypatch.setattr(
+        "pipeline.tts.speak_lines",
+        lambda lines, out, cfg, **kw: (
+            (out.mkdir(parents=True, exist_ok=True), (out / "voice.wav").write_bytes(b"wav")),
+            {
+                "fps": 30,
+                "seconds": len(lines) * 2,
+                "durationInFrames": len(lines) * 60,
+                "lines": [{"i": i, "from": i * 60, "to": i * 60 + 58} for i in range(len(lines))],
+            },
+        )[1],
+    )
+    monkeypatch.setattr("pipeline.renderer.prune_staged_assets", lambda video_dir, slug: 0)
+    monkeypatch.setattr(
+        "pipeline.renderer.render_episode",
+        lambda spec, out_path, cfg, **kw: out_path.write_bytes(b"video") or out_path,
+    )
+    monkeypatch.setattr("pipeline.renderer.render_episode_cover", lambda spec, out, cfg: None)
+
+    main._render_episode(cfg, run_dir, subject, script)
+
+    assert (run_dir / "out.mp4").exists()
+    assert (run_dir / "spec.json").exists()
+    written = VideoScript.model_validate_json((run_dir / "script.json").read_text())
+    assert written.hook == script.hook
