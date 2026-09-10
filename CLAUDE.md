@@ -693,6 +693,88 @@ and an unresolved line means "I could not work out whose these are". Put an
 explicit `account=` on every `GATEWAY_SLOTS` line anyway, which is never
 ambiguous and so is never subject to any of it. F0.
 
+### Adding the third account is meant to be data, not code
+
+The publishing half became account shaped on 2026-09-10, when the second
+account needed it. The order is fixed by what produces what, the same way the
+TikTok and Facebook runbooks are:
+
+1. `python main.py --new-account <name>`, then fill `accounts/<name>/.env`.
+   Every line starts commented out on purpose; a blank `IG_USER_ID` looks
+   configured and fails at the first publish.
+2. Claim the handles on every platform on the same day, since free handles are
+   snipeable and the decision is what makes them worth taking.
+3. One consent trip per destination. `scripts/youtube_authorise.py`,
+   `scripts/tiktok_authorise.py`, `scripts/facebook_authorise.py`, and
+   Instagram by hand through `docs/instagram-api-setup.md`. The trip is what
+   produces the account key, so nothing keyed on it can be written first.
+4. Register with an explicit `--brand`, or the panel puts the account in a
+   group of its own. Registering Facebook without one already did this once.
+5. One `GATEWAY_SLOTS` line per destination, each with an explicit `account=`.
+   Never rely on the single account fallback; that is F0.
+6. Put the ids in the render host's `.env` and in `ENV_PROJECTED_KEYS`.
+
+**Three things stopped being account 1 shaped**, and each was a place where one
+account's arrangement had been mistaken for the design:
+
+- **Instagram is a destination, not the spine of the fan out.**
+  `_enqueue_run` used to queue the Reel first and exit non zero if that row was
+  refused, so an account with no Instagram token could not use the queue at all
+  even though its YouTube channel was registered and waiting. A second account
+  reaches YouTube first every time, because a channel is one OAuth trip and an
+  Instagram token is a Meta app. It now skips the leg it cannot fill, says so,
+  and fails only when no destination at all took the video.
+- **A queued row may have no link.** `QueueSubmission.link` was required, which
+  quietly assumed every subject is a GitHub project with a URL. An account
+  whose subject is a book has nothing to link, and the alternative to accepting
+  the empty string is a row holding a URL somebody invented for it.
+  `youtube_description` and `tiktok_title` drop the repo line rather than
+  printing a label with nothing after it. A non URL is still refused.
+- **`--adopt` is the seam for a video the pipeline did not render.** It writes
+  `build/<account>/<date>/<slug>/` from a finished mp4 plus the sidecars beside
+  it, so a hand made episode becomes an ordinary run and `--enqueue`,
+  `--recover`, the queue, the slots, the fan out and the insights sweep need to
+  know nothing about where it came from. The hook is a required argument rather
+  than a default, because a row with no hook is dropped by the feedback loop
+  and the only symptom is an account missing from its own history.
+
+**What stays per account and must not be shared**: the cooldown store, the
+voice reference, the build subtree, the brand and the slots. The reasons are in
+the section above and none of them changed.
+
+### Making a niche generate itself, which is the part that is still code
+
+`--adopt` is what a second niche publishes through until this exists, and it is
+deliberately not a substitute for it. The rule from the section above is
+unchanged: settle the second niche's shape against the real renderer, then
+break the interface once, with two real callers to check it. What is new is
+that the second niche now has a settled format, two finished episodes and a
+recovered script, so the shape it argues for can be written down:
+
+- **`VideoSpec.repo: RepoMeta` becomes a subject.** Required, mirrored in
+  `video/src/schema.ts`, and read in exactly two places on the render side.
+  A subject carries a kind, a title, an optional URL, and the artefacts the
+  shots are cut from. The niche specific payload hangs off the kind.
+- **One source module per niche.** `sources/github.py` already implies the
+  interface: yield candidates, score them, and produce a velocity signal.
+  The second niche's is the Stanford Encyclopedia revision feed with Wikimedia
+  pageviews as the fallback, artefacts from Commons `imageinfo` and text from
+  Project Gutenberg. None of it is written.
+- **One `SYSTEM_PROMPT` per niche**, since the seven step arc, the rule that
+  the steps come from the source, and the plain words rule are the format
+  rather than the account.
+- **One shot kit per niche**, chosen by the subject's kind, so `SceneRenderer`
+  stops being the only consumer and `video/src/spinoff/kit.tsx` stops being a
+  prototype outside the pipeline.
+
+**The two open problems are not plumbing and will not be solved by writing
+any of the above.** Supply is one: nothing yet says what tomorrow's episode
+would be, and two videos is not a format. The other is that an episode's shots
+are hand picked rectangles inside four specific scans, and a generated episode
+has to choose four artefacts and their crops from whatever Commons returns.
+Both are named in `PROFILE.md`, and the second is the reason the render half is
+the expensive half.
+
 ### The nightly run is not in this repo
 
 `launchd/` is the Mac story and drives nothing on the Linux host. There the

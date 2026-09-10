@@ -251,7 +251,11 @@ class QueueSubmission(BaseModel):
     # rejected upload days later.
     title: str = Field(default="", max_length=100)
     keyword: str = "send"
-    link: str = Field(min_length=1)
+    # Optional, because a destination is not always a GitHub project. An
+    # account whose subject is a book has nothing to link, and requiring one
+    # would mean inventing a URL for the row to hold. The keyword mechanic is
+    # what reads it, and that is dormant and Instagram only.
+    link: str = ""
     repo_full_name: str | None = None
     # The checkout and settings that wrote this script, from
     # `pipeline/results.py`. Optional, because a client that does not send one
@@ -271,7 +275,7 @@ class QueueSubmission(BaseModel):
     @field_validator("link")
     @classmethod
     def _http_only(cls, v: str) -> str:
-        if not v.startswith(("http://", "https://")):
+        if v and not v.startswith(("http://", "https://")):
             raise ValueError("link must be an http or https URL")
         return v
 

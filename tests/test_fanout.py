@@ -216,3 +216,49 @@ def test_a_refused_facebook_row_does_not_strand_the_reel(cfg, run, queued, monke
 
     assert (run / "queued.json").exists()
     assert "would not take the Facebook row" in capsys.readouterr().out
+
+
+def test_no_instagram_id_queues_the_rest(cfg, run, queued):
+    """A second account reaches YouTube before Instagram, because a channel is
+    one OAuth trip and an Instagram token is a Meta app with a token to mint.
+    Instagram was unconditional here while one account existed and it was the
+    only place that account posted; requiring it now would strand a finished
+    video over a destination that is not registered yet."""
+    main._enqueue_run(cfg.model_copy(update={"ig_user_id": ""}), run, approved=True)
+
+    assert accounts(queued) == [CHANNEL, OPEN_ID, PAGE_ID]
+    assert json.loads((run / "queued.json").read_text())["id"] is None
+
+
+def test_no_destination_at_all_is_a_failure(cfg, run, queued):
+    """The other side of it. Every leg shrugs on its own, so nothing below
+    would have said the video went nowhere."""
+    bare = cfg.model_copy(
+        update={
+            "ig_user_id": "",
+            "youtube_channel_id": "",
+            "tiktok_open_id": "",
+            "facebook_page_id": "",
+        }
+    )
+
+    with pytest.raises(main.typer.Exit):
+        main._enqueue_run(bare, run, approved=True)
+
+    assert not (run / "queued.json").exists()
+
+
+def test_a_run_with_no_repo_queues_without_a_link(cfg, tmp_path, queued):
+    """An account whose subject is not a GitHub project. `repo.json` is
+    already optional here; what was not optional was the URL, which the queue
+    required and which there is nothing to fill with."""
+    directory = cfg.build_dir / "2026-09-10" / "montaigne-essais"
+    directory.mkdir(parents=True)
+    (directory / "script.json").write_text(script("an essay", hook="A hook").model_dump_json())
+    (directory / "out.mp4").write_bytes(b"video")
+    (directory / "caption.txt").write_text("One line.\n\n#montaigne\n")
+
+    main._enqueue_run(cfg, directory, approved=True)
+
+    assert [row["link"] for row in queued] == ["", "", "", ""]
+    assert [row["repo_full_name"] for row in queued] == [None] * 4

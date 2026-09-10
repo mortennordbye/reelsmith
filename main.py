@@ -41,6 +41,8 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import re
+import shutil
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -201,6 +203,18 @@ def run(
         bool,
         typer.Option("--approve", help="Arm the queued post, so a slot may publish it"),
     ] = False,
+    adopt: Annotated[
+        str | None,
+        typer.Option("--adopt", help="Take a hand rendered .mp4 into a run folder"),
+    ] = None,
+    hook: Annotated[
+        str | None,
+        typer.Option("--hook", help="With --adopt, the opening line skip rate scores"),
+    ] = None,
+    slug: Annotated[
+        str | None,
+        typer.Option("--slug", help="With --adopt, the run folder name"),
+    ] = None,
     refresh_token: Annotated[
         bool,
         typer.Option("--refresh-token", help="Renew the Instagram token; run at least monthly"),
@@ -331,6 +345,16 @@ def run(
     if publish:
         _preflight(need_github=False, need_claude=False, need_instagram=True)
         _publish_run(cfg, cfg.build_dir / publish, cover_url=cover_url)
+        return
+
+    if adopt:
+        if not hook:
+            console.print(
+                "[bold red]--adopt needs --hook.[/] "
+                "[dim]It is the opening line, and the feedback loop reads it back.[/]"
+            )
+            raise typer.Exit(1)
+        _adopt_video(cfg, Path(adopt), hook=hook, slug=slug)
         return
 
     if enqueue:
@@ -1394,6 +1418,87 @@ def _publish_run(cfg: Settings, run_dir: Path, *, cover_url: str | None = None) 
         )
 
 
+def _adopt_video(cfg: Settings, video: Path, *, hook: str, slug: str | None) -> Path:
+    """Put a hand rendered video into the run folder shape everything else reads.
+
+    The pipeline writes `build/<account>/<date>/<slug>/` and every stage after
+    the render reads that folder rather than the thing that produced it. A
+    second account's episodes are hand rendered from `video/src/spinoff/` until
+    discovery and scripting cover that niche, so without this they can only be
+    uploaded from a phone, and none of the queue, the fan-out, the slots, the
+    panel or the insights sweep sees them at all. With it, a hand render is an
+    ordinary run and `--enqueue` takes it from there.
+
+    **The sidecars are read from beside the video** rather than passed as four
+    more flags, because they are already written beside it: `cover.png`,
+    `caption.txt`, and `lines.json` when the spoken lines were kept. The hook is
+    the one thing with no natural file, and it is what the feedback loop reads
+    back into the next prompt, so it is a required argument rather than a
+    default nobody would notice was empty.
+
+    This writes a folder and nothing else. It does not upload, queue, or start
+    a cooldown, so running it twice costs a directory.
+    """
+    if not video.is_file():
+        console.print(f"[bold red]No such video:[/] {video}")
+        raise typer.Exit(1)
+    if video.suffix.lower() != ".mp4":
+        console.print(f"[bold red]Expected an .mp4:[/] {video.name}")
+        raise typer.Exit(1)
+
+    name = slug or video.stem
+    name = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    run_dir = cfg.build_dir / date.today().isoformat() / name
+    if (run_dir / "out.mp4").exists():
+        console.print(
+            f"[yellow]{run_dir} already holds a video.[/] "
+            "[dim]Pass a different --slug, or move the folder aside.[/]"
+        )
+        raise typer.Exit(1)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(video, run_dir / "out.mp4")
+
+    cover = video.with_name("cover.png")
+    if cover.is_file():
+        shutil.copy2(cover, run_dir / "cover.png")
+    else:
+        console.print(
+            "[yellow]No cover.png beside the video.[/] "
+            "[dim]The row will show a black player in the panel.[/]"
+        )
+
+    caption_src = video.with_name("caption.txt")
+    caption = caption_src.read_text().strip() if caption_src.is_file() else ""
+    if caption:
+        (run_dir / "caption.txt").write_text(caption + "\n")
+    else:
+        console.print(
+            "[yellow]No caption.txt beside the video.[/] "
+            "[dim]It will publish with an empty description.[/]"
+        )
+
+    lines_src = video.with_name("lines.json")
+    spoken = ""
+    if lines_src.is_file():
+        parsed = json.loads(lines_src.read_text())
+        spoken = " ".join(parsed["lines"] if isinstance(parsed, dict) else parsed)
+
+    # An empty `visual_cues` rather than a description of the shots. The field
+    # is what the renderer is told to draw, and this video is already rendered,
+    # so anything written here would be a record of shots nothing will read.
+    script = VideoScript(
+        hook=hook, spoken_script=spoken, visual_cues=[], caption_text=caption
+    )
+    (run_dir / "script.json").write_text(script.model_dump_json(indent=2) + "\n")
+
+    console.print(f"[bold green]Adopted[/] {video.name} [dim]as {run_dir}[/]")
+    console.print(
+        f"[dim]Queue it with --account {cfg.account} "
+        f"--enqueue {run_dir.parent.name}/{run_dir.name} --approve[/]"
+    )
+    return run_dir
+
+
 def _enqueue_run(cfg: Settings, run_dir: Path, *, approved: bool) -> None:
     """Hand a finished run to the gateway and start its cooldown.
 
@@ -1472,24 +1577,38 @@ def _enqueue_run(cfg: Settings, run_dir: Path, *, approved: bool) -> None:
     )
 
     keyword = gateway.keyword_for(repo.full_name, cfg) if repo else cfg.gateway_keyword
-    result = gateway.enqueue(
-        video_url.rsplit("/", 1)[-1],
-        repo.url if repo else "",
-        cfg,
-        caption=caption,
-        keyword=keyword,
-        cover_name=cover_url.rsplit("/", 1)[-1] if cover_url else None,
-        repo_full_name=repo.full_name if repo else None,
-        approved=approved,
-        recipe=recipe,
-        hook=hook,
-    )
-    if result is None:
-        console.print(
-            "[bold red]The gateway would not take it.[/] "
-            "[dim]Nothing was queued and no cooldown was started.[/]"
+    # **Instagram is a destination, not the one that has to work.** It was
+    # unconditional here while one account existed and it was the only place
+    # that account posted. A second account reaches YouTube first, because a
+    # channel is one OAuth trip and an Instagram token is a Meta app, so
+    # requiring the Reel row would strand a finished video over a destination
+    # that is not registered yet. The other three legs have always been written
+    # this way; this makes the first one match them.
+    result = None
+    if cfg.ig_user_id:
+        result = gateway.enqueue(
+            video_url.rsplit("/", 1)[-1],
+            repo.url if repo else "",
+            cfg,
+            caption=caption,
+            keyword=keyword,
+            cover_name=cover_url.rsplit("/", 1)[-1] if cover_url else None,
+            repo_full_name=repo.full_name if repo else None,
+            approved=approved,
+            recipe=recipe,
+            hook=hook,
         )
-        raise typer.Exit(1)
+        if result is None:
+            console.print(
+                "[bold red]The gateway would not take it.[/] "
+                "[dim]Nothing was queued and no cooldown was started.[/]"
+            )
+            raise typer.Exit(1)
+    else:
+        console.print(
+            "[yellow]No IG_USER_ID for this account, so no Reel row.[/] "
+            "[dim]Queueing whichever destinations are configured.[/]"
+        )
 
     youtube_result = _enqueue_youtube(
         cfg,
@@ -1530,11 +1649,21 @@ def _enqueue_run(cfg: Settings, run_dir: Path, *, approved: bool) -> None:
         hook=hook,
     )
 
+    # One row is enough to call this queued; none is a failure, and it is a
+    # failure that has to be seen here rather than as a silent no-op, since
+    # every leg above shrugs on its own.
+    if not any((result, youtube_result, tiktok_result, facebook_result)):
+        console.print(
+            "[bold red]No destination took it.[/] "
+            "[dim]Nothing was queued and no cooldown was started.[/]"
+        )
+        raise typer.Exit(1)
+
     queue_receipt.write_text(
         json.dumps(
             {
-                "id": result.get("id"),
-                "state": result.get("state"),
+                "id": result.get("id") if result else None,
+                "state": result.get("state") if result else None,
                 "youtube_id": youtube_result.get("id") if youtube_result else None,
                 "tiktok_id": tiktok_result.get("id") if tiktok_result else None,
                 "facebook_id": facebook_result.get("id") if facebook_result else None,
@@ -1546,7 +1675,10 @@ def _enqueue_run(cfg: Settings, run_dir: Path, *, approved: bool) -> None:
         + "\n"
     )
 
-    console.print(f"[bold green]Queued[/] as #{result.get('id')} [dim]({result.get('detail')})[/]")
+    if result:
+        console.print(
+            f"[bold green]Queued[/] as #{result.get('id')} [dim]({result.get('detail')})[/]"
+        )
     if not approved:
         console.print("[dim]Approve it in the admin UI, or re-run with --approve.[/]")
 
