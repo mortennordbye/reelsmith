@@ -71,48 +71,75 @@ const Hook: React.FC<{ text: string }> = ({ text }) => {
   );
 
   return (
-    <AbsoluteFill
-      style={{
-        justifyContent: "center",
-        alignItems: "center",
-        paddingLeft: theme.padding,
-        paddingRight: theme.padding,
-        paddingBottom: 240,
-        // Scrim plus defocus rather than a heavy flat overlay, and both ease
-        // off across the hold. The point of opening on the real GitHub page is
-        // that the viewer recognises it, so burying it under 72% black defeats
-        // the exercise, and burying it under anything for the full three
-        // seconds defeats it during the seconds that decide.
-        backgroundColor: `rgba(1,4,9,${scrim})`,
-        backdropFilter: `blur(${blur}px)`,
-        WebkitBackdropFilter: `blur(${blur}px)`,
-        opacity: exit,
-      }}
-    >
+    <AbsoluteFill style={{ opacity: exit }}>
+      {/*
+        The hook sits in a band at the top rather than centred on the hero.
+        Centred, it covered the project's own wordmark for the entire window
+        `skip_rate` scores, and cleared at frame 90 at exactly the moment the
+        page suddenly looked good. CLAUDE.md already forbids this composition
+        for the cover stills, for the same reason and in stronger words:
+        "Nothing may cover it. Centring was tried and it buried the one element
+        the cover exists to show." The video had the rule and did not apply it.
+
+        The scrim is a gradient that is dense behind the text and gone by the
+        middle of the frame, so the hero is legible underneath the hook rather
+        than after it. A flat full-frame scrim is what made the old opening a
+        dark rectangle with words on it.
+      */}
       <div
         style={{
-          fontFamily: theme.font.display,
-          fontSize: theme.size.hook,
-          fontWeight: 900,
-          color: theme.color.text,
-          textAlign: "center",
-          lineHeight: 1.08,
-          letterSpacing: "-0.04em",
-          textShadow: "0 8px 40px rgba(0,0,0,0.9)",
-          transform: `scale(${interpolate(enter, [0, 1], [0.88, 1])})`,
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          // Deep enough to hold three lines, and it stops well above the
+          // browser frame's content. 4:5 crop is a cover rule, not a video
+          // one, but Instagram's own chrome sits in the top ~120px, so the
+          // text starts below it.
+          paddingTop: 112,
+          paddingLeft: theme.padding,
+          paddingRight: theme.padding,
+          paddingBottom: 64,
+          background: `linear-gradient(180deg, rgba(1,4,9,${scrim}) 0%, rgba(1,4,9,${scrim * 0.82}) 62%, rgba(1,4,9,0) 100%)`,
+          backdropFilter: `blur(${blur}px)`,
+          WebkitBackdropFilter: `blur(${blur}px)`,
+          maskImage: "linear-gradient(180deg, #000 0%, #000 62%, transparent 100%)",
+          WebkitMaskImage: "linear-gradient(180deg, #000 0%, #000 62%, transparent 100%)",
         }}
       >
-        {text}
+        <div
+          style={{
+            fontFamily: theme.font.display,
+            // Smaller than the centred hook was. A strip has a width budget
+            // rather than the whole frame, and 104 wrapped every hook to four
+            // lines here.
+            fontSize: theme.size.hookStrip,
+            fontWeight: 900,
+            color: theme.color.text,
+            // Left aligned, not centred. "Centred, symmetric layouts
+            // throughout" is on this account's own list of generated-video
+            // tells, and a strip is the one place the layout can have an
+            // opinion without costing anything.
+            textAlign: "left",
+            lineHeight: 1.08,
+            letterSpacing: "-0.04em",
+            textShadow: "0 8px 40px rgba(0,0,0,0.9)",
+            transform: `translateY(${interpolate(enter, [0, 1], [-18, 0])}px)`,
+            opacity: enter,
+          }}
+        >
+          {text}
+        </div>
+        <div
+          style={{
+            marginTop: 36,
+            height: 8,
+            width: interpolate(enter, [0, 1], [0, 220]),
+            borderRadius: 4,
+            backgroundColor: theme.color.accent,
+          }}
+        />
       </div>
-      <div
-        style={{
-          marginTop: 44,
-          height: 8,
-          width: interpolate(enter, [0, 1], [0, 220]),
-          borderRadius: 4,
-          backgroundColor: theme.color.accent,
-        }}
-      />
     </AbsoluteFill>
   );
 };

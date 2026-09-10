@@ -159,14 +159,28 @@ def _results_block(past: list[PastPost]) -> str:
     return f"""
 ## What this account's own videos did
 
-Each line is a hook that ran on this account, with the share of viewers who
-scrolled past inside the first three seconds. Lower is better.
+Each line is a hook that ran on this account, followed by three numbers: the
+share of viewers who scrolled past inside the first three seconds (lower is
+better), the average time watched, and how many viewers per thousand saved it.
 
 {lines}
 
-Educational videos in this format average 30 to 40 percent. {verdict}
+Educational videos in this format average 30 to 40 percent skip. {verdict}
 
-Two things to take from it. Do not write a variation on any shape above: a
+**Read all three, and do not optimise the first one alone.** Measured over this
+account's 91 settled posts, the skip rate is the weakest predictor of how far a
+post travelled; average watch time is the strongest, and saves per thousand
+separate the posts that reached several hundred people from the ones that did
+not by roughly five to one. Likes do not separate them at all. A hook that wins
+the first three seconds and then loses the next twenty is a hook that shows up
+well in the first column and went nowhere.
+
+So a good opening is one that sets up something the viewer stays for and wants
+to keep, not one that merely stops the scroll. The most reliable way to earn a
+save is to show the exact thing a developer would otherwise have to go and look
+up.
+
+Two things to take from the list. Do not write a variation on any shape above: a
 viewer meets these in sequence and a repeated formula is visible by the third
 one. And look at what separates the better numbers from the worse, then beat
 both.
@@ -345,8 +359,25 @@ visual_cues
     script's own sentences rewritten.
 
     When a beat has nothing to show that the words do not already carry, prefer
-    `code`, `terminal`, `repo_card` or `stat`, which show a thing rather than
-    describe one.
+    `code`, `terminal` or `repo_card`, which show a thing rather than describe
+    one.
+
+    **Use `bullets` and `stat` sparingly: at most two of either across the
+    whole script, and never two of them in a row.** A title over three bullets
+    on a dark background, and a giant number with a small label under it, are
+    the two most recognisable motifs in automated short form video, and this
+    audience has seen a thousand of them. They are cheap for a generator to
+    produce, which is exactly why every generator produces them.
+
+    Be honest about the evidence here, because it is not a retention finding.
+    Across 55 posts whose scene composition could be joined to their numbers,
+    the share of `bullets` and `stat` cues had no relationship to views
+    (Spearman +0.00) and if anything a slightly positive one to watch time. So
+    this rule is not claiming those cues lose viewers. It is a positioning
+    rule: they are what makes a video read as machine made to somebody who
+    stops watching the moment they decide it is. Do not reinstate them as a
+    default on the grounds that the numbers do not forbid it -- the numbers were
+    checked, and they are silent rather than supportive.
 
     Keep each spoken_excerpt to about 15 words. A cue's screen time comes from
     how long its excerpt takes to say, so a 40 word excerpt becomes a ten second

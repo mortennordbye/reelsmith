@@ -545,3 +545,43 @@ def test_the_block_reaches_the_prompt(cfg):
 
     assert "a real hook" in prompt
     assert "64.2%" in prompt
+
+
+# --- The three numbers the loop is now scored on ----------------------------
+#
+# Skip rate was the only one until 2026-09-10. Over the 91 settled posts it is
+# the weakest of the three predictors of reach, so the line carries all three
+# and the block tells the model not to optimise the first alone.
+
+
+def test_the_line_carries_watch_time_and_saves():
+    p = PastPost(
+        repo_full_name="a/b", hook="a hook", skip_rate=48.1,
+        avg_watch_s=6.9, views=2000, saved=36,
+    )
+    assert p.saves_per_1k == 18.0
+    assert p.line == "48.1%   6.9s   18.0/1k  a hook"
+
+
+def test_saves_are_absent_rather_than_zero_when_unmeasured():
+    """A gateway too old to send them must not report a video nobody saved."""
+    p = PastPost(
+        repo_full_name="a/b", hook="a hook", skip_rate=60.0,
+        avg_watch_s=4.0, views=100,
+    )
+    assert p.saves_per_1k is None
+    assert "    -/1k" in p.line
+
+
+def test_no_views_does_not_divide_by_zero():
+    p = PastPost(
+        repo_full_name="a/b", hook="a hook", skip_rate=60.0,
+        avg_watch_s=4.0, views=0, saved=0,
+    )
+    assert p.saves_per_1k is None
+
+
+def test_the_block_says_not_to_optimise_skip_alone():
+    block = _results_block(past(("a hook", 55.0)))
+    assert "do not optimise the first one alone" in block.lower()
+    assert "saved it" in block

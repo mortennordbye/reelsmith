@@ -28,6 +28,11 @@ export const theme = {
   size: {
     // Tuned for a 1080x1920 frame viewed on a phone at arm's length.
     hook: 104,
+    // The hook in its top strip. Smaller than the centred hook, because a
+    // strip has a width budget rather than the whole frame: at 104 most hooks
+    // wrapped to four lines and pushed down onto the hero the move exists to
+    // uncover.
+    hookStrip: 72,
     caption: 76,
     sceneTitle: 68,
     sceneSubtitle: 38,
