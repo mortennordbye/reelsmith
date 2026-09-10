@@ -849,11 +849,55 @@ write an episode about somebody who died in 1994.
   between the second and third "on", which is the one place in that sentence a
   reader would never pause.
 
-**One open problem is left, and it is not plumbing.** Supply was the other and
-is answered above. An episode's shots are hand picked rectangles inside four
-specific scans, and a generated episode has to choose four artefacts and their
-crops from whatever Commons returns. It is named in `PROFILE.md`, and it is the
-reason the render half is the expensive half.
+#### The render, and what a first generated episode got wrong
+
+Built 2026-09-10. `--episode --render` stages the pictures, speaks the lines,
+builds an `EpisodeSpec` and renders the `Episode` composition, which is
+registered on `Root.tsx` beside `Reel` and `Cover`. It is public machinery with
+no identity in it: the end card comes from `ENDCARD_NAME`, `ENDCARD_HANDLE` and
+`ENDCARD_TAGLINE` on the account, which are empty in this repo.
+
+**It ran end to end before any of the following was true**, which is the thing
+worth remembering about it. A render that finishes is not a render worth
+posting, and none of these would have failed a test that asked only whether an
+mp4 appeared:
+
+- **Commons answers in its own order.** `wm.artefacts` returned the API's page
+  map, so the portrait a caller deliberately put first came back in the middle
+  and the first episode opened on a map of Canaan while the voice talked about
+  a mould for casting letters. The order asked for is restored now.
+- **The picture has to be the thing being talked about.** A subject's Commons
+  category is his maps, his coats of arms and a plaque on a wall. The script
+  names its own primary source, so artefacts are ranked by title overlap with
+  it, which is as far as a filename can answer the question. A subject whose
+  source is named nowhere falls back to the category order.
+- **Any 9:16 crop of a page photographed open is a narrow column of it.** That
+  is a fine close up and a terrible first look, so the first shot on a
+  landscape artefact shows the whole of it and the shots after it are details.
+  Establish, then detail.
+- **A contained artefact sits high, not centred.** Centring left an empty band
+  above and below in equal measure, and the band below is where the words go,
+  so the one above was the third of a vertical frame the reel side already
+  learned not to waste.
+- **The hook needs the same scrim every other line has.** Without one it sat
+  straight on engraved hatching, unreadable at the one moment the format cannot
+  afford to be.
+- **An episode is not a reel and cannot use its bitrate.** A reel is flat
+  colour and syntax highlighted text where the default CRF keeps glyph edges
+  clean. An episode is a photograph with grain over it, where every frame
+  differs from the last in a way h264 cannot predict: the first render was
+  185 MB for 40 seconds against about 10 MB for a reel, which is past what
+  TikTok takes in one chunk. `--crf=24` brings it to about 38 MB.
+- **The prune took a prototype's asset with it.** `cv-voice.wav` matched
+  `STAGED_ASSET_RE` and the first generated render deleted it.
+  `PROTECTED_PREFIXES` is what stops that; the prototypes' scans are the only
+  copy outside a backup.
+
+**What is still a judgement rather than a rule** is the shot kit itself. The
+crops step through a fixed ladder of scales and anchors, deterministically, so
+a re-render is the same video and nothing is framed by rolling dice. Whether
+that reads as edited or as automatic is the question to answer by watching one,
+and it is the last thing here that a test cannot settle.
 
 ### The nightly run is not in this repo
 

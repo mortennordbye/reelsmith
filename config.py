@@ -239,6 +239,15 @@ class Settings(BaseSettings):
     max_hook_chars: int = 60
     readme_char_budget: int = 12_000
 
+    # --- The end card, for a niche whose video says whose it is ------------
+    # Empty here and set per account, because this repo is public and the
+    # account identities are the private half of it. An episode rendered
+    # without them simply has no end card, which is a missing sign off rather
+    # than a broken render.
+    endcard_name: str = ""
+    endcard_handle: str = ""
+    endcard_tagline: str = ""
+
     # --- Voiceover ---------------------------------------------------------
     # "edge"   -- Microsoft Edge voices. Free, keyless, but a network call, and
     #             its only natural-sounding English voices (Andrew, Brian, Ava,

@@ -225,6 +225,10 @@ def run(
         str | None,
         typer.Option("--subject", help="With --episode, name the subject instead of ranking"),
     ] = None,
+    render: Annotated[
+        bool,
+        typer.Option("--render", help="With --episode, speak it and cut it as well"),
+    ] = False,
     hook: Annotated[
         str | None,
         typer.Option("--hook", help="With --adopt, the opening line skip rate scores"),
@@ -373,7 +377,7 @@ def run(
 
     if episode:
         _preflight(need_github=False, need_claude=True)
-        _write_episode(cfg, subject)
+        _write_episode(cfg, subject, render=render)
         return
 
     if adopt:
@@ -1447,7 +1451,7 @@ def _publish_run(cfg: Settings, run_dir: Path, *, cover_url: str | None = None) 
         )
 
 
-def _write_episode(cfg: Settings, subject_name: str | None) -> Path:
+def _write_episode(cfg: Settings, subject_name: str | None, *, render: bool = False) -> Path:
     """Pick tonight's subject, write the episode, and leave it in a run folder.
 
     The stage between discovery and a render for the second niche, and it stops
@@ -1495,11 +1499,63 @@ def _write_episode(cfg: Settings, subject_name: str | None) -> Path:
     console.print(f"\n[dim]Source: {script.source}[/]")
     console.print(f"[dim]{script.word_count} words across {len(script.lines)} lines[/]")
     console.print(f"\n[bold green]Written[/] to {run_dir}")
-    console.print(
-        "[yellow]No renderer for this niche yet.[/] [dim]Speak it with "
-        "tools/spinoff/voice.py and cut it by hand, or wait for the shot kit.[/]"
-    )
+    if not render:
+        console.print("[dim]Add --render to speak it and cut it.[/]")
+        return run_dir
+
+    _render_episode(cfg, run_dir, subject, script)
     return run_dir
+
+
+def _render_episode(cfg: Settings, run_dir: Path, subject, script) -> Path:
+    """Stage the pictures, speak the lines, and render the episode.
+
+    The three stages after the script, in the order they depend on each other.
+    Each writes into the run folder, so an interrupted run resumes from
+    whatever is already on disk rather than paying for the script again, which
+    is the rule every stage of account 1's pipeline already follows.
+    """
+    from pipeline import artefacts as artefacts_mod
+    from pipeline import episodespec, renderer, tts
+
+    staged_path = run_dir / "artefacts.json"
+    if staged_path.exists():
+        staged = json.loads(staged_path.read_text())
+    else:
+        with console.status("Staging the pictures..."):
+            staged = artefacts_mod.stage(subject, cfg.video_dir, prefer=script.source)
+        staged_path.write_text(json.dumps(staged, indent=2) + "\n")
+    if not staged:
+        console.print(
+            "[bold red]No usable artefacts.[/] [dim]Every picture Commons holds for "
+            "this subject is either under copyright or too small to fill a frame.[/]"
+        )
+        raise typer.Exit(1)
+    console.print(f"[dim]{len(staged)} artefacts staged[/]")
+
+    timing_path = run_dir / "timing.json"
+    voice_dir = run_dir / "voice"
+    if timing_path.exists() and (voice_dir / "voice.wav").exists():
+        timing = json.loads(timing_path.read_text())
+    else:
+        with console.status(f"Speaking {len(script.lines)} lines..."):
+            timing = tts.speak_lines(script.lines, voice_dir, cfg)
+        timing_path.write_text(json.dumps(timing, indent=2) + "\n")
+    console.print(f"[dim]{timing['seconds']:.1f}s of voiceover[/]")
+
+    public = cfg.video_dir / "public"
+    public.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(voice_dir / "voice.wav", public / f"{subject.slug}-voice.wav")
+    renderer.prune_staged_assets(cfg.video_dir, subject.slug)
+
+    spec = episodespec.build(script, subject, staged, timing, cfg)
+    (run_dir / "spec.json").write_text(spec.model_dump_json(indent=2) + "\n")
+
+    out_path = run_dir / "out.mp4"
+    with console.status(f"Rendering {spec.durationInFrames} frames..."):
+        renderer.render_episode(spec, out_path, cfg)
+    console.print(f"[bold green]Rendered[/] {out_path}")
+    return out_path
 
 
 def _adopt_video(cfg: Settings, video: Path, *, hook: str, slug: str | None) -> Path:

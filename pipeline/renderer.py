@@ -28,12 +28,22 @@ log = logging.getLogger(__name__)
 # a staging area and the prune is the only thing that empties it. A tall README
 # capture is the largest file the pipeline stages, so accumulating one per run
 # is the worst version of that to get wrong.
-STAGED_ASSET_RE = re.compile(r"[a-z0-9-]+-(?:voice\.(?:wav|mp3)|repo\.png|repo-page\.png)")
+# `art<N>` is the second niche's staged artefact, a Commons scan per shot.
+STAGED_ASSET_RE = re.compile(
+    r"[a-z0-9-]+-(?:voice\.(?:wav|mp3)|repo\.png|repo-page\.png|art\d+\.(?:jpg|png))"
+)
 
 # Frame of the opening scene to grab the cover from. The hero entrance is a
 # spring that settles well inside a second; 90 frames (3s at 30fps) is past it
 # with room to spare, and still inside the scene's 7-second hold.
 COVER_FRAME = 90
+
+# Staged files that belong to nothing this pipeline renders and must survive a
+# prune anyway. `cv-` is the hand built prototypes' prefix: their assets are
+# scans that are no longer trivially re-fetchable, they are the only copy
+# outside a backup, and one of them matched the sweep and was deleted by the
+# first generated render.
+PROTECTED_PREFIXES = ("cv-",)
 
 
 class RenderError(RuntimeError):
@@ -129,6 +139,8 @@ def prune_staged_assets(video_dir: Path, keep_slug: str) -> int:
             continue
         if path.name.startswith(f"{keep_slug}-"):
             continue
+        if path.name.startswith(PROTECTED_PREFIXES):
+            continue
         try:
             path.unlink()
             removed += 1
@@ -138,6 +150,57 @@ def prune_staged_assets(video_dir: Path, keep_slug: str) -> int:
     if removed:
         log.info("Pruned %d stale staged asset(s) from %s", removed, public)
     return removed
+
+
+def render_episode(
+    spec, out_path: Path, cfg: Settings, *, concurrency: int | None = None
+) -> Path:
+    """Render the second niche's composition from an `EpisodeSpec`.
+
+    A second entry point rather than a branch inside `render`, because the two
+    take different specs and name different compositions, and the only thing
+    they share is the subprocess. Untyped in the signature on purpose: this
+    module imports `VideoSpec` and nothing else from the models, and an episode
+    spec arriving here as a pydantic model with `model_dump_json` is the whole
+    contract.
+    """
+    video_dir = cfg.video_dir
+    _ensure_node_deps(video_dir)
+
+    props_path = video_dir / f".props-episode-{spec.slug}.json"
+    props_path.write_text(spec.model_dump_json())
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "npx", "remotion", "render", "Episode", str(out_path.resolve()),
+        f"--props={props_path.resolve()}",
+        # **Not the reel's quality settings, and the difference is the shot.**
+        # A reel is flat colour and syntax highlighted text, where Remotion's
+        # default CRF keeps glyph edges clean. An episode is a photograph of a
+        # four hundred year old page with grain over it, where every frame
+        # differs from the last in a way h264 cannot predict: the first render
+        # came out at 185 MB for 40 seconds, against about 10 MB for a reel,
+        # which is past what TikTok will take in one chunk.
+        "--crf=24",
+        "--log=info",
+    ]
+    if concurrency:
+        cmd.append(f"--concurrency={concurrency}")
+
+    log.info("Rendering %d frames -> %s", spec.durationInFrames, out_path.name)
+    try:
+        proc = subprocess.run(  # noqa: S603 - argv list, no shell
+            cmd, cwd=video_dir, capture_output=True, text=True, check=False, timeout=1800
+        )
+    finally:
+        props_path.unlink(missing_ok=True)
+
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout)[-2500:]
+        raise RenderError(f"remotion render failed (exit {proc.returncode}):\n{tail}")
+    if not out_path.exists():
+        raise RenderError(f"Remotion reported success but {out_path} does not exist")
+    log.info("Rendered %s (%.1f MB)", out_path.name, out_path.stat().st_size / 1_048_576)
+    return out_path
 
 
 def render(

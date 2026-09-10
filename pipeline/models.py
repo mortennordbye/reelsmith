@@ -347,6 +347,29 @@ class EpisodeScript(BaseModel):
     caption_text: str = Field(default="", description="The post caption, with hashtags")
 
     @property
+    def beats(self) -> list[tuple[str, str]]:
+        """Every spoken line with the beat of the arc it belongs to.
+
+        The renderer needs the beat, not just the words: a quotation is set
+        differently from a step, and a step is numbered. Derived here rather
+        than asked of the model, because the arc is already the schema and a
+        second answer about it is a second thing that can disagree.
+        """
+        out: list[tuple[str, str]] = []
+        for kind, part in (
+            ("situation", self.situation),
+            ("who", self.who),
+            ("quote", self.quote),
+            ("plain", self.plain),
+            ("did", self.did),
+            ("back", self.back),
+        ):
+            for sentence in _sentences(part):
+                out.extend((kind, line) for line in _breathe(sentence))
+        out.extend(("step", step) for step in self.steps)
+        return out
+
+    @property
     def lines(self) -> list[str]:
         """The spoken script in arc order, one line per sentence.
 
@@ -354,12 +377,7 @@ class EpisodeScript(BaseModel):
         the lines actually end, which is what puts the first cut inside the
         three seconds `skip_rate` scores without anybody choosing a number.
         """
-        out: list[str] = []
-        for part in (self.situation, self.who, self.quote, self.plain, self.did, self.back):
-            for sentence in _sentences(part):
-                out.extend(_breathe(sentence))
-        out.extend(self.steps)
-        return out
+        return [line for _kind, line in self.beats]
 
     @property
     def word_count(self) -> int:
@@ -504,6 +522,89 @@ class RepoMeta(BaseModel):
     language: str | None = None
     license: str | None = None
     url: str
+
+
+class SpecArtefact(BaseModel):
+    """One staged picture, with its own dimensions carried rather than measured.
+
+    Same rule as `pageAspect`: a renderer that measures an image inside a frame
+    render is one where a frame can differ from its neighbour for no visible
+    reason. The licence and the credit travel too, because they are the reason
+    the file was allowed to be used at all and a spec is the only place that
+    record survives the run folder being deleted.
+    """
+
+    src: str  # relative to video/public/
+    w: int
+    h: int
+    title: str = ""
+    licence: str = ""
+    credit: str = ""
+
+
+class Crop(BaseModel):
+    """A rectangle in the artefact's own pixel space."""
+
+    sx: int
+    sy: int
+    sw: int
+    sh: int
+
+
+class Shot(BaseModel):
+    """One line of the script, and what is on screen while it is spoken.
+
+    A shot per line rather than per beat, because the cut lands where the line
+    ends and the line boundaries are what the voice actually produced.
+    """
+
+    start: int = Field(description="First frame, in the video's own timeline")
+    durationInFrames: int  # noqa: N815
+    line: str
+    kind: str  # situation, who, quote, plain, did, back, step
+    art: int = 0  # index into EpisodeSpec.artefacts
+    crop: Crop | None = None
+    # "cover" crops to fill the frame, "contain" shows the whole artefact on
+    # the paper ground. The opening shot of a landscape scan is contained,
+    # because the first thing the format promises is the artefact itself and a
+    # cropped one is a detail of something the viewer has not been shown yet.
+    fit: str = "cover"
+    step: int | None = None  # 1, 2 or 3 when this shot is a numbered step
+
+
+class EpisodeSpec(BaseModel):
+    """Everything the second niche's renderer needs, and nothing React shaped.
+
+    The counterpart to `VideoSpec` rather than an extension of it. They share
+    almost nothing: this one has no repository, no README capture and no
+    scenes, and it has a quotation and its source, which is the whole format.
+    Generalising `VideoSpec` to cover both was the alternative and it would
+    have made every field optional for one of the two.
+    """
+
+    version: int = 1
+    slug: str
+    createdOn: date  # noqa: N815
+
+    width: int = 1080
+    height: int = 1920
+    fps: int = 30
+    durationInFrames: int  # noqa: N815
+
+    hook: str
+    audioSrc: str  # noqa: N815
+    subject: str
+    lived: str = ""
+    source: str
+    artefacts: list[SpecArtefact]
+    shots: list[Shot]
+
+    # The end card, which is the one place an episode says whose it is. Read
+    # from the account rather than written here, so the public machinery holds
+    # no identity.
+    endcardName: str = ""  # noqa: N815
+    endcardHandle: str = ""  # noqa: N815
+    endcardTagline: str = ""  # noqa: N815
 
 
 class VideoSpec(BaseModel):

@@ -264,3 +264,58 @@ def audio_duration_seconds(path: Path) -> float:
         if stream.duration and stream.time_base:
             return float(stream.duration * stream.time_base)
     raise TTSError(f"Could not determine duration of {path}")
+
+
+def speak_lines(
+    lines: list[str], out_dir: Path, cfg: Settings, *, gap: float = 0.06, tail: float = 0.4,
+    fps: int = 30,
+) -> dict:
+    """Speak each line on its own, stitch them, and hand back the cut points.
+
+    **The shot boundaries come from where the lines actually end.** Synthesising
+    one block and guessing at the cuts is how a shot lands mid clause; this is
+    the arithmetic the second niche's prototypes did by hand five times while
+    the format was being found. It is what puts the first cut inside the three
+    seconds `skip_rate` scores without anybody choosing a number, because the
+    opening line simply is that long.
+
+    Returns the timing map the renderer needs: total frames, and a frame range
+    per line. The audio lands at `out_dir/voice.wav`.
+    """
+    import numpy as np
+    import soundfile as sf
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    backend = get_backend(cfg)
+    parts: list = []
+    marks: list[tuple[float, float]] = []
+    at, rate = 0.0, 0
+
+    for i, line in enumerate(lines):
+        piece = backend.synthesize(line, out_dir / f"line{i:02d}.wav")
+        audio, rate = sf.read(piece, dtype="float32")
+        if audio.ndim > 1:
+            audio = audio.mean(axis=1)
+        marks.append((at, at + len(audio) / rate))
+        parts.append(audio)
+        at += len(audio) / rate
+        if i < len(lines) - 1:
+            parts.append(np.zeros(int(gap * rate), dtype="float32"))
+            at += gap
+
+    if not parts:
+        raise TTSError("No lines to speak")
+    parts.append(np.zeros(int(tail * rate), dtype="float32"))
+    at += tail
+    sf.write(out_dir / "voice.wav", np.concatenate(parts), rate)
+
+    frames = lambda seconds: int(round(seconds * fps))  # noqa: E731
+    return {
+        "seconds": round(at, 3),
+        "durationInFrames": frames(at),
+        "fps": fps,
+        "lines": [
+            {"i": i, "from": frames(start), "to": frames(end)}
+            for i, (start, end) in enumerate(marks)
+        ],
+    }
