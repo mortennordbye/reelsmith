@@ -28,6 +28,9 @@ import type { VideoSpec } from "./types";
  */
 const HOOK_SECONDS = 2.4;
 
+/** How far below the hook band the scrim fades out, in pixels. */
+const HOOK_FADE = 180;
+
 const Hook: React.FC<{ text: string }> = ({ text }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -67,7 +70,20 @@ const Hook: React.FC<{ text: string }> = ({ text }) => {
   // hook can be properly legible over a full-bleed README -- which is a busy,
   // light-on-dark page of real text rather than the small card on empty
   // background this used to sit on.
-  const scrim = interpolate(resolve, [0, 1], [0.86, 0.66]);
+  //
+  // Near opaque, and that is a decision rather than a slider being nudged.
+  // A GitHub README is mostly dark and then suddenly is not: the brightest
+  // thing on the page is a row of white shields badges, and maintainers put it
+  // directly under the title, which is exactly where the strip lands. 0.78 was
+  // legible over prose and unreadable over AutoResearch's two award badges, so
+  // the floor has to clear the worst case rather than the common one.
+  //
+  // What it costs is the top ~300px of the page for 2.4 seconds. What it used
+  // to cost, when the hook was centred, was the whole hero for the entire
+  // window skip rate scores. Recognition is carried by the chrome, which stays
+  // sharp, and by the rest of the page, which is now full bleed, scrolling and
+  // visible for the remaining twenty four seconds.
+  const scrim = interpolate(resolve, [0, 1], [0.97, 0.93]);
   const blur = interpolate(resolve, [0, 1], [2, 0]);
   // Fade out over the last 12 frames rather than cutting, which reads as a
   // glitch at this size.
@@ -100,21 +116,27 @@ const Hook: React.FC<{ text: string }> = ({ text }) => {
           top: 0,
           left: 0,
           right: 0,
-          // Deep enough to hold three lines, and it stops well above the
-          // browser frame's content. 4:5 crop is a cover rule, not a video
-          // one, but Instagram's own chrome sits in the top ~120px, so the
-          // text starts below it.
           // Below the platform's chrome and below the browser title bar, so
           // the hook never starts on top of the window it is sitting in.
           paddingTop: safeTop + browserChromeHeight + 36,
           paddingLeft: theme.padding,
           paddingRight: theme.padding,
-          paddingBottom: 64,
-          background: `linear-gradient(180deg, rgba(1,4,9,${scrim}) 0%, rgba(1,4,9,${scrim * 0.82}) 62%, rgba(1,4,9,0) 100%)`,
+          paddingBottom: 28,
+          // Flat, not a gradient. The gradient version put its stops at fixed
+          // percentages of the strip, and the strip's height depends on
+          // whether the hook wrapped to two lines or three, so the fade landed
+          // in a different place for every hook. On a two line hook it began
+          // at 62 percent, which is the second line, and the scrim under that
+          // line measured about 0.46 whatever the nominal value was set to.
+          // That is how a hook stayed unreadable over AutoResearch's award
+          // badges while this number was raised twice.
+          //
+          // The fade is a separate element below, with a height in pixels, so
+          // the text always sits on the full value and the transition is the
+          // same for a one line hook and a three line one.
+          backgroundColor: `rgba(1,4,9,${scrim})`,
           backdropFilter: `blur(${blur}px)`,
           WebkitBackdropFilter: `blur(${blur}px)`,
-          maskImage: "linear-gradient(180deg, #000 0%, #000 62%, transparent 100%)",
-          WebkitMaskImage: "linear-gradient(180deg, #000 0%, #000 62%, transparent 100%)",
         }}
       >
         <div
@@ -147,6 +169,18 @@ const Hook: React.FC<{ text: string }> = ({ text }) => {
             width: interpolate(enter, [0, 1], [0, 220]),
             borderRadius: 4,
             backgroundColor: theme.color.accent,
+          }}
+        />
+        {/* The fade out of the band, in pixels below it rather than as a
+            percentage stop inside it. See the note on backgroundColor. */}
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: -HOOK_FADE,
+            height: HOOK_FADE,
+            background: `linear-gradient(180deg, rgba(1,4,9,${scrim}) 0%, rgba(1,4,9,0) 100%)`,
           }}
         />
       </div>

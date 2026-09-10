@@ -54,17 +54,41 @@ export const ReadmePage: React.FC<Props> = ({ src, aspect, url }) => {
 
   return (
     <AbsoluteFill style={{ backgroundColor: theme.color.bg, overflow: "hidden" }}>
-      <Img
-        src={staticFile(src)}
+      {/*
+        The page scrolls inside the window, and the window has to clip it.
+
+        Without this wrapper the image was positioned below the title bar and
+        then translated upward, so by the end of a scene it had travelled past
+        the top of its own window and was drawing in the band above it, where
+        the platform's chrome sits. On screen that is a paragraph of README
+        floating over nothing above a browser title bar, which is the most
+        broken thing the shot can do.
+
+        `overflow: hidden` on the outer AbsoluteFill does not help: that clips
+        to the frame, and the frame is not the viewport. This is.
+      */}
+      <div
         style={{
           position: "absolute",
           top: safeTop + browserChromeHeight,
           left: 0,
-          width: "100%",
-          display: "block",
-          transform: `translateY(${y}px)`,
+          right: 0,
+          bottom: 0,
+          overflow: "hidden",
         }}
-      />
+      >
+        <Img
+          src={staticFile(src)}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            display: "block",
+            transform: `translateY(${y}px)`,
+          }}
+        />
+      </div>
 
       {/*
         The chrome stays. It is the cheapest signal that this is a real page
