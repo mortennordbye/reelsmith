@@ -27,7 +27,10 @@ HOOK = "You have cut a sentence because of who might read it"
 @pytest.fixture
 def cfg(tmp_path, monkeypatch) -> Settings:
     monkeypatch.setattr(Settings, "build_dir", property(lambda self: tmp_path / "build"))
-    return Settings(account="thewholequote", _env_file=None)
+    # A placeholder name, not a real account. This repo is public and the
+    # account identities are the private half; a handle in a fixture here is
+    # the same link PROFILE.md refuses to let a shared voice make.
+    return Settings(account="secondaccount", _env_file=None)
 
 
 @pytest.fixture
