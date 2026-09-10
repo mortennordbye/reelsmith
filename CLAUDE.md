@@ -886,8 +886,12 @@ mp4 appeared:
   colour and syntax highlighted text where the default CRF keeps glyph edges
   clean. An episode is a photograph with grain over it, where every frame
   differs from the last in a way h264 cannot predict: the first render was
-  185 MB for 40 seconds against about 10 MB for a reel, which is past what
-  TikTok takes in one chunk. `--crf=24` brings it to about 38 MB.
+  185 MB for 40 seconds against about 10 MB for a reel. `EPISODE_CRF` is 28,
+  which puts a 47 second episode at about 31 MB. **24 was tried first and is
+  the trap**: it landed the same video at 58 MB, which clears TikTok's 64 MB
+  single chunk cap by ten percent and would not clear it at fifty seconds, and
+  that failure arrives at publish, on a queued row, days later. Past 55 MB the
+  renderer says so rather than leaving it to be discovered.
 - **The prune took a prototype's asset with it.** `cv-voice.wav` matched
   `STAGED_ASSET_RE` and the first generated render deleted it.
   `PROTECTED_PREFIXES` is what stops that; the prototypes' scans are the only
