@@ -267,16 +267,27 @@ class Settings(BaseSettings):
     # chatterbox backend -- my cloned voice, run out of process. See
     # tools/chatterbox/synth.py for why it cannot share this interpreter.
     #
-    # These two numbers were picked by ear from a four-preset sweep against the
-    # Ponytail script, audible in tools/chatterbox/out/. Re-audition with
+    # These two numbers were picked by ear from a sweep, and they are not
+    # independent. Re-audition with
     # `tools/chatterbox/.venv/bin/python tools/chatterbox/clone.py --sweep`
-    # before changing them; they are not independent and guessing goes badly.
+    # before changing them; guessing goes badly.
     #   exaggeration -- emotional intensity. 0.5 is neutral, past ~0.7 it acts
     #     rather than reads.
-    #   cfg_weight   -- pull toward the reference. 0.3 reads calmer and slower
-    #     than the 0.5 default, which suits a reference read at Reels pace.
-    chatterbox_exaggeration: float = 0.5
-    chatterbox_cfg_weight: float = 0.3
+    #   cfg_weight   -- pull toward the reference, and the pace knob of the
+    #     two. It is not monotonic: measured on one line, 0.30 read at 160
+    #     words a minute, 0.50 at 173, 0.65 at 209 and 0.80 back down at 182,
+    #     so pushing it higher is not reliably faster.
+    #
+    # Raised from 0.5/0.3 to 0.6/0.5 on 2026-09-10, chosen by ear from four
+    # takes of the same line. It is about 8 percent quicker than the old read,
+    # which is the smallest of the three faster options: 0.65/0.65 was a
+    # thirty percent jump and was audibly performing rather than reading, which
+    # is the register this account exists against. Watch time is the metric
+    # this is meant to serve, and a fast read of a long sentence is still a
+    # long sentence, so do not reach for this knob again before looking at
+    # sentence length in SYSTEM_PROMPT.
+    chatterbox_exaggeration: float = 0.6
+    chatterbox_cfg_weight: float = 0.5
     # "mps" on Apple silicon, "cpu" everywhere else, and chosen by the platform
     # rather than pinned, because the wrong one does not degrade, it fails:
     # asking for mps on Linux raises `Storage device not recognized: mps` at
