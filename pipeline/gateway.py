@@ -149,6 +149,17 @@ def strip_written_cta(text: str) -> str:
     return cleaned.strip()
 
 
+def _repo_line(link: str) -> str:
+    """The line naming the repo, or nothing when there is no repo to name.
+
+    Both builders below join with the empty parts dropped, so returning ""
+    takes the line out rather than leaving "Repo:" with nothing after it. An
+    account whose subject is not a GitHub project has no URL to give, and the
+    queue accepts a row without one; this is the copy side of the same rule.
+    """
+    return f"Repo: {link}" if link else ""
+
+
 def youtube_description(caption: str, link: str) -> str:
     """The Instagram caption, rewritten for a surface with no DMs.
 
@@ -171,7 +182,7 @@ def youtube_description(caption: str, link: str) -> str:
     lines = [line for line in strip_written_cta(caption).splitlines() if line.strip()]
     tags = lines.pop() if lines and lines[-1].lstrip().startswith("#") else ""
     prose = "\n".join(lines).strip()
-    return "\n\n".join(part for part in (prose, f"Repo: {link}", tags) if part)
+    return "\n\n".join(part for part in (prose, _repo_line(link), tags) if part)
 
 
 def tiktok_title(caption: str, link: str) -> str:
@@ -201,7 +212,7 @@ def tiktok_title(caption: str, link: str) -> str:
     tags = lines.pop() if lines and lines[-1].lstrip().startswith("#") else ""
     prose = "\n".join(lines).strip()
     whole = "\n\n".join(
-        part for part in (prose, CAPTION_CTA, f"Repo: {link}", tags) if part
+        part for part in (prose, CAPTION_CTA, _repo_line(link), tags) if part
     )
     if len(whole) <= _TIKTOK_TITLE_LIMIT:
         return whole
@@ -216,7 +227,7 @@ def tiktok_title(caption: str, link: str) -> str:
     # Reaching any of this means something odd upstream: the caption is written
     # to a budget an order of magnitude inside this.
     for without in (
-        (prose, CAPTION_CTA, f"Repo: {link}"),
+        (prose, CAPTION_CTA, _repo_line(link)),
         (prose, CAPTION_CTA),
     ):
         shorter = "\n\n".join(part for part in without if part)

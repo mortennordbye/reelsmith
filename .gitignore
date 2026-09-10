@@ -64,6 +64,14 @@ accounts/*/.env
 accounts/*/data/*.json
 accounts/*/ref/*.wav
 accounts/*/ref/*.m4a
+# Per account branding: the decided avatar at brand/, the generators and the
+# real-paper crops under brand/workshop/. workshop/candidates/ is deliberately
+# not listed: every render there regenerates from the scripts plus patches,
+# and it is fifty-odd files of rejected drafts.
+accounts/*/brand/*.png
+accounts/*/brand/workshop/*.py
+accounts/*/brand/workshop/*.md
+accounts/*/brand/workshop/patches/*.jpg
 # Six candidate spinoff accounts with frame mockups, drawn up 2026-08-25.
 # Private for the same reason as IDEAS.md: every score in it is argued from this
 # account's own numbers. The directory entry is what keeps git out, including the
@@ -82,6 +90,10 @@ notes/spinoffs/*.html
 # whole block exists to prevent, so the globs are listed by extension rather
 # than by directory.
 video/src/spinoff/*.tsx
+# An episode's spoken lines. Recovered from the rendered voice track on
+# 2026-09-10 because they had never been written down, which is the same
+# one-copy-on-one-disk failure the rest of this block exists to prevent.
+video/src/spinoff/*.json
 tools/spinoff/*.py
 notes/spinoffs/*.mp4
 notes/spinoffs/tools/*.py

@@ -120,6 +120,29 @@ async def test_a_post_pointing_at_a_missing_file_is_refused(client):
     assert "ghost.mp4" in response.json()["detail"]
 
 
+async def test_a_row_may_have_no_link(client):
+    """A destination is not always a GitHub project. An account whose subject
+    is a book has nothing to link, and the alternative to accepting the empty
+    string is a row holding a URL somebody invented for it. The keyword
+    mechanic is the only thing that reads the link, and that is dormant and
+    Instagram only."""
+    http, _ = client
+    row = await queue(http, link="", repo_full_name=None)
+
+    assert row["state"] == db.QUEUE_DRAFT
+
+
+async def test_a_link_that_is_not_a_url_is_still_refused(client):
+    """Empty is a claim that there is nothing to link. A bare word is a
+    mistake, and it stays a 422."""
+    http, _ = client
+    video = await upload(http)
+    response = await http.post("/api/queue", headers=AUTH, json={
+        "account_id": ACCOUNT, "video_name": video, "keyword": "X", "link": "montaigne",
+    })
+    assert response.status_code == 422
+
+
 async def test_a_traversing_filename_is_rejected_by_the_model(client):
     http, _ = client
     response = await http.post("/api/queue", headers=AUTH, json={
