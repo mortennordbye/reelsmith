@@ -755,6 +755,18 @@ section is.
   OOM killer took the container, and with it the batch, the session, and
   `/tmp/nightly.log`. One finished video survived because it was already on
   disk; a script that had been researched and paid for did not get used.
+- **A render host missing its node deps fails every video and looks like a
+  quiet night.** `video/node_modules` went away when the pod was recreated on
+  2026-09-07, and the three nights after it each wrote a script and a voiceover
+  and produced nothing, because the Remotion check is the last step of five.
+  Nothing alerted: every metric the gateway has starts at the queue, so a host
+  rendering nothing is indistinguishable from one where `--max-queue` stopped
+  the batch, which this file calls the normal outcome. It surfaced as views
+  decaying a week later, once the queue drained to empty. `_ensure_node_deps`
+  runs `npm ci` itself now rather than naming the command, since the thing it
+  is protecting has already been paid for by the time it runs. **The class of
+  failure it cannot fix is the one to watch**: anything that makes the render
+  host stop producing is invisible here until the feed goes dark days later.
 - **So queueing is `--recover`, not a list of `--enqueue` lines.** The nightly
   ends with `--recover --approve --max-queue 3`, which sweeps the last two
   days of build folders and finishes whatever each one still owes. It is what

@@ -34,10 +34,57 @@ class RenderError(RuntimeError):
 
 
 def _ensure_node_deps(video_dir: Path) -> None:
-    if not (video_dir / "node_modules").exists():
+    """Install the Remotion deps if they are missing, rather than refusing.
+
+    This used to raise and name the command to run. That is the right shape for
+    a person at a terminal and the wrong one for the nightly, because of where
+    the check sits: stage 5 of 5, after discovery, after a Claude script, after
+    a Chatterbox voiceover and after Whisper. A missing `node_modules` there
+    throws away everything the run already paid for, and it does it once per
+    video, every night, until somebody looks.
+
+    That is not hypothetical. The render host lost `video/node_modules` on
+    2026-09-07 when the pod was recreated, and the next three nights each wrote
+    a script and a voiceover and produced nothing. Nothing alerted, because a
+    render host that queues no rows looks exactly like one where `--max-queue`
+    stopped the batch, which is the normal outcome. It surfaced as the account's
+    views decaying days later, once the queue drained.
+
+    So it installs. `npm ci` is idempotent, takes about fifteen seconds against
+    a warm cache, and is what `scripts/pod-setup.sh` already runs. A failure to
+    install still raises, because at that point there is genuinely nothing to
+    render with.
+
+    The marker is `.bin/remotion` rather than the directory, for the reason
+    `pod-setup.sh --check` uses it: an interrupted install leaves a
+    `node_modules` that exists and cannot render.
+    """
+    if (video_dir / "node_modules" / ".bin" / "remotion").exists():
+        return
+
+    # `npm ci` needs the lockfile and is the reproducible one; without it there
+    # is nothing to be reproducible against, so fall back rather than fail.
+    cmd = ["npm", "ci"] if (video_dir / "package-lock.json").exists() else ["npm", "install"]
+    log.warning("Remotion dependencies are missing; running %s", " ".join(cmd))
+    try:
+        subprocess.run(cmd, cwd=video_dir, check=True, capture_output=True, text=True)
+    except FileNotFoundError as exc:  # npm itself is not on PATH
         raise RenderError(
-            f"Remotion dependencies are not installed.\nRun: cd {video_dir} && npm install"
+            f"Remotion dependencies are missing and npm is not installed.\n"
+            f"Run: cd {video_dir} && npm install"
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        raise RenderError(
+            f"Remotion dependencies are missing and {' '.join(cmd)} failed.\n"
+            f"{(exc.stderr or exc.stdout or '').strip()[-2000:]}"
+        ) from exc
+
+    if not (video_dir / "node_modules" / ".bin" / "remotion").exists():
+        raise RenderError(
+            f"{' '.join(cmd)} finished but Remotion is still not installed.\n"
+            f"Run: cd {video_dir} && npm install"
         )
+    log.info("Installed the Remotion dependencies")
 
 
 def stage_asset(asset_path: Path, video_dir: Path, slug: str) -> str:
