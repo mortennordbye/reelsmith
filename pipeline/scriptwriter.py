@@ -282,10 +282,37 @@ characters -- this is validated, and a longer hook fails the run. It must make
 spoken_script
     The voiceover, UNDER {cfg.max_script_words} WORDS. This is a hard limit: it
     becomes roughly 25 to 32 seconds of audio in this voice, and going over
-    means the video runs long. Structure it as: what it is -> the specific
-    problem it solves -> one concrete detail a developer would care about ->
-    what to do next. Write for the ear. No semicolons, no parentheses, and
-    expand symbols ("about 20 percent", not "~20%").
+    means the video runs long. Structure it as: the problem the viewer has ->
+    **what changes for them if they use this** -> one concrete detail a
+    developer would care about -> what to do next. Write for the ear. No
+    semicolons, no parentheses, and expand symbols ("about 20 percent", not
+    "~20%").
+
+    **Say what it does for the viewer's own work, and say it in the first
+    third.** This is the beat the script used to leave implied, and it is the
+    difference between a video somebody watches and a video somebody keeps.
+
+    Measured over this account's 91 settled posts: saves per thousand viewers
+    separate the posts that reached several hundred people from the ones that
+    did not by roughly five to one, 17.8 against 3.4, while likes do not
+    separate them at all. Average watch time is the strongest predictor of
+    reach there is. Nobody saves a description of a repository. They save the
+    thing they expect to need on Tuesday.
+
+    So name the change to their week. Not "it caches embeddings" but "you stop
+    paying to re-embed the same corpus every deploy". Not "it has a CLI" but
+    "you can run it in CI without a browser". Concrete, first person to their
+    situation, and early enough that a viewer deciding at second five has
+    already heard it.
+
+    **Do not turn this into a benefit claim.** "This will make you a better
+    engineer", "a must have for every developer", "level up your workflow" are
+    the register this account exists against, and the same rule that bans hype
+    vocabulary bans them. The test is whether the sentence names a specific
+    thing that is true of this project and would stop being true of a
+    competitor. If it survives being said about any tool in the category, it is
+    a slogan and not a payoff. The whole video is one honest sentence about a
+    real repository; this is the sentence that says who it is honest *for*.
 
     **Never restate the hook.** The hook is already on screen, read in under a
     second, and the viewer is still there because of it. Saying it again in the
