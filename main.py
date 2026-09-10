@@ -133,6 +133,10 @@ def run(
         bool,
         typer.Option("--covered", help="List every repo already made into a Reel"),
     ] = False,
+    show_subjects: Annotated[
+        bool,
+        typer.Option("--subjects", help="Rank tonight's subjects for a niche that is not GitHub"),
+    ] = False,
     history: Annotated[
         bool,
         typer.Option("--history", help="Every repo we have touched, and when it last went out"),
@@ -293,6 +297,12 @@ def run(
     if candidates:
         _preflight(need_github=True, need_claude=False)
         scraper.inspect_candidates(cfg)
+        return
+
+    if show_subjects:
+        from pipeline import subjects
+
+        subjects.inspect(cfg)
         return
 
     if covered:
