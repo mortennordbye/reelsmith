@@ -13,6 +13,16 @@ keep in sync across the boundary. Result goes out as one JSON object on stdout.
 Anything else this file prints is noise from torch and is ignored by the caller.
 
     .venv/bin/python synth.py '{"text": "...", "ref": "...", "out": "..."}'
+
+**A batch of lines is one invocation, not one each.** Pass `lines` instead of
+`text` and every line is spoken by one loaded model:
+
+    .venv/bin/python synth.py '{"lines": [{"text": "...", "out": "..."}], ...}'
+
+The second niche speaks each line separately, because its shot boundaries are
+derived from where the lines actually end, and doing that through the single
+text path meant loading the model fifteen times for a forty second video. The
+load is over a minute on this hardware, so it was the whole cost of the render.
 """
 
 from __future__ import annotations
@@ -30,12 +40,17 @@ TARGET_PEAK = 0.707
 
 def main() -> int:
     args = json.loads(sys.argv[1])
-    text: str = args["text"]
     ref = Path(args["ref"])
-    out = Path(args["out"])
     exaggeration = float(args.get("exaggeration", 0.5))
     cfg_weight = float(args.get("cfg_weight", 0.3))
     device = args.get("device", "mps")
+
+    # One shape covers both calls. A single `text` is a batch of one, so the
+    # loop below is the only synthesis path and the two cannot drift.
+    if "lines" in args:
+        batch = [{"text": line["text"], "out": Path(line["out"])} for line in args["lines"]]
+    else:
+        batch = [{"text": args["text"], "out": Path(args["out"])}]
 
     if not ref.exists():
         print(json.dumps({"ok": False, "error": f"reference audio missing: {ref}"}))
@@ -57,28 +72,45 @@ def main() -> int:
         torch.load = load
 
     model = ChatterboxTTS.from_pretrained(device=device)
-    wav = model.generate(
-        text,
-        audio_prompt_path=str(ref),
-        exaggeration=exaggeration,
-        cfg_weight=cfg_weight,
-    ).cpu()
 
-    peak = wav.abs().max().item()
-    if peak > 0:
-        wav = wav * (TARGET_PEAK / peak)
+    results = []
+    for item in batch:
+        wav = model.generate(
+            item["text"],
+            audio_prompt_path=str(ref),
+            exaggeration=exaggeration,
+            cfg_weight=cfg_weight,
+        ).cpu()
 
-    out.parent.mkdir(parents=True, exist_ok=True)
-    torchaudio.save(str(out), wav, model.sr)
+        # Per line rather than across the batch, which is the same choice as
+        # normalising at all: a quiet line beside a loud one is a jump in
+        # loudness inside one video, and the peak is what the format pins.
+        peak = wav.abs().max().item()
+        if peak > 0:
+            wav = wav * (TARGET_PEAK / peak)
 
+        item["out"].parent.mkdir(parents=True, exist_ok=True)
+        torchaudio.save(str(item["out"]), wav, model.sr)
+        results.append(
+            {
+                "path": str(item["out"]),
+                "seconds": wav.shape[-1] / model.sr,
+                "peak_before_normalise": peak,
+            }
+        )
+
+    first = results[0]
     print(
         json.dumps(
             {
                 "ok": True,
-                "path": str(out),
-                "seconds": wav.shape[-1] / model.sr,
+                # The single call's answer, unchanged, so `pipeline/tts.py` and
+                # the prototypes' own script read exactly what they did before.
+                "path": first["path"],
+                "seconds": first["seconds"],
                 "sample_rate": model.sr,
-                "peak_before_normalise": peak,
+                "peak_before_normalise": first["peak_before_normalise"],
+                "lines": results,
             }
         )
     )

@@ -151,6 +151,18 @@ class ChatterboxBackend:
         self.cfg = cfg
 
     def synthesize(self, text: str, out_path: Path) -> Path:
+        self.synthesize_many([(text, out_path)])
+        return out_path
+
+    def synthesize_many(self, items: list[tuple[str, Path]]) -> list[Path]:
+        """Every line through one loaded model.
+
+        **The model load is the cost, not the synthesis.** It runs over a
+        minute on this hardware, so speaking a forty second episode as fifteen
+        separate calls spent a quarter of an hour loading the same weights
+        fifteen times. One call is the same audio and the same normalisation,
+        because the worker's loop is the only synthesis path it has.
+        """
         import json
         import subprocess
 
@@ -174,9 +186,8 @@ class ChatterboxBackend:
 
         payload = json.dumps(
             {
-                "text": text,
+                "lines": [{"text": text, "out": str(path)} for text, path in items],
                 "ref": str(self.cfg.chatterbox_ref),
-                "out": str(out_path),
                 "exaggeration": self.cfg.chatterbox_exaggeration,
                 "cfg_weight": self.cfg.chatterbox_cfg_weight,
                 "device": self.cfg.chatterbox_device,
@@ -186,7 +197,9 @@ class ChatterboxBackend:
             [str(python), str(worker), payload],
             capture_output=True,
             text=True,
-            timeout=self.cfg.chatterbox_timeout_s,
+            # The clock is per line, since one call now speaks a whole episode
+            # and a timeout written for one line would kill the fourteenth.
+            timeout=self.cfg.chatterbox_timeout_s * max(len(items), 1),
         )
 
         # The worker reports on the last line of stdout. Everything above it is
@@ -204,12 +217,13 @@ class ChatterboxBackend:
             reason = result.get("error") or proc.stderr.strip()[-500:] or "no output"
             raise TTSError(f"Chatterbox failed: {reason}")
 
+        spoken = result.get("lines") or [result]
         log.info(
-            "Chatterbox rendered %.1fs (normalised from peak %.2f)",
-            result["seconds"],
-            result.get("peak_before_normalise", 0.0),
+            "Chatterbox rendered %d line(s), %.1fs total",
+            len(spoken),
+            sum(line["seconds"] for line in spoken),
         )
-        return out_path
+        return [Path(line["path"]) for line in spoken]
 
 
 def get_backend(cfg: Settings, name: str | None = None) -> TTSBackend:
@@ -287,19 +301,28 @@ def speak_lines(
 
     out_dir.mkdir(parents=True, exist_ok=True)
     backend = get_backend(cfg)
+    targets = [(line, out_dir / f"line{i:02d}.wav") for i, line in enumerate(lines)]
+
+    # One invocation where the backend can take one. The model load dominates
+    # everything else here, so this is the difference between two minutes and
+    # twenty for a forty second episode.
+    if hasattr(backend, "synthesize_many"):
+        pieces = backend.synthesize_many(targets)
+    else:
+        pieces = [backend.synthesize(text, path) for text, path in targets]
+
     parts: list = []
     marks: list[tuple[float, float]] = []
     at, rate = 0.0, 0
 
-    for i, line in enumerate(lines):
-        piece = backend.synthesize(line, out_dir / f"line{i:02d}.wav")
+    for piece in pieces:
         audio, rate = sf.read(piece, dtype="float32")
         if audio.ndim > 1:
             audio = audio.mean(axis=1)
         marks.append((at, at + len(audio) / rate))
         parts.append(audio)
         at += len(audio) / rate
-        if i < len(lines) - 1:
+        if len(marks) < len(pieces):
             parts.append(np.zeros(int(gap * rate), dtype="float32"))
             at += gap
 
