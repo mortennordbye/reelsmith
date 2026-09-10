@@ -45,6 +45,11 @@ COVER_FRAME = 90
 # first generated render.
 PROTECTED_PREFIXES = ("cv-",)
 
+# Past this an episode is close enough to TikTok's 64 MB single chunk cap to
+# say so out loud. Not a refusal: the other three destinations take it, and a
+# render that already exists is not worth throwing away over one of them.
+EPISODE_SIZE_WARNING_MB = 55
+
 
 class RenderError(RuntimeError):
     pass
@@ -199,7 +204,18 @@ def render_episode(
         raise RenderError(f"remotion render failed (exit {proc.returncode}):\n{tail}")
     if not out_path.exists():
         raise RenderError(f"Remotion reported success but {out_path} does not exist")
-    log.info("Rendered %s (%.1f MB)", out_path.name, out_path.stat().st_size / 1_048_576)
+
+    megabytes = out_path.stat().st_size / 1_048_576
+    log.info("Rendered %s (%.1f MB)", out_path.name, megabytes)
+    # Said here rather than discovered at publish. TikTok takes one chunk of
+    # 64 MB and the gateway refuses to split, so a file over this is a row that
+    # queues cleanly and fails days later on a platform nobody was watching.
+    if megabytes > EPISODE_SIZE_WARNING_MB:
+        log.warning(
+            "%s is %.0f MB. TikTok takes 64 MB in one chunk, so raise EPISODE_CRF "
+            "or shorten the episode before queueing it.",
+            out_path.name, megabytes,
+        )
     return out_path
 
 

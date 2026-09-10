@@ -244,6 +244,11 @@ class Settings(BaseSettings):
     # account identities are the private half of it. An episode rendered
     # without them simply has no end card, which is a missing sign off rather
     # than a broken render.
+    # Constant rate factor for an episode render. Higher is smaller. 28 keeps a
+    # scan legible on a phone and lands a 47 second episode at about 31 MB;
+    # 24 put the same video at 58 MB, inside ten percent of TikTok's cap.
+    episode_crf: int = 28
+
     endcard_name: str = ""
     endcard_handle: str = ""
     endcard_tagline: str = ""
