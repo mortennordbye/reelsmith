@@ -585,3 +585,21 @@ def test_the_block_says_not_to_optimise_skip_alone():
     block = _results_block(past(("a hook", 55.0)))
     assert "do not optimise the first one alone" in block.lower()
     assert "saved it" in block
+
+
+def test_the_prompt_asks_for_the_viewer_payoff_early(cfg):
+    """The beat the script used to leave implied.
+
+    The structure was project-centric end to end: what it is, its problem, a
+    detail, what to do next. Nothing in it said what the viewer gets, and the
+    one number that separates the posts which travelled is saves per thousand,
+    which is a measure of whether somebody expected to need the thing again.
+    """
+    prompt = _build_prompt(candidate("a/one"), cfg, [])
+    # Normalised, because the prompt is a wrapped docstring and every one of
+    # these phrases can fall across a line break the next time it is edited.
+    flat = " ".join(prompt.split())
+    assert "what changes for them if they use this" in flat
+    assert "say it in the first third" in flat
+    # And it must carry the guard, or the beat becomes a slogan.
+    assert "Do not turn this into a benefit claim" in flat
