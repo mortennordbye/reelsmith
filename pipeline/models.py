@@ -82,6 +82,61 @@ class RepoCandidate(BaseModel):
         return max(delta.total_seconds() / 86400.0, 1.0)
 
 
+class SubjectCandidate(BaseModel):
+    """A long dead person, scored and ready to become a video.
+
+    The second niche's answer to `RepoCandidate`, and deliberately the same
+    shape: a name, a signal that moved, the artefacts a shot can be cut from,
+    and a score split into the parts that produced it. Everything downstream of
+    discovery reads a scored candidate and does not care which catalogue it
+    came out of, which is what makes one niche's discovery replaceable.
+
+    Not yet mirrored in `video/src/schema.ts`, because nothing renders from one
+    of these yet. `VideoSpec.repo` is still required and still a `RepoMeta`;
+    breaking that is the interface change this model exists to argue for.
+    """
+
+    qid: str  # "Q41568", the Wikidata id and the stable identity
+    name: str
+    article: str  # the English Wikipedia title, which pageviews are keyed on
+    description: str = ""
+    born: int | None = None
+    died: int | None = None
+
+    # The format's first test is a real per item artefact nobody drew for it.
+    portrait: str = ""  # a Commons filename
+    artefacts: list[str] = Field(default_factory=list)
+    usable_artefacts: int = 0
+
+    # This niche's velocity, and the reason it needs no local history store:
+    # Wikimedia publishes the daily series itself, where GitHub publishes only
+    # today's star count and `StarHistory` has to remember the rest.
+    views_recent: int = 0
+    velocity: float = 0.0
+
+    # The encyclopedia's own change feed, when it named this subject.
+    sep_slug: str = ""
+    sep_revised: date | None = None
+
+    score: float = 0.0
+    score_breakdown: dict[str, float] = Field(default_factory=dict)
+
+    @property
+    def key(self) -> str:
+        """The cooldown key.
+
+        Prefixed, because the cooldown store is one file per account keyed by
+        strings and a bare `Q41568` beside `astral-sh/uv` says nothing about
+        which catalogue it came from.
+        """
+        return f"wikidata:{self.qid}"
+
+    @property
+    def slug(self) -> str:
+        safe = self.name.lower()
+        return "".join(c if (c.isalnum() or c == "-") else "-" for c in safe).strip("-")
+
+
 # --------------------------------------------------------------------------
 # Step 2 -- script
 # --------------------------------------------------------------------------

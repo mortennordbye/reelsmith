@@ -767,13 +767,61 @@ recovered script, so the shape it argues for can be written down:
   stops being the only consumer and `video/src/spinoff/kit.tsx` stops being a
   prototype outside the pipeline.
 
-**The two open problems are not plumbing and will not be solved by writing
-any of the above.** Supply is one: nothing yet says what tomorrow's episode
-would be, and two videos is not a format. The other is that an episode's shots
-are hand picked rectangles inside four specific scans, and a generated episode
-has to choose four artefacts and their crops from whatever Commons returns.
-Both are named in `PROFILE.md`, and the second is the reason the render half is
-the expensive half.
+#### Supply is answered, and the model proposes while the catalogue checks
+
+Built 2026-09-10, in `pipeline/subjects.py`, `sources/sep.py` and
+`sources/wikimedia.py`. `python main.py --account <name> --subjects` prints
+tonight's ranking and commits the account to nothing.
+
+- **The encyclopedia is a signal, not the pool.** `PROFILE.md` proposed the
+  Stanford Encyclopedia's revision feed as the source. Measured against the
+  live feed: 89 revisions in three months, 69 substantive, 18 about a person,
+  10 about a person dead long enough to quote freely. That is one subject every
+  nine days against a format that wants one a night, so a feed answering "what
+  changed" was being asked "what exists". It scores like Hacker News does for
+  account 1.
+- **Wikidata is the catalogue.** About 1,100 long dead writers, philosophers,
+  scientists, engineers and physicians at 60 sitelinks with a portrait, cached
+  for a month because the answer moves at the speed of Wikidata editing rather
+  than of news. At a 30 day cooldown that is years of supply.
+- **Velocity is Wikipedia pageviews**, the last seven days against the eight
+  weeks before them, and it needs no local history store. That is the one real
+  difference from star velocity: Wikimedia publishes the daily series and
+  GitHub publishes only today's count.
+- **A ratio on a small base is noise wearing a signal's clothes.** The first
+  live run put a printer with 64 views in a week at the top on a velocity of
+  2.04, which is nine extra readers. Velocity is damped below `VELOCITY_FLOOR`,
+  which is this niche's version of the damped stars per day proxy.
+- **The model proposes and the catalogue checks, which is the whole answer to
+  "why not just ask the AI".** A query cannot know that a printer's manual
+  makes an episode and a syllabus entry does not; a model cannot be trusted
+  about who said what, which is the one thing this account exists to be right
+  about. So `propose` asks Claude for subjects the catalogue would never
+  surface, and every name is then put through the same checks a catalogue
+  subject passes: a real person on Wikidata, dead long enough, with public
+  domain artefacts. Anything unconfirmed is dropped rather than corrected. The
+  first live run returned eight and all eight survived: Moxon, Merian,
+  Christine de Pizan, Paré, Ayrton, Ibn al-Haytham, Lind and Nansen, none of
+  which the catalogue's own top 40 contains.
+- **The proposals run with web search off, and the verification is what pays
+  for that.** Researching eight names took past the 420 second timeout on the
+  first attempt, to buy confidence Wikidata then provides for nothing. What
+  research is genuinely needed for is the quote and the documented action, and
+  that is the scriptwriter's call against the primary source.
+- **Artefacts are public domain only and at least 1080 wide.** Narrower than
+  what Commons allows, on purpose: a CC-BY file needs attribution, and
+  attribution in a caption on four platforms is a promise this account cannot
+  keep, so the licence filter is how it never owes one.
+- **`pipeline/claude.py` is the CLI invocation, moved out of
+  `scriptwriter.py`** when subject discovery became its second caller. The
+  script errors stayed behind, because everything that catches them is talking
+  about a script rather than about a CLI.
+
+**One open problem is left, and it is not plumbing.** Supply was the other and
+is answered above. An episode's shots are hand picked rectangles inside four
+specific scans, and a generated episode has to choose four artefacts and their
+crops from whatever Commons returns. It is named in `PROFILE.md`, and it is the
+reason the render half is the expensive half.
 
 ### The nightly run is not in this repo
 
