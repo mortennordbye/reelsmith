@@ -247,6 +247,8 @@ def build_spec(
     on: date | None = None,
     screenshot_src: str | None = None,
     spoken_cta: str | None = None,
+    page_src: str | None = None,
+    page_aspect: float | None = None,
 ) -> VideoSpec:
     fps = cfg.fps
     # A short tail so the last word isn't clipped and the outro can breathe.
@@ -359,6 +361,11 @@ def build_spec(
         durationInFrames=total_frames,
         hook=script.hook,
         audioSrc=audio_src,
+        # Both or neither. The renderer needs the aspect to know how far it may
+        # scroll, so a page with no aspect is a page it would have to measure,
+        # and it falls back to the framed hero instead of guessing.
+        pageSrc=page_src if page_aspect else None,
+        pageAspect=page_aspect if page_src else None,
         repo=RepoMeta(
             fullName=repo.full_name,
             owner=repo.owner,

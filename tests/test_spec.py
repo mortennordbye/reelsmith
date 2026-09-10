@@ -298,3 +298,53 @@ def test_a_split_too_tight_to_be_readable_is_declined():
     # under the 1.8s floor on the content side.
     assert len(spec.scenes) == 3
     assert all(s.kind is not CueKind.SCREENSHOT for s in spec.scenes[1:])
+
+
+# --- The scrolling README page ----------------------------------------------
+#
+# The tall capture is optional at every step: a README too short to scroll
+# produces none, an older spec carries no field, and the cover deliberately
+# never asks for one. So what matters is that a half-supplied page is refused
+# rather than half-rendered, since the renderer needs the aspect to know how
+# far it may scroll and would otherwise have to measure the image mid-frame.
+
+
+def _spec_with_page(*, page_src, page_aspect):
+    cfg = Settings(github_token="x", _env_file=None)
+    return build_spec(
+        candidate("just-vugg/colibri"),
+        script("one two three", "four five six"),
+        captions_from("one two three four five six"),
+        SECONDS,
+        "voice.wav",
+        cfg,
+        screenshot_src="hero.png",
+        page_src=page_src,
+        page_aspect=page_aspect,
+    )
+
+
+def test_the_page_and_its_aspect_travel_together():
+    spec = _spec_with_page(page_src="colibri-repo-page.png", page_aspect=4.86)
+    assert spec.pageSrc == "colibri-repo-page.png"
+    assert spec.pageAspect == 4.86
+
+
+def test_a_page_without_an_aspect_is_refused():
+    """Both or neither. A page the renderer cannot measure is not a page."""
+    spec = _spec_with_page(page_src="colibri-repo-page.png", page_aspect=None)
+    assert spec.pageSrc is None
+    assert spec.pageAspect is None
+
+
+def test_an_aspect_without_a_page_is_refused():
+    spec = _spec_with_page(page_src=None, page_aspect=4.86)
+    assert spec.pageSrc is None
+    assert spec.pageAspect is None
+
+
+def test_no_page_leaves_the_framed_hero_alone():
+    """The pre-existing shape: a spec written before this field still renders."""
+    spec = _spec_with_page(page_src=None, page_aspect=None)
+    assert spec.pageSrc is None
+    assert spec.scenes[0].imageSrc == "hero.png"

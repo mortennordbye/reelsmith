@@ -107,6 +107,43 @@ The viewer has about two seconds to recognise a snippet and it has to match what
 they would type. Anything else that renders code needs the same treatment
 (`fontVariantLigatures: "none"` plus `fontFeatureSettings: '"liga" 0, "calt" 0'`).
 
+**The shot is the README, full bleed and scrolling.** It was a browser card
+floating in the middle of the frame, which left roughly a third of a 9:16 frame
+empty above and below it. That was not a composition choice, it is what a 16:10
+screenshot leaves behind when it is dropped into a vertical frame, and in a
+format where the frame is the entire product it was a third of the product spent
+on nothing. `capture_repo` now takes two images in one visit: the hero, capped
+at `HERO_MAX_HEIGHT`, which is what `cover.png` is built from, and the whole
+README at `PAGE_MAX_HEIGHT`, which `ReadmePage.tsx` scrolls.
+
+Three things about it are load bearing:
+
+- **The motion is the page moving, not an effect applied to a still.** Motion
+  graphics are cheap to automate, which is why every generated channel has them
+  and why they read as generated. A page scrolling is the artifact doing the
+  only thing a page does. Do not "improve" this by adding easing, parallax or a
+  push-in on top of it.
+- **`pageAspect` is carried, never measured.** The renderer needs the image's
+  aspect to know how far it may scroll, and measuring an image inside a frame
+  render is how one frame ends up different from its neighbour for no visible
+  reason. `spec.py` refuses a page with no aspect rather than guessing, so it is
+  both fields or neither.
+- **The scroll is bounded by speed as well as by the page**, at 96px a second.
+  Proportional scrolling would make a long README scroll faster in a short
+  scene, which is backwards: how fast a page can be read does not depend on how
+  much of it there is.
+
+Two things it deliberately did not change. **The cover still uses the hero**,
+because a still that scrolls is a still and the cover rule below is written
+about the hero; `Cover.tsx` does not pass a page and that is the reason. And
+**the framed `BrowserFrame` is still the fallback**, for a README too short to
+scroll, a capture that failed, and any spec written before `pageSrc` existed.
+
+**`repo-page.png` has to be named in `STAGED_ASSET_RE`.** The slug pattern is
+greedy over hyphens, so a rule written for `repo.png` does not cover it, and an
+asset the prune does not recognise is one that is never deleted. It is the
+largest file the pipeline stages.
+
 ## Cover stills
 
 **The cover is the README hero. Nothing may cover it.** That screenshot is the

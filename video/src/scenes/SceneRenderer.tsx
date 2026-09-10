@@ -2,6 +2,7 @@ import React from "react";
 import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
 
 import { BrowserFrame } from "../components/BrowserFrame";
+import { ReadmePage } from "../components/ReadmePage";
 import { CodeBlock } from "../components/CodeBlock";
 import { sceneSafeBottom, theme } from "../theme";
 import type { RepoMeta, Scene } from "../types";
@@ -278,7 +279,22 @@ const CodeScene: React.FC<{ scene: Scene; terminal: boolean }> = ({ scene, termi
   </Stage>
 );
 
-const ScreenshotScene: React.FC<{ scene: Scene; repo: RepoMeta }> = ({ scene, repo }) => {
+const ScreenshotScene: React.FC<{
+  scene: Scene;
+  repo: RepoMeta;
+  pageSrc?: string | null;
+  pageAspect?: number | null;
+}> = ({ scene, repo, pageSrc, pageAspect }) => {
+  // The full-bleed scrolling page when the capture produced one. It fills the
+  // frame, where the framed hero left roughly a third of it empty.
+  //
+  // The fallback is not dead code: a README too short to scroll captures no
+  // page, an older spec carries no field, and the cover deliberately does not
+  // pass one, because a still that scrolls is a still and CLAUDE.md's cover
+  // rule is written about the hero.
+  if (pageSrc && pageAspect) {
+    return <ReadmePage src={pageSrc} aspect={pageAspect} url={repo.name} />;
+  }
   if (!scene.imageSrc) return null;
   return (
     <Stage>
@@ -292,10 +308,22 @@ const ScreenshotScene: React.FC<{ scene: Scene; repo: RepoMeta }> = ({ scene, re
   );
 };
 
-export const SceneRenderer: React.FC<{ scene: Scene; repo: RepoMeta }> = ({ scene, repo }) => {
+export const SceneRenderer: React.FC<{
+  scene: Scene;
+  repo: RepoMeta;
+  pageSrc?: string | null;
+  pageAspect?: number | null;
+}> = ({ scene, repo, pageSrc, pageAspect }) => {
   switch (scene.kind) {
     case "screenshot":
-      return <ScreenshotScene scene={scene} repo={repo} />;
+      return (
+        <ScreenshotScene
+          scene={scene}
+          repo={repo}
+          pageSrc={pageSrc}
+          pageAspect={pageAspect}
+        />
+      );
     case "repo_card":
       return <RepoCardScene scene={scene} repo={repo} />;
     case "bullets":

@@ -89,6 +89,20 @@ export const videoSpecSchema = z.object({
   scenes: z.array(sceneSchema),
   captions: z.array(captionSchema),
   /**
+   * The whole README as one tall image, for the shot that scrolls it. One per
+   * video rather than one per scene, because every screenshot scene shows the
+   * same page and three copies of a filename is three chances to disagree.
+   *
+   * Optional: without it a screenshot scene falls back to the framed hero, so
+   * a spec written before this field renders exactly as it used to.
+   */
+  pageSrc: z.string().nullable().optional(),
+  /**
+   * height / width of that capture, so the scroll distance is known without
+   * measuring the image during a frame render.
+   */
+  pageAspect: z.number().positive().nullable().optional(),
+  /**
    * Whether the follow ask appears as an end card. Was `ctaKeyword`, the word
    * to comment for the link; the ask is a follow now and needs no word.
    */

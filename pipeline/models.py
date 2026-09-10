@@ -259,6 +259,22 @@ class VideoSpec(BaseModel):
     scenes: list[Scene]
     captions: list[Caption]
 
+    # The whole README as one tall image, for the shot that scrolls it.
+    #
+    # On VideoSpec rather than on Scene because there is one page per video and
+    # every screenshot scene shows the same one. Putting it on the scene would
+    # mean the same filename repeated three times in a spec, with three chances
+    # for two of them to disagree.
+    #
+    # Optional, and the renderer falls back to the framed hero without it, so a
+    # spec written before this field renders exactly as it used to and a repo
+    # whose README is too short to scroll is not a failure.
+    pageSrc: str | None = None  # noqa: N815  - path relative to video/public/
+    # height / width of that capture. Carried rather than measured, because
+    # measuring an image inside a frame render is how one frame ends up
+    # different from its neighbour for no visible reason.
+    pageAspect: float | None = None  # noqa: N815
+
     # Whether the follow ask appears as an end card. The caption carries the
     # same ask, but a caption sits behind a "more" tap and most viewers never
     # open it, so the video has to say it too.

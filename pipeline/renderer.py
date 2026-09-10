@@ -21,7 +21,14 @@ log = logging.getLogger(__name__)
 
 # The filenames stage_asset() produces: "<slug>-<original name>". Slugs are
 # lowercase alphanumerics and hyphens (see RepoCandidate.slug).
-STAGED_ASSET_RE = re.compile(r"[a-z0-9-]+-(?:voice\.(?:wav|mp3)|repo\.png)")
+#
+# `repo-page.png` has to be named here explicitly. The slug pattern is greedy
+# over hyphens, so a rule written for `repo.png` does not cover it, and an
+# asset this sweep does not recognise is one that is never deleted: public/ is
+# a staging area and the prune is the only thing that empties it. A tall README
+# capture is the largest file the pipeline stages, so accumulating one per run
+# is the worst version of that to get wrong.
+STAGED_ASSET_RE = re.compile(r"[a-z0-9-]+-(?:voice\.(?:wav|mp3)|repo\.png|repo-page\.png)")
 
 # Frame of the opening scene to grab the cover from. The hero entrance is a
 # spring that settles well inside a second; 90 frames (3s at 30fps) is past it
