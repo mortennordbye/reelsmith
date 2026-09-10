@@ -70,6 +70,33 @@ export const captionBand = {
   lineHeight: 1.22,
 } as const;
 
+/**
+ * The band at the top of the frame that the platform's own chrome covers.
+ *
+ * The counterpart to `captionBand`, and it existed as a bare `paddingTop: 300`
+ * in `SceneRenderer` for as long as every scene was a card floating in the
+ * middle of the frame. A full-bleed shot has no padding to hide behind, so the
+ * number had to become a shared one: the browser chrome in `ReadmePage` sat at
+ * y=0 and read as a window sliced off by the top of the screen, which looks
+ * broken rather than deliberate.
+ *
+ * Instagram puts the back arrow and the account name here, TikTok its
+ * Following/For You tabs, and a notched phone loses more again. 230 clears all
+ * three and leaves the chrome bar's bottom edge at 326, which is where scene
+ * content has effectively started all along.
+ *
+ * Nothing that has to be recognised may sit above this line.
+ */
+export const safeTop = 230;
+
+/**
+ * The drawn browser title bar in `ReadmePage`: traffic lights and address bar,
+ * and no taller. In theme rather than beside its component because the hook
+ * strip has to start below it, and two files each holding their own idea of
+ * how tall it is are two files that disagree the first time one changes.
+ */
+export const browserChromeHeight = 96;
+
 /** How much bottom padding a scene needs to stay clear of the caption band. */
 export const sceneSafeBottom =
   captionBand.fromBottom +

@@ -4,7 +4,7 @@ import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } fr
 import { BrowserFrame } from "../components/BrowserFrame";
 import { ReadmePage } from "../components/ReadmePage";
 import { CodeBlock } from "../components/CodeBlock";
-import { sceneSafeBottom, theme } from "../theme";
+import { safeTop, sceneSafeBottom, theme } from "../theme";
 import type { RepoMeta, Scene } from "../types";
 
 /**
@@ -41,7 +41,7 @@ const Stage: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         // Derived from the caption band in theme.ts, not guessed. See there
         // for why a hardcoded 620 let three line phrases overlap the scene.
         paddingBottom: sceneSafeBottom,
-        paddingTop: 300,
+        paddingTop: safeTop + 70,
         justifyContent: "center",
         alignItems: "center",
         opacity: interpolate(enter, [0, 1], [0, 1]),

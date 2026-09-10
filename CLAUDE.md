@@ -139,6 +139,21 @@ about the hero; `Cover.tsx` does not pass a page and that is the reason. And
 **the framed `BrowserFrame` is still the fallback**, for a README too short to
 scroll, a capture that failed, and any spec written before `pageSrc` existed.
 
+**Nothing that has to be recognised may sit above `safeTop`.** It is the
+counterpart to `captionBand` and it existed as a bare `paddingTop: 300` in
+`SceneRenderer` for as long as every scene was a card floating in the middle of
+the frame. A full-bleed shot has no padding to hide behind: the browser chrome
+sat at y=0 and read as a window sliced off by the top of the screen, which is a
+rendering fault rather than a design. Instagram puts the back arrow and account
+name there, TikTok its Following tabs, and a notched phone loses more again.
+The window is inset below it with its top two corners rounded, which is what
+makes the inset read as deliberate.
+
+**The bottom dims to 0.93 rather than painting out.** Solid background below the
+caption left a dead band between the last readable line and the words, which is
+the same wasted frame the full-bleed shot exists to recover, moved to the other
+end.
+
 **`repo-page.png` has to be named in `STAGED_ASSET_RE`.** The slug pattern is
 greedy over hyphens, so a rule written for `repo.png` does not cover it, and an
 asset the prune does not recognise is one that is never deleted. It is the
