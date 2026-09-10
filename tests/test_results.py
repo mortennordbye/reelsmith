@@ -587,7 +587,7 @@ def test_the_block_says_not_to_optimise_skip_alone():
     assert "saved it" in block
 
 
-def test_the_prompt_asks_for_the_viewer_payoff_early():
+def test_the_prompt_asks_for_the_viewer_payoff_early(cfg):
     """The beat the script used to leave implied.
 
     The structure was project-centric end to end: what it is, its problem, a
@@ -595,12 +595,7 @@ def test_the_prompt_asks_for_the_viewer_payoff_early():
     one number that separates the posts which travelled is saves per thousand,
     which is a measure of whether somebody expected to need the thing again.
     """
-    from config import Settings
-
-    from pipeline.scriptwriter import _build_prompt
-    from tests.conftest import candidate as _candidate
-
-    prompt = _build_prompt(_candidate("a/one"), Settings(github_token="x", _env_file=None), [])
+    prompt = _build_prompt(candidate("a/one"), cfg, [])
     # Normalised, because the prompt is a wrapped docstring and every one of
     # these phrases can fall across a line break the next time it is edited.
     flat = " ".join(prompt.split())
