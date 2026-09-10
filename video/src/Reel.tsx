@@ -13,7 +13,7 @@ import {
 import { Background } from "./components/Background";
 import { Captions } from "./components/Captions";
 import { OpeningSceneContext, SceneRenderer } from "./scenes/SceneRenderer";
-import { theme } from "./theme";
+import { browserChromeHeight, safeTop, theme } from "./theme";
 import type { VideoSpec } from "./types";
 
 /** The hook overlay owns the first 3 seconds -- the only part most viewers see. */
@@ -104,7 +104,9 @@ const Hook: React.FC<{ text: string }> = ({ text }) => {
           // browser frame's content. 4:5 crop is a cover rule, not a video
           // one, but Instagram's own chrome sits in the top ~120px, so the
           // text starts below it.
-          paddingTop: 112,
+          // Below the platform's chrome and below the browser title bar, so
+          // the hook never starts on top of the window it is sitting in.
+          paddingTop: safeTop + browserChromeHeight + 36,
           paddingLeft: theme.padding,
           paddingRight: theme.padding,
           paddingBottom: 64,

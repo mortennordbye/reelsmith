@@ -1,10 +1,7 @@
 import React from "react";
 import { AbsoluteFill, Img, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 
-import { sceneSafeBottom, theme } from "../theme";
-
-/** Tall enough for the traffic lights and the address bar, and no taller. */
-const CHROME_HEIGHT = 96;
+import { browserChromeHeight, safeTop, sceneSafeBottom, theme } from "../theme";
 
 /** How far above the caption safe area the page starts fading. */
 const FADE_RUNUP = 260;
@@ -61,7 +58,7 @@ export const ReadmePage: React.FC<Props> = ({ src, aspect, url }) => {
         src={staticFile(src)}
         style={{
           position: "absolute",
-          top: CHROME_HEIGHT,
+          top: safeTop + browserChromeHeight,
           left: 0,
           width: "100%",
           display: "block",
@@ -79,16 +76,24 @@ export const ReadmePage: React.FC<Props> = ({ src, aspect, url }) => {
       <div
         style={{
           position: "absolute",
-          top: 0,
+          // Below the platform's own chrome, not at y=0. A browser window
+          // whose title bar is sliced off by the top of the screen reads as a
+          // rendering fault rather than as a design; see `safeTop`.
+          top: safeTop,
           left: 0,
           right: 0,
-          height: CHROME_HEIGHT,
+          height: browserChromeHeight,
           display: "flex",
           alignItems: "center",
           gap: 14,
           padding: "0 26px",
           backgroundColor: theme.color.surfaceRaised,
           borderBottom: `2px solid ${theme.color.border}`,
+          // Rounded at the top only. The window is inset from the top of the
+          // frame and bleeds off the bottom, so it has two corners and not
+          // four, and squaring them is what made the inset look like a crop.
+          borderTopLeftRadius: theme.radius,
+          borderTopRightRadius: theme.radius,
         }}
       >
         {["#FF5F57", "#FEBC2E", "#28C840"].map((c) => (
@@ -135,7 +140,14 @@ export const ReadmePage: React.FC<Props> = ({ src, aspect, url }) => {
           right: 0,
           bottom: 0,
           height: sceneSafeBottom + FADE_RUNUP,
-          background: `linear-gradient(180deg, rgba(1,4,9,0) 0%, ${theme.color.bg} ${
+          // Dimmed to 0.93, not painted out. Solid black below the caption
+          // left a dead band between the last readable line and the words, and
+          // a full-bleed shot that stops two thirds of the way down is the
+          // same wasted frame this component was written to recover, just
+          // moved to the other end. At 0.93 the page is still faintly there,
+          // which reads as one continuous shot, and the caption still has the
+          // contrast it needs.
+          background: `linear-gradient(180deg, rgba(1,4,9,0) 0%, rgba(1,4,9,0.93) ${
             (FADE_RUNUP / (sceneSafeBottom + FADE_RUNUP)) * 100
           }%)`,
         }}
