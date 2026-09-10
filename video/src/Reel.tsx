@@ -59,7 +59,15 @@ const Hook: React.FC<{ text: string }> = ({ text }) => {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  const scrim = interpolate(resolve, [0, 1], [0.55, 0.25]);
+  // Denser than it was, and the strip is what pays for it. When the hook sat
+  // centred over the hero, every point of scrim was charged against the one
+  // element the shot existed to show, so 0.55 falling to 0.25 was the most it
+  // could afford and the comment below is written about that trade. A strip
+  // darkens the top quarter and leaves the rest of the page untouched, so the
+  // hook can be properly legible over a full-bleed README -- which is a busy,
+  // light-on-dark page of real text rather than the small card on empty
+  // background this used to sit on.
+  const scrim = interpolate(resolve, [0, 1], [0.86, 0.66]);
   const blur = interpolate(resolve, [0, 1], [2, 0]);
   // Fade out over the last 12 frames rather than cutting, which reads as a
   // glitch at this size.
@@ -267,7 +275,12 @@ export const Reel: React.FC<VideoSpec> = (spec) => {
           layout="none"
         >
           <OpeningSceneContext.Provider value={scene.fromFrame === 0}>
-            <SceneRenderer scene={scene} repo={spec.repo} />
+            <SceneRenderer
+              scene={scene}
+              repo={spec.repo}
+              pageSrc={spec.pageSrc}
+              pageAspect={spec.pageAspect}
+            />
           </OpeningSceneContext.Provider>
         </Sequence>
       ))}

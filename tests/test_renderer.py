@@ -116,3 +116,37 @@ def test_an_install_that_changes_nothing_raises(video_dir, npm):
 
     with pytest.raises(RenderError, match="still not installed"):
         renderer._ensure_node_deps(video_dir)
+
+
+# --- Staging ----------------------------------------------------------------
+
+
+def test_the_tall_page_capture_is_pruned_like_every_other_staged_asset():
+    """public/ is a staging area and this sweep is the only thing that empties it.
+
+    The slug pattern is greedy over hyphens, so a rule written for `repo.png`
+    does not cover `repo-page.png`, and an asset the sweep does not recognise is
+    one that is never deleted. The tall capture is the largest file the pipeline
+    stages, so accumulating one per run is the worst version of that to miss.
+    """
+    assert renderer.STAGED_ASSET_RE.fullmatch("a-repo-page.png")
+    assert renderer.STAGED_ASSET_RE.fullmatch("a-repo.png")
+    assert renderer.STAGED_ASSET_RE.fullmatch("a-voice.wav")
+    assert not renderer.STAGED_ASSET_RE.fullmatch("cv-tree.png")
+
+
+def test_pruning_keeps_this_run_and_drops_the_others(tmp_path):
+    public = tmp_path / "public"
+    public.mkdir()
+    for name in (
+        "mine-repo.png", "mine-repo-page.png", "mine-voice.wav",
+        "theirs-repo.png", "theirs-repo-page.png",
+    ):
+        (public / name).write_bytes(b"x")
+    (public / "unrelated.txt").write_bytes(b"x")
+
+    removed = renderer.prune_staged_assets(tmp_path, "mine")
+
+    assert removed == 2
+    left = {p.name for p in public.iterdir()}
+    assert left == {"mine-repo.png", "mine-repo-page.png", "mine-voice.wav", "unrelated.txt"}
