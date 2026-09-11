@@ -62,9 +62,23 @@ they are the reasons people give up on this:
    machine's own copy in `accounts/<name>/data/ig_token.json`, which is what
    `--publish` reads. The gateway holds and refreshes its own separately.
 
-   By hand still works if you would rather: `IG_ACCESS_TOKEN` and `IG_USER_ID`,
-   a 17 digit number, in the account's `.env`. Nothing registers with the
-   gateway that way, so `--enqueue` will queue a row nothing can publish.
+   By hand still works if you would rather: `IG_ACCESS_TOKEN` and `IG_USER_ID`
+   in the account's `.env`. Nothing registers with the gateway that way, so
+   `--enqueue` will queue a row nothing can publish.
+
+   **If you do it by hand, `/me` returns two seventeen digit ids and the
+   obvious one is wrong.** `id` is the app-scoped user id and `user_id` is the
+   Instagram Business account id. `IG_USER_ID` wants the second, because the
+   publisher addresses `graph.instagram.com/{id}/media` with it. Neither looks
+   more correct than the other and nothing is visible until the first publish
+   fails against a node that does not exist. On this account's own token `id`
+   is `37342907808657598` and `user_id` is `17841441696714445`, and it is the
+   second that has been publishing since 2026-08-01. The script reads both and
+   labels them.
+
+   Set `IG_APP_ID` in the root `.env` and the trip deep links straight to the
+   Generate token page rather than the apps list. It is a public value, not a
+   secret: it appears in every authorisation URL.
 
 **This is the one trip that is a paste rather than a browser flow**, and the
 reason is written in the script: the full flow needs an `/instagram/callback`

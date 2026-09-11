@@ -129,6 +129,12 @@ class Settings(BaseSettings):
     # is graph.facebook.com with a different permission set; only the host
     # changes here, so it is a setting rather than a fork in the code.
     ig_graph_host: str = "https://graph.instagram.com"
+    # The Meta app's Instagram app id, which is public rather than secret: it
+    # appears in every authorisation URL. Optional, and read by the consent
+    # trip alone, which uses it to open the dashboard on the page holding the
+    # Generate token button instead of naming a documentation file. Without it
+    # the trip opens the apps list and you pick.
+    ig_app_id: str = ""
     ig_api_version: str = "v23.0"
     # Meta suggests polling a container once a minute for no more than five.
     # Ours are 30-45s of 1080x1920, which in practice finish inside a minute,
