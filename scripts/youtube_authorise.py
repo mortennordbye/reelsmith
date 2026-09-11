@@ -45,8 +45,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from config import Settings  # noqa: E402  - after the sys.path insert above
-from scripts import consent  # noqa: E402
+from scripts import consent  # noqa: E402  - after the sys.path insert above
 
 # Asked for together, in one authorisation, because adding a scope later means
 # going back through the browser and re-consenting.
@@ -64,16 +63,23 @@ SCOPES = [
 CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels"
 
 
-def _flow(secrets_file: Path | None) -> InstalledAppFlow:
-    """The console's JSON if given, otherwise the pair from `.env`."""
+def _flow(secrets_file: Path | None, account: str) -> InstalledAppFlow:
+    """The console's JSON if given, otherwise the pair from `.env`.
+
+    The account's `.env` layered over the root one, because the client pair is
+    an app credential and may sit in either. See `consent.account_settings`.
+    """
     if secrets_file:
         return InstalledAppFlow.from_client_secrets_file(str(secrets_file), scopes=SCOPES)
 
-    cfg = Settings()
+    cfg = consent.account_settings(account)
     if not cfg.youtube_client_id or not cfg.youtube_client_secret:
         raise consent.ConsentError(
-            "Set YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET in .env, or pass\n"
-            "the client_secret_*.json the Google Cloud console downloaded."
+            f"No YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET in .env or in\n"
+            f"accounts/{account}/.env. They identify the Google Cloud project\n"
+            f"rather than the channel, so one pair authorises every account and\n"
+            f"the root .env is where it belongs. Or pass the client_secret_*.json\n"
+            f"the console downloaded."
         )
     return InstalledAppFlow.from_client_config(
         {
@@ -88,7 +94,7 @@ def _flow(secrets_file: Path | None) -> InstalledAppFlow:
     )
 
 
-def authorise(secrets_file: Path | None):
+def authorise(secrets_file: Path | None, account: str):
     """Open the browser, catch the code on loopback, exchange it.
 
     `access_type=offline` asks for a refresh token and `prompt=consent` insists
@@ -96,7 +102,7 @@ def authorise(secrets_file: Path | None):
     been granted returns an access token and no refresh token, which looks like
     success and stores nothing usable.
     """
-    flow = _flow(secrets_file)
+    flow = _flow(secrets_file, account)
     return flow.run_local_server(
         port=0,
         access_type="offline",
@@ -107,6 +113,13 @@ def authorise(secrets_file: Path | None):
             "    channel as well as the brand one, both are offered here and\n"
             "    the wrong pick is not visible again until the first upload.\n"
             "  - An unverified app warning is expected. Advanced, then proceed.\n"
+            # The other two trips print their URL and this one did not, which
+            # leaves nothing to fall back on when the browser does not open or
+            # opens the wrong profile. That is the common case rather than the
+            # rare one: the consent has to happen in a browser already signed
+            # in to the Google account that manages the channel.
+            "  - If it does not open, or opens a profile that is not signed in\n"
+            "    to the right Google account, paste this instead:\n    {url}\n"
         ),
         success_message="Authorised. You can close this tab and go back to the terminal.",
     )
@@ -144,7 +157,7 @@ def trip(args: argparse.Namespace) -> consent.Trip:
     if args.secrets_file and not args.secrets_file.exists():
         raise consent.ConsentError(f"No such file: {args.secrets_file}")
 
-    credentials = authorise(args.secrets_file)
+    credentials = authorise(args.secrets_file, args.account)
     if not credentials.refresh_token:
         raise consent.ConsentError(
             "Google returned no refresh token, so nothing here could publish\n"
