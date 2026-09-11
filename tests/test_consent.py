@@ -456,3 +456,47 @@ def test_an_error_redirect_is_found_rather_than_buried_by_the_dialog():
     denied = "https://gate.example.test/facebook/callback?error=access_denied&state=STATE"
 
     assert consent._query_carrying_the_code(f"{DIALOG} {denied}")["error"] == ["access_denied"]
+
+
+# --- Confirming before registering -------------------------------------------
+
+
+def test_registering_is_confirmed_against_the_account_it_is_for(monkeypatch, capsys):
+    """The Facebook trip was the only one of the four without this, and that
+    was the gap rather than an inconsistency.
+
+    Meta offers a "continue with your previous settings" shortcut to an app you
+    have connected before, and the previous settings belong to whichever
+    identity connected it last. Take it while onboarding a second identity and
+    the consent grants only the first one's Page, /me/accounts returns exactly
+    one row, a chooser that resolves by count takes it, and the second
+    account's Facebook row points at the first account's audience.
+    """
+    monkeypatch.setattr("builtins.input", lambda _p: "y")
+    consent.confirm(
+        what="About to register this Page:",
+        lines=[("Page", "The Whole Quote"), ("id", "123")],
+        account="secondaccount",
+        brand="secondbrand",
+    )
+    printed = capsys.readouterr().out
+
+    # The pair is what is stored, so the pair is what is shown: either half can
+    # be right while the pairing is wrong.
+    for expected in ("The Whole Quote", "123", "secondaccount", "secondbrand"):
+        assert expected in printed
+
+
+def test_anything_but_yes_stores_nothing(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda _p: "")
+    with pytest.raises(SystemExit) as raised:
+        consent.confirm(what="x", lines=[], account="a", brand="b")
+    assert "Nothing was stored" in str(raised.value)
+
+
+def test_a_derived_brand_is_labelled_rather_than_shown_blank(monkeypatch, capsys):
+    """Empty is a real answer here, meaning the gateway derives from the
+    handle. A blank line reads as a bug."""
+    monkeypatch.setattr("builtins.input", lambda _p: "y")
+    consent.confirm(what="x", lines=[], account="a", brand="")
+    assert "derived from the handle" in capsys.readouterr().out

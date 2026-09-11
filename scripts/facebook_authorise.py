@@ -228,7 +228,12 @@ def choose(rows: list[dict]) -> dict:
     on the wrong Page, and nothing later undoes that.
     """
     if len(rows) == 1:
-        print(f"\nOne Page: {rows[0].get('name')} ({rows[0].get('id')})")
+        # Printed rather than silently taken. One row is not evidence of the
+        # right row: Meta's "continue with your previous settings" shortcut
+        # re-grants whatever the last identity to connect this app was given,
+        # which is exactly one Page and the wrong one. `consent.confirm` in
+        # `trip` is what actually stops it; this line is what makes it legible.
+        print(f"\nThis consent covers one Page: {rows[0].get('name')} ({rows[0].get('id')})")
         return rows[0]
 
     print("\nPages this consent covers:\n")
@@ -284,6 +289,12 @@ def trip(args: argparse.Namespace) -> consent.Trip:
 
     page = choose(pages(user_token(authorise(app_id), app_id, app_secret)))
     page_id = str(page.get("id") or "")
+    consent.confirm(
+        what="About to register this Page:",
+        lines=[("Page", str(page.get("name") or "?")), ("id", page_id)],
+        account=args.account,
+        brand=brand,
+    )
     return consent.Trip(
         platform="facebook",
         account_id=page_id,

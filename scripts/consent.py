@@ -149,6 +149,31 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def confirm(*, what: str, lines: list[tuple[str, str]], account: str, brand: str) -> None:
+    """Show what is about to be registered, against whom, and stop unless told.
+
+    Shared because the Facebook trip did not have one, and that was the gap
+    that mattered rather than an inconsistency. Meta offers a "continue with
+    your previous settings" shortcut to an app you have connected before, and
+    the previous settings belong to whichever identity connected it last. Take
+    it while onboarding a second identity and the consent grants only the first
+    one's Page, `/me/accounts` returns exactly one row, a chooser that resolves
+    by count takes it, and the second account's Facebook row points at the
+    first account's audience. Nothing later undoes that.
+
+    The account and the brand are printed next to the destination on purpose.
+    Either half can be right while the pair is wrong, and the pair is what is
+    being stored.
+    """
+    print(f"\n{what}")
+    for label, value in lines:
+        print(f"  {label:9} {value}")
+    print(f"  {'account':9} {account}")
+    print(f"  {'brand':9} {brand or '(derived from the handle)'}")
+    if input("\nRegister that? [y/N] ").strip().lower() != "y":
+        raise ConsentError("Stopped. Nothing was stored.")
+
+
 def account_home(name: str) -> Path:
     """The account directory, or a refusal naming what exists.
 
