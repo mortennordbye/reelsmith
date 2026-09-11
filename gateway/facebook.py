@@ -553,7 +553,19 @@ def _error(what: str, code: str, message: str) -> InsightsError:
 
 
 def _refused_metric(code: str, message: str) -> bool:
-    return code.split("/")[0] == "100" and "valid insights metric" in message.lower()
+    """A request Meta refused over what it asked for, rather than who asked.
+
+    Two shapes. `(#100) The value must be a valid insights metric` names a
+    retired metric. `(#1) An unknown error has occurred` is what production
+    answered for every Reel on 2026-09-11, once the Pages had `read_insights`,
+    and Meta documents that text on the Instagram edge for a metric combination
+    it will not serve. It is also how a bad minute looks, which is why
+    `probe.Refusals` is what decides between the two rather than this.
+    """
+    family = code.split("/")[0]
+    if family == "1":
+        return True
+    return family == "100" and "valid insights metric" in message.lower()
 
 
 async def _read(
@@ -589,9 +601,9 @@ async def read_insights(
     and a sweep that made two requests per post would double the calls to
     answer one question.
 
-    **A refused metric costs one probe per metric, once per process.** The
-    request is repeated with each metric alone, the ones Meta refuses are
-    remembered and named in the log, and the reading is taken without them. A
+    **A refused metric costs one request per metric, once per process.** The
+    names are added back one at a time, the ones Meta refuses are remembered
+    and named in the log, and the reading is taken without them. A
     metric left out reads as 0 in its column, which is the cost of having any
     numbers at all, and the warning is what says which column that is.
     """
