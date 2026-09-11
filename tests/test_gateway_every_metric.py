@@ -22,7 +22,7 @@ from datetime import timedelta
 import httpx
 import pytest
 
-from gateway import analysis, db, insights, probe
+from gateway import analysis, db, facebook, insights, panel, probe
 from gateway.app import create_app
 from gateway.graph import GraphClient
 from gateway.metrics import Metrics
@@ -48,8 +48,10 @@ CURVE = [[i / 100, round(1.2 - i / 100, 3), 0.4] for i in range(1, 101)]
 def _nothing_refused_carries_over():
     """What a platform refused is remembered per process, and tests share one."""
     probe.forget_all()
+    facebook.forget_refused_metrics()
     yield
     probe.forget_all()
+    facebook.forget_refused_metrics()
 
 
 @pytest.fixture
@@ -431,6 +433,48 @@ async def test_two_reel_metrics_meta_will_not_serve_together_keep_the_first(conn
     extra = db.extra_of((await db.latest_insights(conn, PAGE_ID))["fb-1"])
     assert extra["post_video_followers"] == 3
     assert "post_video_retention_graph" not in extra
+
+
+async def test_a_page_post_meta_gives_no_reach_for_is_asked_once_and_shows_no_zero(
+    conn, cfg, metrics, caplog
+):
+    """If the Page post route is refused too, reach is an absence: 0 in the
+    column the table has, nothing in `extra`, and one warning a process rather
+    than one a Reel."""
+    account = await facebook_page(conn)
+    await publish(conn, account_id=PAGE_ID, media_id="fb-1")
+    await publish(conn, account_id=PAGE_ID, media_id="fb-2")
+    meta = FakeMeta()
+    meta.facebook.insights = {
+        "fb-1": {"blue_reels_play_count": 900},
+        "fb-2": {"blue_reels_play_count": 800},
+    }
+    meta.facebook.post_reach_error = {
+        "code": 100, "message": "(#100) The value must be a valid insights metric",
+    }
+
+    with caplog.at_level("WARNING"):
+        assert await fb_sweep(conn, meta, cfg, metrics, account) == 2
+
+    assert len(meta.facebook.post_reach_requests) == 1
+    latest = await db.latest_insights(conn, PAGE_ID)
+    for media_id in ("fb-1", "fb-2"):
+        assert latest[media_id]["reach"] == 0
+        assert facebook.POST_REACH_METRIC not in db.extra_of(latest[media_id])
+    assert "reach stays unmeasured" in caplog.text
+
+
+def test_facebook_reach_is_a_column_only_where_it_arrived():
+    reading = {"views": 900, "reach": 0, "avg_watch_ms": 7000, "likes": 5, "comments": 1}
+
+    unmeasured = panel.post_table(db.PLATFORM_FACEBOOK, [{"reading": reading, "extra": {}}])
+    measured = panel.post_table(db.PLATFORM_FACEBOOK, [{
+        "reading": {**reading, "reach": 1180},
+        "extra": {facebook.POST_REACH_METRIC: 1180},
+    }])
+
+    assert "Reach" not in [c.label for c in unmeasured["columns"]]
+    assert "Reach" in [c.label for c in measured["columns"]]
 
 
 # --- What the page makes of it --------------------------------------------------

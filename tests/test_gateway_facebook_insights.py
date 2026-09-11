@@ -11,7 +11,7 @@ this platform cannot answer that at all.
 
 So the assertions are about both halves:
 
-- **Storage.** Plays into `views`, unique impressions into `reach`, the
+- **Storage.** Plays into `views`, the Page post's unique views into `reach`, the
   reaction breakdown summed into `likes`, and the two watch time metrics into
   their own columns. `saved`, `shares`, `skip_rate` and `avg_view_pct` stay 0
   and mean "not measured here".
@@ -119,14 +119,14 @@ async def test_a_metric_meta_refuses_is_dropped_named_and_probed_once(
         await publish(conn)
         await publish(conn, video_id="fb-video-2")
         meta.facebook.insights = {"fb-video-1": READING, "fb-video-2": READING}
-        meta.facebook.rejected_metrics = {"post_total_media_view_unique"}
+        meta.facebook.rejected_metrics = {"fb_reels_total_plays"}
 
         with caplog.at_level("WARNING"):
             assert await sweep(conn, meta, cfg, metrics) == 2
 
         assert (await db.latest_insights(conn, PAGE_ID))["fb-video-1"]["views"] == 1614
-        assert "post_total_media_view_unique" in caplog.text
-        remaining = [m for m in facebook.INSIGHT_METRICS if m != "post_total_media_view_unique"]
+        assert "fb_reels_total_plays" in caplog.text
+        remaining = [m for m in facebook.INSIGHT_METRICS if m != "fb_reels_total_plays"]
         # Walked once for the whole sweep, not once per Reel: the first post
         # costs the full request plus one per name added back, and the second
         # asks straight for what is left.
@@ -160,17 +160,22 @@ async def test_the_reaction_breakdown_is_summed_into_likes(conn, meta, cfg, metr
     assert (await db.latest_insights(conn, PAGE_ID))["fb-video-1"]["likes"] == 58
 
 
-async def test_reach_is_stored_because_this_platform_actually_reports_it(
+async def test_reach_comes_from_the_page_post_because_meta_retired_it_on_reels(
     conn, meta, cfg, metrics
 ):
-    """The column YouTube and TikTok leave at zero. Both Meta surfaces fill it,
-    which is why the Facebook board carries it and the other two do not."""
+    """Meta took Reels reach out of the API on 2026-06-15, and the video node
+    refused both names this service had used for it. Unique views on the
+    Reel's Page post is what replaced it, so that is where it is read."""
     await publish(conn)
     meta.facebook.insights = {"fb-video-1": READING}
+    meta.facebook.post_reach = {f"{PAGE_ID}_fb-video-1": 1180}
 
     await sweep(conn, meta, cfg, metrics)
 
-    assert (await db.latest_insights(conn, PAGE_ID))["fb-video-1"]["reach"] == 1180
+    reading = (await db.latest_insights(conn, PAGE_ID))["fb-video-1"]
+    assert reading["reach"] == 1180
+    assert db.extra_of(reading)[facebook.POST_REACH_METRIC] == 1180
+    assert meta.facebook.post_reach_requests == [f"{PAGE_ID}_fb-video-1"]
 
 
 async def test_watch_time_lands_in_the_columns_that_already_exist(conn, meta, cfg, metrics):
@@ -305,11 +310,12 @@ async def test_the_results_api_cannot_return_a_facebook_post(conn, meta, cfg):
 # --- What the board may show --------------------------------------------------
 
 
-def test_the_board_shows_reach_and_leaves_shares_out():
-    """Facebook is the only platform here besides Instagram that reports reach,
-    and the only one that reports no share count at all."""
+def test_the_board_leaves_reach_and_shares_out():
+    """Shares arrive fused to comments, and reach went when Meta retired it for
+    Reels on 2026-06-15. A fixed column for either would show zeroes on every
+    Page Meta gives nothing for."""
     columns = analysis.measured_columns("facebook")
 
-    assert "reach" in columns
+    assert "reach" not in columns
     assert "shares" not in columns
     assert "saved" not in columns

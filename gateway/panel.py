@@ -70,7 +70,9 @@ CAPS = {
     db.PLATFORM_INSTAGRAM: Caps("Instagram", "skip_rate", "skip", True, True, True, "account"),
     db.PLATFORM_YOUTUBE: Caps("YouTube", "avg_view_pct", "viewed", False, True, False, "none"),
     db.PLATFORM_TIKTOK: Caps("TikTok", None, "", False, False, False, "tiktok"),
-    db.PLATFORM_FACEBOOK: Caps("Facebook", None, "", True, True, False, "none"),
+    # Reach is not a fixed capability since Meta retired it for Reels; see
+    # `analysis._MEASURED`.
+    db.PLATFORM_FACEBOOK: Caps("Facebook", None, "", False, True, False, "none"),
 }
 
 
@@ -1107,7 +1109,9 @@ POST_COLUMNS: dict[str, tuple[Column, ...]] = {
     db.PLATFORM_FACEBOOK: (
         Column("views", "Views"),
         Column("fb_reels_replay_count", "Replays"),
-        Column("reach", "Reach"),
+        # From `extra` rather than the `reach` column, which is 0 on a Page
+        # Meta gives no post reach for. See `facebook.read_post_reach`.
+        Column("post_total_media_view_unique", "Reach"),
         Column("avg_watch_ms", "Watch", "ms"),
         Column("post_video_retention_graph", "At half", "segments_half"),
         Column("post_video_followers", "Follows"),
