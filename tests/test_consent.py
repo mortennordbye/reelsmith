@@ -199,3 +199,75 @@ def test_an_account_may_override_the_shared_app(tmp_path, monkeypatch):
     (tmp_path / "acct" / ".env").write_text("YOUTUBE_CLIENT_ID=its-own-app\n")
 
     assert consent.account_settings("acct").youtube_client_id == "its-own-app"
+
+
+# --- The Instagram trip, and the id it must not pick -------------------------
+
+
+def _ig_me(monkeypatch, payload):
+    from scripts import instagram_authorise as ig
+
+    monkeypatch.setattr(ig, "_graph", lambda *a, **k: payload)
+    return ig
+
+
+def test_the_instagram_trip_registers_the_business_id_not_the_app_scoped_one(monkeypatch):
+    """`/me` returns two seventeen digit ids and the obvious one is wrong.
+
+    On the Instagram Login path `id` is the app-scoped user id and `user_id` is
+    the Instagram Business account id. The publisher addresses
+    `graph.instagram.com/{id}/media` with the second, so it is `user_id` that
+    belongs in `IG_USER_ID` and on the account row.
+
+    Neither looks more correct than the other, and nothing about the wrong one
+    is visible until the first publish fails against a node that does not
+    exist. Measured on account 1's own token: `id` is 37342907808657598 and
+    `user_id` is 17841441696714445, and it is the second that has been
+    publishing since 2026-08-01.
+    """
+    ig = _ig_me(monkeypatch, {
+        "id": "37342907808657598",
+        "user_id": "17841441696714445",
+        "username": "thenightlybuild",
+        "account_type": "BUSINESS",
+    })
+    found = ig.account_of("https://graph.instagram.com", "tok", "v23.0")
+    assert found["user_id"] == "17841441696714445"
+
+
+def test_a_token_with_no_user_id_is_refused_and_says_why(monkeypatch):
+    """A token minted through Facebook Login answers on graph.facebook.com and
+    reaches its Instagram account through a Page, which is a different flow.
+    Refusing here beats registering a Facebook user id as an Instagram one."""
+    ig = _ig_me(monkeypatch, {"id": "123", "username": "someone"})
+    with pytest.raises(SystemExit) as raised:
+        ig.account_of("https://graph.instagram.com", "tok", "v23.0")
+    assert "Facebook Login" in str(raised.value)
+
+
+def test_a_personal_account_is_refused(monkeypatch):
+    """The Content Publishing API does not work with Personal and neither do
+    full insights. Switching is free and reversible, so this is worth stopping
+    for rather than discovering at the first publish."""
+    ig = _ig_me(monkeypatch, {
+        "id": "1", "user_id": "2", "username": "x", "account_type": "PERSONAL",
+    })
+    with pytest.raises(SystemExit) as raised:
+        ig.account_of("https://graph.instagram.com", "tok", "v23.0")
+    assert "Personal" in str(raised.value)
+
+
+def test_the_dashboard_link_is_the_setup_page_when_the_app_is_known(monkeypatch):
+    """The complaint this answers: the YouTube trip opens a browser and you are
+    where you need to be, and this one used to print a documentation path."""
+    from scripts import instagram_authorise as ig
+
+    opened = []
+    monkeypatch.setattr(ig.webbrowser, "open", opened.append)
+
+    ig.open_dashboard("1234567890")
+    assert opened == [f"{ig.APPS_URL}1234567890/{ig.SETUP_PATH}"]
+
+    opened.clear()
+    ig.open_dashboard("")
+    assert opened == [ig.APPS_URL]

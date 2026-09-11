@@ -10,11 +10,17 @@ Run it once per account:
 
     uv run python scripts/authorise.py instagram --account thewholequote
 
-It asks for the long-lived user token on a prompt rather than taking it on
-argv, which is visible in `ps` and lands in shell history. From there it does
-what the other three trips do: read the account back from Meta rather than
-taking it on trust, register it with the gateway, and write `IG_USER_ID` into
-the account's `.env`.
+It opens the Meta app dashboard on the page the token comes from, walks the
+three steps there, then asks for the long-lived user token on a prompt rather
+than taking it on argv, which is visible in `ps` and lands in shell history.
+From there it does what the other three trips do: read the account back from
+Meta rather than taking it on trust, register it with the gateway, and write
+`IG_USER_ID` into the account's `.env`.
+
+**Opening the dashboard is the point rather than a nicety.** The YouTube trip
+opens a browser and the operator is where they need to be; this one printed the
+name of a documentation file, which is the same answer as "look it up". These
+steps happen once per identity and nobody remembers them in between.
 
 **This is a paste rather than a browser trip, and that is a real difference
 from the other three.** Instagram Login has an authorisation code flow like
@@ -43,6 +49,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import sys
+import webbrowser
 from pathlib import Path
 
 import httpx
@@ -103,16 +110,96 @@ def refresh(host: str, token: str) -> tuple[str, int | None]:
     return data.get("access_token") or token, data.get("expires_in")
 
 
+# The dashboard page holding the Generate token button, and the apps list to
+# fall back to when nobody has said which app this is.
+APPS_URL = "https://developers.facebook.com/apps/"
+SETUP_PATH = "instagram-business/API-setup-with-instagram-login/"
+
+
+def open_dashboard(app_id: str) -> None:
+    """Put the operator on the page the token comes from.
+
+    The YouTube trip opens a browser and the operator is where they need to be.
+    This one used to print the name of a documentation file, which is the same
+    answer as "look it up", and the steps below are not ones anybody remembers
+    between accounts because they happen once per identity.
+
+    The app id is public, so a deep link costs nothing. Without one this opens
+    the apps list, which is still one click from the right place rather than a
+    file path.
+    """
+    url = f"{APPS_URL}{app_id}/{SETUP_PATH}" if app_id else APPS_URL
+    print(
+        "\nA browser is opening on the Meta app dashboard. Three steps there,\n"
+        "in this order, and the second is the one that is easy to miss:\n"
+        "\n"
+        "  1. Instagram, then app roles: add the account as an Instagram\n"
+        "     tester. This is what grants Standard Access to an account you\n"
+        "     own, and it is why none of this needs App Review.\n"
+        "  2. Accept the invite from Instagram itself, signed in as that\n"
+        "     account: Settings, Website permissions, Tester invites. Until\n"
+        "     this is accepted the account is not offered in step 3, and the\n"
+        "     error much later names nothing useful.\n"
+        "  3. Instagram, API setup with Instagram business login, Generate\n"
+        "     access tokens. Pick the account and copy what it hands back.\n"
+        "     That button returns a long-lived token, so there is no\n"
+        "     short-lived exchange to do by hand.\n"
+        f"\n  If it does not open: {url}\n"
+    )
+    if not app_id:
+        print(
+            "  No IG_APP_ID in .env, so this is the apps list rather than the\n"
+            "  page itself. Setting it deep links every trip after this one.\n"
+        )
+    webbrowser.open(url)
+
+
 def account_of(host: str, token: str, api_version: str) -> dict:
     """Which account this token actually belongs to.
 
     Read back rather than taken on trust, the same as `channel_of` on the
-    YouTube trip. An id copied out of the Graph API Explorer next to the wrong
-    account looks exactly like the right one.
+    YouTube trip. A token generated next to the wrong account in the dashboard
+    looks exactly like the right one.
+
+    **`/me` returns two ids and the obvious one is wrong**, which is the same
+    shape of trap as a Facebook Page having two. On the Instagram Login path
+    `id` is the app-scoped user id and `user_id` is the Instagram Business
+    account id. The publisher addresses `graph.instagram.com/{id}/media` with
+    the second, so it is `user_id` that belongs in `IG_USER_ID` and on the
+    account row. Both are seventeen digits and neither looks more correct than
+    the other, so nothing about the wrong one is visible until the first
+    publish fails against a node that does not exist.
+
+    Measured on this account's own token: `id` is 37342907808657598 and
+    `user_id` is 17841441696714445, and it is the second that has been
+    publishing since 2026-08-01.
     """
-    found = _graph(host, f"/{api_version}/me", {"fields": "id,username", "access_token": token})
-    if not found.get("id"):
-        raise consent.ConsentError(f"That token names no account: {found}")
+    found = _graph(
+        host,
+        f"/{api_version}/me",
+        {"fields": "id,user_id,username,account_type", "access_token": token},
+    )
+    if not found.get("user_id"):
+        raise consent.ConsentError(
+            f"That token answered with no user_id: {found}\n"
+            f"This trip is the Instagram Login path, which is what\n"
+            f"IG_GRAPH_HOST defaults to. A token minted through Facebook Login\n"
+            f"answers on graph.facebook.com and reaches its Instagram account\n"
+            f"through a Page instead, which is a different flow this does not do."
+        )
+    kind = str(found.get("account_type") or "").upper()
+    if kind == "PERSONAL":
+        raise consent.ConsentError(
+            "That account is Personal. The Content Publishing API does not "
+            "work with it and neither do full insights. Switch it to Business, "
+            "which is free and reversible, and run this again."
+        )
+    if kind and kind != "BUSINESS":
+        print(
+            f"\nThat account is {kind} rather than Business. Reels publishing is "
+            f"reported to work on Business only, so this may fail at the first "
+            f"publish."
+        )
     return found
 
 
@@ -123,10 +210,13 @@ def trip(args: argparse.Namespace) -> consent.Trip:
     brand = consent.brand_for(args.account, args.brand)
     cfg = consent.account_settings(args.account)
 
+    if not args.no_browser:
+        open_dashboard(cfg.ig_app_id)
+
     print(
-        "\nPaste the long-lived Instagram user token. It is not echoed, and it\n"
-        "is not taken on the command line: argv is visible in `ps`.\n"
-        "Where to get one is docs/instagram-api-setup.md."
+        "\nPaste the long-lived Instagram user token. It is not echoed, so\n"
+        "nothing will appear. It is not taken on the command line either:\n"
+        "argv is visible in `ps` and lands in shell history."
     )
     pasted = getpass.getpass("Token: ").strip()
     if not pasted:
@@ -135,17 +225,18 @@ def trip(args: argparse.Namespace) -> consent.Trip:
     token, expires_in = refresh(cfg.ig_graph_host, pasted)
     account = account_of(cfg.ig_graph_host, token, cfg.ig_api_version)
     username = str(account.get("username") or "")
-    print(f"\nAccount:  {username or '(no username)'}")
-    print(f"Id:       {account['id']}")
+    print(f"\nAccount:  @{username or '(no username)'}  ({account.get('account_type', '?')})")
+    print(f"Id:       {account['user_id']}   [the one that publishes]")
+    print(f"App id:   {account['id']}   [app scoped, not this]")
     if input("\nIs that the account to publish to? [y/N] ").strip().lower() != "y":
         raise consent.ConsentError("Stopped. Nothing was stored.")
 
     return consent.Trip(
         platform="instagram",
-        account_id=str(account["id"]),
+        account_id=str(account["user_id"]),
         username=username,
         payload={
-            "account_id": str(account["id"]),
+            "account_id": str(account["user_id"]),
             "access_token": token,
             "username": username,
             "expires_in": expires_in,
@@ -168,6 +259,11 @@ def trip(args: argparse.Namespace) -> consent.Trip:
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
     consent.add_common_arguments(parser)
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="skip opening the Meta app dashboard",
+    )
     parser.add_argument(
         "--no-subscribe",
         action="store_true",
