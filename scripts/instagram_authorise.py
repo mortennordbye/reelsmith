@@ -145,7 +145,7 @@ STEPS = [
     ),
     (
         "instagram-business/API-setup-with-instagram-login/",
-        False,
+        True,
         "Generate access tokens, and pick that account. The button returns a\n"
         "     long-lived token, so there is no short-lived exchange by hand.\n"
         "     Copy it and come back here.",
