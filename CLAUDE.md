@@ -552,9 +552,27 @@ readers default to it.
 served by `gateway/pages.py`. Every platform demands a privacy policy URL before
 it will take an application, and TikTok additionally demands terms of service
 and an official website. They were `docs/privacy.md` and `docs/terms.md` until
-2026-08-27. **The three legal pages name every surface the account posts to**,
-so adding a destination means editing them, and the Facebook Page link sits in
-all three.
+2026-08-27.
+
+**They named every surface the account posts to until 2026-09-11, and now they
+name none.** That rule made adding a destination an edit to three pages, which
+was merely tedious. What broke it was a second identity: every platform holds
+one privacy policy URL *per app*, one app now publishes for two identities, and
+a policy naming the first covered neither the second nor any identity after it.
+
+Generating the list from the registered destinations was the obvious fix and
+the wrong one, because it would name both identities on a URL anyone can read,
+which is the link `PROFILE.md` is gitignored to prevent. Naming none of them
+covers all of them and adds nothing to cover the next. The pages still say
+*which* four platforms, because a reviewer arriving from an app listing has to
+be able to tell the policy covers the surface being reviewed.
+
+`GATEWAY_CONTACT_EMAIL` is the last identifying string on them and it defaults
+to the address that was hardcoded, because a privacy policy pointing at a
+mailbox nobody reads is worse than one naming an account. A neutral alias
+finishes it. That link is the weaker of the two in any case: an address ties
+the service to the identity already openly tied to it, where a second handle
+would tie two accounts to each other.
 
 The two callbacks are on the same router for the same reason and are not legal
 pages: **TikTok will not register an OAuth redirect URI that is not https**, so

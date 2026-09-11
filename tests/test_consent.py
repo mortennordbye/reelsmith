@@ -482,3 +482,28 @@ def test_a_derived_brand_is_labelled_rather_than_shown_blank(monkeypatch, capsys
     monkeypatch.setattr("builtins.input", lambda _p: "y")
     consent.confirm(what="x", lines=[], account="a", brand="")
     assert "derived from the handle" in capsys.readouterr().out
+
+
+def test_facebook_refuses_a_missing_app_id_before_printing_any_url(monkeypatch, capsys):
+    """A list of addresses that 404 is worse than no list.
+
+    Without an app id every prerequisite URL carried a `<app-id>` placeholder,
+    which is a dead link presented as an instruction. The refusal moved above
+    the printing rather than below it.
+    """
+    import argparse
+
+    from scripts import facebook_authorise as fb
+
+    monkeypatch.setattr(fb.consent, "require_terminal", lambda: None)
+    monkeypatch.setattr(fb.consent, "brand_for", lambda *_a: "")
+    bare = fb.consent.Settings(_env_file=None)
+    monkeypatch.setattr(fb.consent, "account_settings", lambda _n: bare)
+    monkeypatch.setattr(fb.os.environ, "get", lambda *_a: "")
+
+    args = argparse.Namespace(account="x", brand="", no_browser=False)
+    with pytest.raises(SystemExit) as raised:
+        fb.trip(args)
+
+    assert "FACEBOOK_APP_ID" in str(raised.value)
+    assert "<app-id>" not in capsys.readouterr().out
