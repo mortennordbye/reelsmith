@@ -150,8 +150,12 @@ def channel_of(credentials) -> dict:
 
 def trip(args: argparse.Namespace) -> consent.Trip:
     """The browser half, and what it produced. Called by `authorise.py`."""
-    # Before the browser, so a misspelt account name costs nothing rather than
-    # a spent consent screen.
+    # Both before the browser, so neither a misspelt account name nor a shell
+    # that cannot prompt costs a spent consent screen. This trip prompts only
+    # for a yes or no, which is the cheapest prompt here and the most expensive
+    # place to discover there is no terminal: the consent has been granted by
+    # then, and a refresh token is handed out once per authorisation.
+    consent.require_terminal()
     brand = consent.brand_for(args.account, args.brand)
 
     if args.secrets_file and not args.secrets_file.exists():

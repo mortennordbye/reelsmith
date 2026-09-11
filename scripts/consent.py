@@ -207,6 +207,54 @@ def account_settings(name: str) -> Settings:
     return Settings(_env_file=(ROOT / ".env", account_home(name) / ".env"))
 
 
+def require_terminal() -> None:
+    """Refuse before anything is opened when there is no terminal to prompt on.
+
+    Every trip prompts: three of them for a paste and all four for a yes or no
+    at the end. `getpass` needs a terminal it can turn echo off on, and plain
+    `input` needs a stdin with something behind it. Neither a pipe nor an
+    editor's shell nor Claude Code's `!` prefix is one.
+
+    Checked first, in every flow, because the failure is worst at the end. The
+    Instagram trip opened three tabs, printed the steps, and then raised
+    EOFError on the prompt, which is the least useful moment to find out. A
+    consent trip that dies after the browser has been opened is one that may
+    have spent a consent screen for nothing.
+    """
+    if not sys.stdin.isatty():
+        raise ConsentError(
+            "This trip prompts, which needs a real terminal. Run it in a\n"
+            "terminal window rather than through a pipe, an editor's shell, or\n"
+            "Claude Code's `!` prefix, none of which is a tty.\n"
+            "\n"
+            "Nothing was opened and nothing was registered."
+        )
+
+
+def open_pages(steps: list[tuple[str, bool, str]]) -> None:
+    """Open the setup pages as tabs, in the order they are used.
+
+    The YouTube trip opens a browser and the operator is where they need to be.
+    The others named a documentation file, which is the same answer as "look it
+    up", and these steps happen once per identity so nobody remembers them in
+    between.
+
+    Each step is a URL, whether that URL has been confirmed, and what to do
+    there. The URLs are constants in the flow rather than prose, because one
+    somebody has to reconstruct from a description is one they look up instead.
+
+    `confirmed` says whether the address was read off a real address bar or
+    derived from a documented URL shape, and an underived one says so when it
+    prints. A wrong deep link is worse than no link: it lands on a 404 that
+    reads as the feature being gone rather than as a stale constant.
+    """
+    print(f"\nOpening {len(steps)} tabs, which are the steps in order:\n")
+    for index, (url, confirmed, what) in enumerate(steps, start=1):
+        note = "" if confirmed else "   [path not yet verified; say so if it 404s]"
+        print(f"  {index}. {what}\n     {url}{note}\n")
+        webbrowser.open(url)
+
+
 # --- The browser trip that lands on the gateway ----------------------------
 
 

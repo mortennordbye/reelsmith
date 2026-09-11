@@ -77,6 +77,48 @@ REDIRECT_URI = os.environ.get("FACEBOOK_REDIRECT_URI", "https://gate.nordbye.it/
 # this account will never do.
 SCOPES = "pages_show_list,pages_manage_posts,pages_read_engagement"
 
+APPS_URL = "https://developers.facebook.com/apps/"
+# A Page is created on Facebook itself rather than in the app dashboard, and it
+# is the step that is not a click: a Page is a public surface with a name, and
+# `PROFILE.md` treats naming one as a decision rather than a form.
+CREATE_PAGE_URL = "https://www.facebook.com/pages/create/"
+
+
+def setup_pages(app_id: str) -> list[tuple[str, bool, str]]:
+    """The three places this trip needs, in the order to use them.
+
+    Unlike the Instagram trip, the first of these is not configuration. A Page
+    has to exist and be named before anything here can authorise one, and the
+    consent dialog offers only Pages the person already administers.
+    """
+    return [
+        (
+            CREATE_PAGE_URL,
+            True,
+            "The Page itself, if this identity has none. A Page is a public\n"
+            "     surface with a name rather than a form to fill in, and it is\n"
+            "     not eligible for a username until it has followers and a\n"
+            "     post, so it lives on a numeric URL for a while. Skip if the\n"
+            "     Page already exists.",
+        ),
+        (
+            f"{APPS_URL}{app_id}/settings/basic/",
+            False,
+            "App settings, Basic: the App ID and App Secret. Put them in the\n"
+            "     root .env as FACEBOOK_APP_ID and FACEBOOK_APP_SECRET, which\n"
+            "     is where an app credential belongs since one app serves every\n"
+            "     Page. Skip if they are already there.",
+        ),
+        (
+            f"{APPS_URL}{app_id}/fb-login/settings/",
+            False,
+            "Facebook Login for Business, Settings: the redirect URI below has\n"
+            "     to be listed under Valid OAuth Redirect URIs, character for\n"
+            "     character. A mismatch is refused with an error naming neither\n"
+            "     side.",
+        ),
+    ]
+
 
 def authorise(app_id: str) -> str:
     """Open the browser, take the code back by hand. Returns the code."""
@@ -195,17 +237,31 @@ def choose(rows: list[dict]) -> dict:
 
 def trip(args: argparse.Namespace) -> consent.Trip:
     """The browser half, and what it produced. Called by `authorise.py`."""
-    # Before the browser, so a misspelt account name costs nothing rather than
-    # a spent consent screen.
+    # Both before the browser, so neither a misspelt account name nor a shell
+    # that cannot prompt costs a spent consent screen.
+    consent.require_terminal()
     brand = consent.brand_for(args.account, args.brand)
 
-    app_id = os.environ.get("FACEBOOK_APP_ID", "")
-    app_secret = os.environ.get("FACEBOOK_APP_SECRET", "")
+    # The account's `.env` layered over the root one, so an identity with its
+    # own Meta app stays possible, with the environment still winning over
+    # both for a one-off. Reading `os.environ` alone meant typing both on the
+    # command line that invoked this, and a secret typed there is one prefixed
+    # assignment away from the shell history that argparse is avoided for.
+    cfg = consent.account_settings(args.account)
+    app_id = os.environ.get("FACEBOOK_APP_ID", "") or cfg.facebook_app_id
+    app_secret = os.environ.get("FACEBOOK_APP_SECRET", "") or cfg.facebook_app_secret
+
+    if not args.no_browser:
+        consent.open_pages(setup_pages(app_id or "<app-id>"))
+        print(f"  The redirect URI this trip uses: {REDIRECT_URI}\n")
+
     if not app_id or not app_secret:
         raise consent.ConsentError(
-            "Set FACEBOOK_APP_ID and FACEBOOK_APP_SECRET in the environment.\n"
-            "Neither is taken on the command line: argv is visible in `ps` and\n"
-            "lands in shell history."
+            f"No FACEBOOK_APP_ID and FACEBOOK_APP_SECRET, in the environment or\n"
+            f"in .env or accounts/{args.account}/.env. They identify the Meta\n"
+            f"app rather than the Page, so one pair serves every Page and the\n"
+            f"root .env is where the pair belongs. The App settings tab above\n"
+            f"has both."
         )
 
     page = choose(pages(user_token(authorise(app_id), app_id, app_secret)))
@@ -231,6 +287,11 @@ def trip(args: argparse.Namespace) -> consent.Trip:
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
     consent.add_common_arguments(parser)
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="skip opening the setup pages",
+    )
 
 
 def main() -> None:
