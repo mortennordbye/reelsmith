@@ -273,9 +273,9 @@ def test_a_known_app_opens_every_page_the_setup_needs(monkeypatch):
 
     assert opened == [
         "https://developers.facebook.com/apps/1234567890/roles/roles/",
+        ig.INVITES_URL,
         "https://developers.facebook.com/apps/1234567890/"
         "instagram-business/API-setup-with-instagram-login/",
-        ig.INVITES_URL,
     ]
 
 
@@ -300,3 +300,31 @@ def test_no_app_id_falls_back_to_the_apps_list(monkeypatch):
     monkeypatch.setattr(ig.webbrowser, "open", opened.append)
     ig.open_dashboard("")
     assert opened == [ig.APPS_URL]
+
+
+def test_a_hidden_prompt_without_a_terminal_refuses_before_opening_anything(monkeypatch):
+    """Three tabs opening and then the prompt dying on EOF is worse than not
+    starting.
+
+    `getpass` needs a terminal it can turn echo off on. A pipe is not one and
+    neither is Claude Code's `!` prefix: it warns that echo cannot be
+    controlled, falls back to a plain read, and raises EOFError on the empty
+    stdin behind it, after the browser has already been opened.
+    """
+    import argparse
+
+    from scripts import instagram_authorise as ig
+
+    opened = []
+    monkeypatch.setattr(ig.webbrowser, "open", opened.append)
+    monkeypatch.setattr(ig.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(ig.consent, "brand_for", lambda *_a: "")
+    bare = ig.consent.Settings(_env_file=None)
+    monkeypatch.setattr(ig.consent, "account_settings", lambda _n: bare)
+
+    args = argparse.Namespace(account="x", brand="", no_browser=False, no_subscribe=False)
+    with pytest.raises(SystemExit) as raised:
+        ig.trip(args)
+
+    assert "real\nterminal" in str(raised.value)
+    assert opened == [], "the browser was opened before the refusal"

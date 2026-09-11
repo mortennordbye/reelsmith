@@ -112,37 +112,45 @@ def refresh(host: str, token: str) -> tuple[str, int | None]:
 
 APPS_URL = "https://developers.facebook.com/apps/"
 
-# One entry per step, opened in order as tabs, so the trip sets the operator up
-# rather than naming a documentation file. Recorded here as paths rather than
-# described in prose because a URL somebody has to reconstruct from a
-# description is a URL they will look up instead.
+# Instagram's own side of the tester invite. A different site, so it cannot be
+# an app path, and the step that does not look like it matters while being the
+# one that makes the other two work.
+INVITES_URL = "https://www.instagram.com/accounts/manage_access/"
+
+# The three places the setup happens, in the order to use them, opened as tabs
+# so the trip sets the operator up rather than naming a documentation file.
+#
+# Recorded as constants rather than described in prose, because a URL somebody
+# has to reconstruct from a description is a URL they look up instead.
 #
 # `confirmed` says whether the address was read off a real address bar or
-# derived from Meta's documented URL shape. Written down because a wrong deep
-# link is worse than the apps list: it lands on a 404 that reads as the feature
-# being gone. Correct one by visiting it and copying what you land on.
+# derived from Meta's documented URL shape, and an underived one says so when
+# it prints. A wrong deep link is worse than the apps list: it lands on a 404
+# that reads as the feature being gone rather than as a stale constant.
 STEPS = [
     (
         "roles/roles/",
         True,
-        "Add the account as an **Instagram Tester**, via Add People. Not a\n"
-        "     plain Tester, the Instagram one. This is what grants Standard\n"
-        "     Access to an account you own, and it is why none of this needs\n"
-        "     App Review.",
+        "Add the account as an Instagram Tester, via Add People. Not a plain\n"
+        "     Tester, the Instagram one. This is what grants Standard Access to\n"
+        "     an account you own, and it is why none of this needs App Review.",
+    ),
+    (
+        INVITES_URL,
+        True,
+        "Accept the invite, signed in as that account on Instagram itself:\n"
+        "     Apps and Websites, then Tester invites. Until this is accepted the\n"
+        "     account is not offered in step 3, and the failure much later names\n"
+        "     nothing useful.",
     ),
     (
         "instagram-business/API-setup-with-instagram-login/",
         False,
-        "Generate access tokens, once step 2 below is done. The account is\n"
-        "     not listed until the invite is accepted. That button returns a\n"
-        "     long-lived token, so there is no short-lived exchange by hand.",
+        "Generate access tokens, and pick that account. The button returns a\n"
+        "     long-lived token, so there is no short-lived exchange by hand.\n"
+        "     Copy it and come back here.",
     ),
 ]
-
-# Instagram's own side of the tester invite, which is a different site and so
-# cannot be an app path. The step that does not look like it matters and is the
-# one that makes the other two work.
-INVITES_URL = "https://www.instagram.com/accounts/manage_access/"
 
 
 def open_dashboard(app_id: str) -> None:
@@ -162,22 +170,12 @@ def open_dashboard(app_id: str) -> None:
         webbrowser.open(APPS_URL)
         return
 
-    print("\nOpening the pages, in the order to use them:\n")
-    for index, (path, confirmed, what) in enumerate(STEPS, start=1):
-        url = f"{APPS_URL}{app_id}/{path}"
-        note = "" if confirmed else "   [path not yet verified; tell me if it 404s]"
+    print("\nOpening three tabs, which are the three steps in order:\n")
+    for index, (where, confirmed, what) in enumerate(STEPS, start=1):
+        url = where if where.startswith("http") else f"{APPS_URL}{app_id}/{where}"
+        note = "" if confirmed else "   [path not yet verified; say so if it 404s]"
         print(f"  {index}. {what}\n     {url}{note}\n")
         webbrowser.open(url)
-
-    print(
-        f"  3. Accept the invite, signed in as that account on Instagram\n"
-        f"     itself: Apps and Websites, then Tester invites. Do this\n"
-        f"     between 1 and 2. Until it is accepted the account is not\n"
-        f"     offered by the Generate button, and the failure much later\n"
-        f"     names nothing useful.\n"
-        f"     {INVITES_URL}\n"
-    )
-    webbrowser.open(INVITES_URL)
 
 
 def account_of(host: str, token: str, api_version: str) -> dict:
@@ -235,6 +233,21 @@ def trip(args: argparse.Namespace) -> consent.Trip:
     # credential has been typed into a terminal.
     brand = consent.brand_for(args.account, args.brand)
     cfg = consent.account_settings(args.account)
+
+    # Before the tabs, because three of them opening and then the prompt dying
+    # on EOF is worse than not starting. `getpass` needs a terminal it can turn
+    # echo off on, and neither a pipe nor Claude Code's `!` prefix is one: it
+    # warns that echo cannot be controlled, falls back to a plain read, and
+    # raises EOFError on the empty stdin behind it.
+    if not sys.stdin.isatty():
+        raise consent.ConsentError(
+            "This asks for a token on a hidden prompt, which needs a real\n"
+            "terminal. Run it in a terminal window rather than through a pipe\n"
+            "or an editor's shell, and rather than through Claude Code's `!`\n"
+            "prefix, which is not a tty.\n"
+            "\n"
+            "Nothing was opened and nothing was registered."
+        )
 
     if not args.no_browser:
         open_dashboard(cfg.ig_app_id)
