@@ -251,13 +251,9 @@ def trip(args: argparse.Namespace) -> consent.Trip:
     app_id = os.environ.get("FACEBOOK_APP_ID", "") or cfg.facebook_app_id
     app_secret = os.environ.get("FACEBOOK_APP_SECRET", "") or cfg.facebook_app_secret
 
-    if not args.no_browser:
-        consent.list_prerequisites(setup_pages(app_id or "<app-id>"))
-        print(f"  The redirect URI this trip uses: {REDIRECT_URI}\n")
-
-    # The app id is public and printed on the page, so a missing one is a
-    # prerequisite worth refusing on: without it the tabs above open on a
-    # placeholder and there is nothing to paste from.
+    # Refused before anything is printed. Without an app id every URL below
+    # would carry a `<app-id>` placeholder, which is a dead link presented as
+    # an instruction. A list of addresses that 404 is worse than no list.
     if not app_id:
         raise consent.ConsentError(
             f"No FACEBOOK_APP_ID, in the environment or in .env or\n"
@@ -266,6 +262,10 @@ def trip(args: argparse.Namespace) -> consent.Trip:
             f"where it belongs. It is public: App settings, Basic, top of the\n"
             f"page, next to the secret."
         )
+
+    if not args.no_browser:
+        consent.list_prerequisites(setup_pages(app_id))
+        print(f"  The redirect URI this trip uses: {REDIRECT_URI}\n")
 
     # The secret is asked for rather than required up front. Requiring it is
     # the step somebody discovers they have not done after a browser has been
