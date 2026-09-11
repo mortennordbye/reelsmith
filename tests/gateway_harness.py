@@ -66,6 +66,17 @@ class FakeYouTube:
     # Every report request, so a test can assert the range and the filter
     # rather than only what came back.
     reports: list[httpx.QueryParams] = field(default_factory=list)
+    # The retention report, per video id, as [share, audienceWatchRatio,
+    # relativeRetentionPerformance] rows the way the real report returns them.
+    retention: dict[str, list[list[float]]] = field(default_factory=dict)
+    retention_status: int = 200
+    # Metric names the Analytics API does not know. A query naming any of them
+    # fails whole with a 400, which is how an unknown identifier arrives.
+    rejected_metrics: set[str] = field(default_factory=set)
+    # What `channels?part=statistics&mine=true` reports, as the API sends it:
+    # numbers as strings. Empty is a response with no items.
+    channel: dict[str, Any] = field(default_factory=dict)
+    channel_status: int = 200
 
     def handle(self, request: httpx.Request) -> httpx.Response | None:
         """Answer if this is ours, otherwise None so Meta gets a look."""
@@ -76,12 +87,33 @@ class FakeYouTube:
                 return httpx.Response(self.token_status, json={"error": "invalid_grant"})
             return httpx.Response(200, json={"access_token": "ya29.fake", "expires_in": 3599})
 
+        if url.startswith("https://www.googleapis.com/youtube/v3/channels"):
+            if self.channel_status != 200:
+                return httpx.Response(self.channel_status, json={"error": {"code": 403}})
+            items = [{"statistics": self.channel}] if self.channel else []
+            return httpx.Response(200, json={"items": items})
+
         if url.startswith("https://youtubeanalytics.googleapis.com/v2/reports"):
             self.reports.append(request.url.params)
-            if self.analytics_status != 200:
-                return httpx.Response(self.analytics_status, json={"error": {"code": 403}})
             metrics = str(request.url.params.get("metrics") or "").split(",")
             asked = str(request.url.params.get("filters") or "").removeprefix("video==")
+            if request.url.params.get("dimensions") == "elapsedVideoTimeRatio":
+                if self.retention_status != 200:
+                    return httpx.Response(self.retention_status, json={"error": {"code": 400}})
+                return httpx.Response(
+                    200,
+                    json={
+                        "columnHeaders": [{"name": "elapsedVideoTimeRatio"}]
+                        + [{"name": name} for name in metrics],
+                        "rows": self.retention.get(asked, []),
+                    },
+                )
+            if self.analytics_status != 200:
+                return httpx.Response(self.analytics_status, json={"error": {"code": 403}})
+            if any(name in self.rejected_metrics for name in metrics):
+                return httpx.Response(400, json={"error": {"code": 400, "message": (
+                    "Unknown identifier given in field parameters.metrics."
+                )}})
             wanted = [one for one in asked.split(",") if one in self.stats]
             return httpx.Response(
                 200,
@@ -321,6 +353,13 @@ class FakeFacebook:
     rejected_metrics: set[str] = field(default_factory=set)
     # Every metric list the insights reads asked for, in order.
     metric_requests: list[list[str]] = field(default_factory=list)
+    # The Page node's own fields, and its day insights by metric name. An error
+    # envelope on the insights edge is how a token without `read_insights`
+    # answers while the node still reads.
+    page_fields: dict[str, Any] = field(default_factory=dict)
+    page_insights: dict[str, Any] = field(default_factory=dict)
+    page_insights_error: dict[str, Any] | None = None
+    page_metric_requests: list[list[str]] = field(default_factory=list)
     # Every phase, in order, so a test can assert the sequence rather than only
     # the outcome.
     phases: list[str] = field(default_factory=list)
@@ -368,6 +407,24 @@ class FakeFacebook:
         # or the insights, told apart by what was asked for.
         fields = str(request.url.params.get("fields") or "")
         node = request.url.path.rstrip("/").split("/")[-1]
+
+        if node == "insights":
+            asked = str(request.url.params.get("metric") or "").split(",")
+            self.page_metric_requests.append(asked)
+            if self.page_insights_error:
+                return httpx.Response(400, json={"error": self.page_insights_error})
+            if any(name in self.rejected_metrics for name in asked):
+                return httpx.Response(400, json={"error": {"code": 100, "message": (
+                    "(#100) The value must be a valid insights metric"
+                )}})
+            return httpx.Response(200, json={"data": [
+                {"name": name, "period": "day", "values": [{"value": value}]}
+                for name, value in self.page_insights.items()
+                if name in asked
+            ]})
+
+        if "followers_count" in fields:
+            return httpx.Response(200, json={"id": node, **self.page_fields})
 
         if "video_insights" in fields:
             self.phases.append("insights")
@@ -446,6 +503,13 @@ class FakeMeta:
     # retention ones, which is how Meta treats an image post. The client is
     # expected to notice and ask again without them.
     not_a_reel: set[str] = field(default_factory=set)
+    # Metric names Instagram will not give. A request naming any of them fails
+    # whole and says only "An unknown error has occurred", which is what the
+    # real edge does and why the reader has to probe.
+    refused_metrics: set[str] = field(default_factory=set)
+    # The account node's fields and its day totals by metric name.
+    account_fields: dict[str, Any] = field(default_factory=dict)
+    account_insights: dict[str, float] = field(default_factory=dict)
     # The gateway hands one httpx client to every upstream, so one transport
     # has to answer for all of them. Google gets first refusal, then TikTok,
     # then the Facebook Page hosts, and Instagram is the fallthrough.
@@ -499,15 +563,28 @@ class FakeMeta:
         if path.endswith("/insights"):
             if self.insights_error:
                 return httpx.Response(400, json={"error": self.insights_error})
+            asked = (request.url.params.get("metric") or "").split(",")
+            unknown = httpx.Response(
+                400, json={"error": {"message": "An unknown error has occurred.", "code": 1}}
+            )
+            if request.url.params.get("metric_type") == "total_value":
+                if any(name in self.refused_metrics for name in asked):
+                    return unknown
+                return httpx.Response(200, json={"data": [
+                    {"name": name, "period": "day", "total_value": {"value": value}}
+                    for name, value in self.account_insights.items()
+                    if name in asked
+                ]})
             media_id = path.rstrip("/").split("/")[-2]
             values = self.insights.get(media_id)
+            if values is not None and any(name in self.refused_metrics for name in asked):
+                return unknown
             if values is None:
                 # What Meta says for a Reel with nothing yet.
                 return httpx.Response(
                     400,
                     json={"error": {"message": "Insights are not available", "code": 100}},
                 )
-            asked = (request.url.params.get("metric") or "").split(",")
             if media_id in self.not_a_reel and any(m.startswith("ig_reels") for m in asked):
                 return httpx.Response(
                     400,
@@ -538,6 +615,11 @@ class FakeMeta:
 
         if path.endswith("/refresh_access_token"):
             return httpx.Response(200, json={"access_token": "fresher", "expires_in": 5_184_000})
+
+        # The account's own node, asked for its follower count.
+        if "followers_count" in str(request.url.params.get("fields") or ""):
+            return httpx.Response(200, json={"id": path.rstrip("/").split("/")[-1],
+                                             **self.account_fields})
 
         # Anything left is the profile read, which is a bare node id.
         if self.profile_error:

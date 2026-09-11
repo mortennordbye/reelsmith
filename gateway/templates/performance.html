@@ -17,6 +17,81 @@
   </div>
 </header>
 
+{% macro change(n) %}
+  {%- if n is none -%}<span class="faint">not yet</span>
+  {%- else -%}<span class="{{ 'good' if n > 0 else ('bad' if n < 0 else '') }}">{{ '+' if n > 0 }}{{ '{:,}'.format(n) }}</span>
+  {%- endif -%}
+{% endmacro %}
+
+{% macro post_table(t) %}
+  <div class="scroll-x">
+    <table class="t">
+      <thead>
+        <tr>
+          <th>Video</th>
+          {% for c in t.columns %}<th class="r">{{ c.label }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in t.rows %}
+          <tr>
+            <td>
+              {% if r.post.row['hook'] %}<span class="hook">{{ r.post.row['hook'] }}</span><br>{% endif %}
+              <span class="mono faint">{{ r.post.subject }}</span>
+            </td>
+            {% for value in r.cells %}<td class="r">{{ value if value is not none else '' }}</td>{% endfor %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endmacro %}
+
+{% set audiences = sections | selectattr('audience') | list %}
+{% if sections %}
+  <section class="box">
+    <header><h2>Audience</h2><span class="hint">read every sweep</span></header>
+    {% if audiences %}
+      <div class="pad">
+        <p class="sub">
+          Followers on each destination and how far they moved. A change needs a reading that
+          old, so a destination first read this week says not yet rather than zero. The day
+          totals are the last whole UTC day, in each platform's own terms, and are not comparable
+          across platforms.
+        </p>
+        <div class="scroll-x">
+          <table class="t">
+            <thead>
+              <tr>
+                <th>Destination</th><th class="r">Followers</th><th class="r">7 days</th>
+                <th class="r">30 days</th><th class="r">Since first</th><th>Last day</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for s in audiences %}
+                {% set a = s.audience %}
+                <tr>
+                  <td>{{ badge(s.platform) }} <span class="faint">{{ s.dest.handle }}</span></td>
+                  <td class="r">{{ '{:,}'.format(a.followers) if a.followers is not none else '' }}</td>
+                  <td class="r">{{ change(a.get('week')) }}</td>
+                  <td class="r">{{ change(a.get('month')) }}</td>
+                  <td class="r">{{ change(a.get('since')) }}</td>
+                  <td class="small">
+                    {% for label, n in a.totals %}{{ '{:,}'.format(n) }} {{ label }}{{ ' · ' if not loop.last }}{% endfor %}
+                    {% if a.lifetime %}<br><span class="faint">{% for label, n in a.lifetime %}{{ '{:,}'.format(n) }} {{ label }}{{ ' · ' if not loop.last }}{% endfor %}</span>{% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% else %}
+      <p class="empty">No audience reading yet. The first one arrives with the next insights sweep.</p>
+    {% endif %}
+  </section>
+{% endif %}
+
 {% macro cohort_table(title, blurb, rows, breakout, threshold) %}
   <section class="box">
     <header><h2>{{ title }}</h2></header>
@@ -148,6 +223,19 @@
           s.by_recipe, s.breakout, s.threshold) }}
     {% endif %}
 
+    {% if s.table.rows %}
+      <section class="box">
+        <header><h2>{{ badge('instagram') }} Per Reel</h2><span class="hint">latest {{ s.table.rows | length }} with a reading</span></header>
+        <div class="pad">
+          <p class="sub">
+            Everything Instagram reports for a Reel. A column appears once any post has a value
+            for it, so a metric Meta stops sending disappears rather than reading zero.
+          </p>
+          {{ post_table(s.table) }}
+        </div>
+      </section>
+    {% endif %}
+
   {% else %}
     <section class="box">
       <header>
@@ -182,37 +270,18 @@
             {% if s.platform != 'tiktok' and s.median_watch_ms is not none %}<div><span class="n">{{ '%.0f' | format(s.median_watch_ms / 1000) }} s</span><span class="l">median watch</span></div>{% endif %}
             {% if s.platform == 'facebook' and s.median_reach is not none %}<div><span class="n">{{ s.median_reach | round | int }}</span><span class="l">median reach</span></div>{% endif %}
           </div>
-          <div class="scroll-x">
-            <table class="t">
-              <thead>
-                <tr>
-                  <th>Video</th><th class="r">Views</th>
-                  {% if s.platform == 'youtube' %}<th class="r">Viewed</th><th class="r">Watch</th>
-                  {% elif s.platform == 'facebook' %}<th class="r">Reach</th><th class="r">Watch</th>
-                  {% else %}<th class="r">Likes</th><th class="r">Comments</th><th class="r">Shares</th>{% endif %}
-                </tr>
-              </thead>
-              <tbody>
-                {% for post in s.posts %}
-                  {% set r = post.reading %}
-                  <tr>
-                    <td>
-                      {% if post.row['hook'] %}<span class="hook">{{ post.row['hook'] }}</span><br>{% endif %}
-                      <span class="mono faint">{{ post.subject }}</span>
-                    </td>
-                    <td class="r">{{ r['views'] }}</td>
-                    {% if s.platform == 'youtube' %}
-                      <td class="r">{{ '%.1f' | format(r['avg_view_pct']) }}%</td><td class="r">{{ '%.0f' | format(r['avg_watch_ms'] / 1000) }} s</td>
-                    {% elif s.platform == 'facebook' %}
-                      <td class="r">{{ r['reach'] }}</td><td class="r">{{ '%.0f' | format(r['avg_watch_ms'] / 1000) }} s</td>
-                    {% else %}
-                      <td class="r">{{ r['likes'] }}</td><td class="r">{{ r['comments'] }}</td><td class="r">{{ r['shares'] }}</td>
-                    {% endif %}
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
+          {{ post_table(s.table) }}
+          {% if s.platform == 'youtube' %}
+            <p class="small muted" style="margin:10px 0 0">
+              At half is the share of views still watching half way through, from YouTube's
+              retention curve. Over 100 percent means people went back to it.
+            </p>
+          {% elif s.platform == 'facebook' %}
+            <p class="small muted" style="margin:10px 0 0">
+              At half is the plays still going at the middle of the Reel as a share of those that
+              started. Follows are the ones Meta attributes to that Reel.
+            </p>
+          {% endif %}
         {% elif s.reason %}
           <p class="small"><span class="sev warn">No readings</span> {{ s.dest.published }} published and nothing stored. {{ s.reason }}</p>
         {% else %}

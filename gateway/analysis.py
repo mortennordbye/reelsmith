@@ -28,7 +28,7 @@ from __future__ import annotations
 import contextlib
 import json
 from collections.abc import Callable, Container, Iterable, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from statistics import median
 from typing import Any
 
@@ -70,6 +70,41 @@ def measured_columns(platform: str | None) -> tuple[str, ...]:
     should render the set that has always been rendered, not an empty board.
     """
     return _MEASURED.get(str(platform or ""), _MEASURED["instagram"])
+
+
+def audience(series: Sequence[Any]) -> dict | None:
+    """Followers at the newest reading, and how far they moved before it.
+
+    A change is measured against the newest reading at least that many days
+    older, and is None where the history does not reach back that far. A
+    destination whose first reading was yesterday has no weekly change, which
+    is different from a week in which nobody followed.
+
+    `since` is the change over everything stored, so a young history still says
+    something. None when no reading carries a follower count.
+    """
+    points = sorted(
+        (date.fromisoformat(str(row["fetched_on"])), int(row["followers"]))
+        for row in series
+        if row["followers"] is not None
+    )
+    if not points:
+        return None
+    newest_on, newest = points[-1]
+
+    def change(days: int) -> int | None:
+        older = [count for on, count in points if on <= newest_on - timedelta(days=days)]
+        return newest - older[-1] if older else None
+
+    first_on, first = points[0]
+    return {
+        "followers": newest,
+        "on": newest_on.isoformat(),
+        "week": change(7),
+        "month": change(30),
+        "since": newest - first if first_on < newest_on else None,
+        "since_on": first_on.isoformat(),
+    }
 
 
 SKIP_THRESHOLD = 60.0

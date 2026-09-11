@@ -41,9 +41,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import Any
 
 import httpx
+
+from gateway import probe
 
 log = logging.getLogger(__name__)
 
@@ -393,7 +396,28 @@ INSIGHT_METRICS = (
     # A breakdown by reaction type rather than a count, which is why it is
     # summed below instead of read.
     "post_video_likes_by_reaction_type",
+    # The rest have no column and land in `insights.extra` under these names.
+    # Plays including replays, and the replays alone, which together say how
+    # much of the play count is people going round again.
+    "fb_reels_total_plays",
+    "fb_reels_replay_count",
+    # Follows attributed to this Reel. The only platform besides YouTube that
+    # says which video brought somebody in.
+    "post_video_followers",
+    # Comments and shares fused, stored whole and never split. See above.
+    "post_video_social_actions",
+    # A dict of segment -> share of plays still going, which is the only place
+    # a Page says where people leave.
+    "post_video_retention_graph",
 )
+
+# The metrics that have a column, and therefore stay out of `extra`.
+_COLUMNS = frozenset({
+    "blue_reels_play_count",
+    "post_total_media_view_unique",
+    "post_video_avg_time_watched",
+    "post_video_view_time",
+})
 
 
 @dataclass(frozen=True)
@@ -412,6 +436,10 @@ class Reading:
     # that says a metric stopped being returned, which is otherwise a column
     # that quietly goes to zero.
     raw: dict[str, Any] = field(default_factory=dict)
+    # What has no column, in Meta's names, for `insights.extra`. The reaction
+    # breakdown is here as well as summed into `likes`, since the sum is the
+    # column and the breakdown is the information.
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 def _metric_value(item: Any) -> Any:
@@ -472,6 +500,11 @@ def parse_reading(video_id: str, payload: dict) -> Reading:
         total_watch_ms=count("post_video_view_time"),
         permalink=permalink_of(str(payload.get("permalink_url") or "")),
         raw=by_name,
+        extra={
+            name: value
+            for name, value in by_name.items()
+            if name and name not in _COLUMNS and value is not None
+        },
     )
 
 
@@ -479,13 +512,18 @@ class InsightsError(RuntimeError):
     """A read that failed. Separate from `PublishError` because nothing was
     being created and the caller's only decision is whether to keep sweeping."""
 
-    def __init__(self, message: str, *, is_auth: bool = False):
+    def __init__(self, message: str, *, is_auth: bool = False, is_permission: bool = False):
         super().__init__(message)
         self.is_auth = is_auth
+        # A scope the token was minted without, `(#200) read_insights
+        # permission missing` being the one that happened. Like `is_auth` it
+        # will be true of every Reel behind this one, and unlike it the token
+        # still reads everything else, so the Page's follower count is still
+        # worth taking.
+        self.is_permission = is_permission
 
 
-# Metrics Meta has refused on this process. Filled the first time a Reel's
-# request is refused as naming an invalid metric, so every Reel after it asks
+# Metrics Meta has refused on this process, so every Reel after the first asks
 # for the ones that still exist instead of failing the same way.
 #
 # Why this exists rather than a corrected list: on 2026-09-11 every Facebook
@@ -493,13 +531,25 @@ class InsightsError(RuntimeError):
 # Page had stored a single reading, and the error does not say which name it
 # means. Meta retired a family of impression metrics on 2025-11-15 and the
 # Reels documentation still lists all five of these. Probing each one is the
-# only answer that does not depend on guessing which of the two is right.
-_REFUSED: set[str] = set()
+# only answer that does not depend on guessing which of the two is right. The
+# mechanism is `gateway/probe.py` now, because every platform turned out to
+# need it.
+REFUSED = probe.Refusals("Facebook Reel insights")
 
 
 def forget_refused_metrics() -> None:
     """For tests, which share one process and must not share what Meta refused."""
-    _REFUSED.clear()
+    REFUSED.clear()
+
+
+def _error(what: str, code: str, message: str) -> InsightsError:
+    family = code.split("/")[0]
+    return InsightsError(
+        f"{what} refused: {code} {message}".strip(),
+        # 190 is every expired, revoked and invalidated token.
+        is_auth=family == "190",
+        is_permission=family == "200",
+    )
 
 
 def _refused_metric(code: str, message: str) -> bool:
@@ -545,49 +595,138 @@ async def read_insights(
     metric left out reads as 0 in its column, which is the cost of having any
     numbers at all, and the warning is what says which column that is.
     """
-    wanted = [metric for metric in INSIGHT_METRICS if metric not in _REFUSED]
-    if not wanted:
+
+    async def fetch(metrics: list[str]) -> httpx.Response:
+        return await _read(
+            http, video_id=video_id, token=token, api_version=api_version, metrics=metrics
+        )
+
+    response = await REFUSED.read(
+        INSIGHT_METRICS, fetch, lambda r: _refused_metric(*_api_error(r))
+    )
+    if response is None:
         raise InsightsError(
             f"Insights for {video_id}: Meta refused every metric this asks for "
-            f"({', '.join(sorted(_REFUSED))})"
+            f"({', '.join(sorted(REFUSED.names))})"
         )
-    response = await _read(
-        http, video_id=video_id, token=token, api_version=api_version, metrics=wanted
-    )
+
     code, message = _api_error(response)
-
-    if code and _refused_metric(code, message) and len(wanted) > 1:
-        refused = []
-        for metric in wanted:
-            probe = await _read(
-                http, video_id=video_id, token=token, api_version=api_version, metrics=[metric]
-            )
-            if _refused_metric(*_api_error(probe)):
-                refused.append(metric)
-        if refused:
-            _REFUSED.update(refused)
-            log.warning(
-                "Meta refused the Facebook insights metric(s) %s; reading without them",
-                ", ".join(refused),
-            )
-            wanted = [metric for metric in wanted if metric not in refused]
-            if wanted:
-                response = await _read(
-                    http, video_id=video_id, token=token, api_version=api_version,
-                    metrics=wanted,
-                )
-                code, message = _api_error(response)
-
     if code:
-        # 190 is every expired, revoked and invalidated token. It will fail the
-        # same way for every remaining post, so the caller stops rather than
-        # spending the rest of the sweep proving it.
-        raise InsightsError(
-            f"Insights for {video_id} refused: {code} {message}".strip(),
-            is_auth=code.split("/")[0] == "190",
-        )
+        # A token or a scope problem fails the same way for every remaining
+        # post, so the caller stops rather than spending the sweep proving it.
+        raise _error(f"Insights for {video_id}", code, message)
 
     try:
         return parse_reading(video_id, _json(response))
     except PublishError as exc:
         raise InsightsError(str(exc)) from exc
+
+
+# --- The Page itself ---------------------------------------------------------
+#
+# The follower count is a field on the Page node and reads on
+# `pages_read_engagement`, which every Page here has granted. The day totals are
+# the insights edge and want `read_insights`, so a Page authorised before
+# 2026-09-11 gets a follower count and no totals until its trip is walked again.
+
+PAGE_FIELDS = "followers_count,fan_count"
+PAGE_METRICS = (
+    "page_follows",
+    "page_daily_follows_unique",
+    "page_daily_unfollows_unique",
+    "page_media_view",
+    "page_total_media_view_unique",
+    "page_post_engagements",
+    "page_video_views",
+    "page_views_total",
+)
+PAGE_REFUSED = probe.Refusals("Facebook Page insights")
+
+
+@dataclass(frozen=True)
+class PageReading:
+    followers: int | None
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+async def read_page(
+    http: httpx.AsyncClient,
+    *,
+    page_id: str,
+    token: str,
+    api_version: str,
+    day: date,
+) -> PageReading:
+    """The Page's follower count now, and its totals for `day`.
+
+    Raises only for a dead token. A refused insights edge is a warning and a
+    reading without the totals, because the follower count beside it is still
+    true.
+    """
+    try:
+        node_response = await http.get(
+            f"{GRAPH}/{api_version}/{page_id}",
+            params={"fields": PAGE_FIELDS},
+            headers=_auth(token),
+            timeout=30,
+        )
+    except httpx.HTTPError as exc:
+        raise InsightsError(f"Could not read Page {page_id}: {exc}") from exc
+
+    node: dict[str, Any] = {}
+    code, message = _api_error(node_response)
+    if code:
+        error = _error(f"Page {page_id}", code, message)
+        if error.is_auth:
+            raise error
+        log.warning("%s", error)
+    else:
+        node = _json(node_response)
+
+    extra: dict[str, Any] = {}
+    if isinstance(node.get("fan_count"), (int, float)):
+        extra["fan_count"] = int(node["fan_count"])
+
+    async def fetch(metrics: list[str]) -> httpx.Response:
+        return await http.get(
+            f"{GRAPH}/{api_version}/{page_id}/insights",
+            params={
+                "metric": ",".join(metrics),
+                "period": "day",
+                "since": day.isoformat(),
+                "until": (day + timedelta(days=1)).isoformat(),
+            },
+            headers=_auth(token),
+            timeout=30,
+        )
+
+    try:
+        response = await PAGE_REFUSED.read(
+            PAGE_METRICS, fetch, lambda r: _refused_metric(*_api_error(r))
+        )
+    except httpx.HTTPError as exc:
+        log.warning("Could not read insights for Page %s: %s", page_id, exc)
+        response = None
+
+    if response is not None:
+        code, message = _api_error(response)
+        if code:
+            log.warning("%s", _error(f"Page insights for {page_id}", code, message))
+        else:
+            totals: dict[str, Any] = {}
+            for item in _json(response).get("data") or []:
+                numbers = [
+                    value.get("value")
+                    for value in item.get("values") or []
+                    if isinstance(value, dict) and isinstance(value.get("value"), (int, float))
+                ]
+                if numbers:
+                    totals[str(item.get("name") or "")] = numbers[-1]
+            if totals:
+                extra["day"] = {"on": day.isoformat(), **totals}
+
+    followers = node.get("followers_count")
+    return PageReading(
+        followers=int(followers) if isinstance(followers, (int, float)) else None,
+        extra=extra,
+    )

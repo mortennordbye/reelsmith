@@ -489,6 +489,41 @@ attempted*:
   on the belief that it covers Page level insights only; a Reel's own numbers
   need it too, so a Page authorised before 2026-09-11 has to walk the trip
   again before it stores anything.
+- **Every metric a platform answers is stored, not only the nine columns**,
+  since 2026-09-11 (schema 21). `insights.extra` is a JSON object in the
+  platform's own names: Instagram's reposts, Facebook views and total
+  interactions; YouTube's engaged views, subscribers gained and lost, and a
+  twenty point retention curve; a Page's replays, total plays, follows per
+  Reel and retention graph. A column per metric would be a migration per name
+  on four lists that change under the service, which is the `score_breakdown`
+  trade. Nothing queries inside it and **none of it reaches `/api/results`**,
+  for the reason the bullet above gives.
+- **Each platform's extras are a request of their own, and `gateway/probe.py`
+  reads them.** Every platform fails a whole metrics call over one name and
+  none says which, so folded into the core request a retired extra would cost
+  the skip rate. `probe.Refusals` asks for everything, probes each name alone
+  on a refusal, remembers what was refused for the process and names it in one
+  warning. **A refusal of every name is not remembered**, since that is a bad
+  minute or a post with no numbers yet, and remembering it would switch the
+  read off until the next rollout. Facebook's Reel read was the first copy of
+  this and uses it now. A metric worth adding is a name in a tuple, and the
+  first sweep after the deploy is the test of whether the platform gives it.
+- **`account_insights` is the audience, one row per destination per day**:
+  Instagram's `followers_count`, YouTube's `subscriberCount` from the Data API,
+  a Page's `followers_count`, plus yesterday's day totals in `extra`. It is
+  read on a destination with nothing published, because no platform offers
+  the follower series retrospectively and a day not read is missing for good.
+  Null is "would not say" and is never a zero. **TikTok has no audience row**:
+  `follower_count` needs the `user.info.stats` scope, which the sandbox trip
+  does not ask for.
+- **A Page without `read_insights` stops its Reel sweep after one refusal**
+  (`InsightsError.is_permission`) rather than logging the same `(#200)` once
+  per Reel, and still stores its follower count, which reads on
+  `pages_read_engagement`.
+- **The Performance page shows a column only when some post has a value for
+  it.** `panel.POST_COLUMNS` lists the candidates per platform and
+  `post_table` drops the empty ones, so a metric a platform refused is an
+  absent column rather than a row of zeroes, the rule every board here keeps.
 - **`is_aigc` and `containsSyntheticMedia` are the same question and they move
   together.** Both are `false`, and since 2026-08-26 for a reason rather than
   because a value had to be sent: the fields ask whether the content depicts
