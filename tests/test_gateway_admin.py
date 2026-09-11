@@ -1643,3 +1643,26 @@ async def test_a_repo_rendered_for_one_identity_counts_once_not_per_destination(
     scoped = (await http.get("/admin/?brand=one")).text
 
     assert ">1</span><span class=\"sl\">Rendered<" in scoped.replace("\n", "")
+
+
+async def test_the_publish_all_button_is_on_the_page_when_scoped(client):
+    """It was not, and the endpoint working hid that.
+
+    The card was gated on `brand or selected`, which are fields of the scope
+    object rather than top level template variables, so the condition was
+    always false and the button never rendered on any page. Every test of the
+    control posted to the route directly, which is exactly the gap a test
+    suite leaves when it never looks at what it built.
+    """
+    http, app = client
+    await db.upsert_account(
+        app.state.db, account_id=ACCOUNT, access_token="t", username="one", brand="one"
+    )
+
+    scoped = (await http.get("/admin/queue?brand=one")).text
+    everything = (await http.get("/admin/queue")).text
+
+    assert "Publish all now" in scoped
+    # Unscoped, `visible` is every account, and a button that publishes must
+    # not be one misread click away from firing all of them.
+    assert "Publish all now" not in everything

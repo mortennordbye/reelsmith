@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+
+{% block style %}
+  .look { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 14px; }
+  .look label {
+    flex: 1 1 260px; padding: 14px; border-radius: var(--r-md);
+    border: 1px solid var(--line-2); background: var(--panel-2); cursor: pointer;
+  }
+  .look input { margin-right: 8px; }
+  .look strong { display: inline-block; }
+  .look p { margin: 6px 0 0; color: var(--dim); font-size: 13px; }
+{% endblock %}
+
+{% block body %}
+{# Its own call rather than the one base.html makes. A `set` outside a block is
+   not visible inside a block a child overrides, which is Jinja's scoping and
+   not worth working around for one value. #}
+{% set skin = skin_of(request) %}
+<h1>Settings</h1>
+<p class="sub">
+  Preferences of whoever is looking. Nothing here reaches a post, and nothing
+  here is shared with anyone else signed in.
+</p>
+{% if quip_for(page) %}<p class="quip">{{ quip_for(page) }}</p>{% endif %}
+
+<div class="card">
+  <strong>How this panel looks</strong>
+  <div class="muted small">
+    The same pages either way. The plain look drops the wordmark, the room
+    behind it, the manager and the one liners, and mutes the gold. Useful when
+    the panel is on a shared screen, or being shown to somebody.
+  </div>
+
+  <form method="post" action="{{ url_for('set_skin') }}">
+    <div class="look">
+      <label>
+        <input type="radio" name="skin" value="loud"
+               {{ 'checked' if skin == 'loud' }}>
+        <strong>Loud</strong>
+        <p>SLOPENGINE in its gold frame, the room, the manager, the quips.</p>
+      </label>
+      <label>
+        <input type="radio" name="skin" value="plain"
+               {{ 'checked' if skin == 'plain' }}>
+        <strong>Plain</strong>
+        <p>Neutral slate, no photograph, no jokes. The same numbers.</p>
+      </label>
+    </div>
+    <div style="margin-top:14px"><button class="primary">Save</button></div>
+  </form>
+</div>
+{% endblock %}

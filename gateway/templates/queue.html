@@ -12,7 +12,7 @@
 {# Only inside an identity. Unscoped, `visible` is every account, and a button
    that publishes must not be one misread click away from firing all of them.
    The endpoint refuses it too; this is so the refusal is never reached. #}
-{% if brand or selected %}
+{% if scope and (scope.brand or scope.selected) %}
   <div class="card">
     <div class="row" style="align-items:center;gap:12px">
       <div class="grow">
@@ -27,7 +27,7 @@
         </div>
       </div>
       <form class="inline" method="post"
-            action="{{ url_for('publish_all_now') }}{{ query }}">
+            action="{{ url_for('publish_all_now') }}{{ scope.query }}">
         <button title="Send the next armed post on every destination of this identity">
           Publish all now
         </button>
