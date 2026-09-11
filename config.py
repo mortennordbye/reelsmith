@@ -91,6 +91,25 @@ class Settings(BaseSettings):
     # without one, and says which accounts it can see.
     account: str = Field(default="", validation_alias="REELSMITH_ACCOUNT")
 
+    # Which identity this account's destinations are grouped under in the
+    # panel, which is `accounts.brand` on the gateway. Set in the account's own
+    # `.env`, because it is a fact about the identity rather than about a run.
+    #
+    # **It is deliberately not defaulted from `account` above.** Those look
+    # interchangeable and are not: this account directory is `nightlybuild` and
+    # every one of its gateway rows is grouped under `thenightlybuild`, because
+    # the first three were registered before `brand` existed and took the
+    # handle-derived value. Defaulting to the directory name would regroup all
+    # of them on the next re-authorisation, splitting one identity's boards
+    # across two headings in the panel.
+    #
+    # Empty means nobody said, which is a real answer: the gateway derives the
+    # brand from the handle, and `upsert_account` only overwrites a stored
+    # brand when a non-empty one is sent, so a trip that says nothing leaves
+    # the grouping exactly as it was. Read by `scripts/consent.py` and by
+    # `--destinations`, and by nothing on the render path.
+    brand: str = ""
+
     # --- Credentials -------------------------------------------------------
     # Script generation uses the Claude Code CLI's existing subscription auth,
     # so there is no ANTHROPIC_API_KEY anywhere in here.
@@ -124,7 +143,7 @@ class Settings(BaseSettings):
 
     # --- YouTube (optional) -------------------------------------------------
     # Setup is docs/youtube-api-setup.md. Written by
-    # scripts/youtube_authorise.py and read by scripts/youtube_upload.py.
+    # the YouTube consent trip and read by scripts/youtube_upload.py.
     #
     # All four live here, refresh token included, and that is the difference
     # from the Instagram block above. `ig_access_token` is only a seed because

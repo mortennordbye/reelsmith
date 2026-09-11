@@ -58,7 +58,8 @@ async def run(args: argparse.Namespace) -> int:
     if missing:
         raise SystemExit(
             f"Missing in .env: {', '.join(missing)}.\n"
-            "Run scripts/youtube_authorise.py to produce them."
+            "Run `scripts/authorise.py youtube --account <name> --print-token`\n"
+            "to produce them."
         )
 
     folder = args.folder

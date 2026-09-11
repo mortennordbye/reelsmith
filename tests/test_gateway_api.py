@@ -452,3 +452,88 @@ async def test_a_row_leaving_failed_takes_the_gauge_back_down(client):
 
     await db.set_queue_state(app.state.db, queued_id, db.QUEUE_CANCELLED)
     assert f"{failed} 0.0" in (await http.get("/metrics")).text
+
+
+# --- Listing what is registered ---------------------------------------------
+#
+# The read that was missing for four platforms and two accounts. Registration
+# is four write routes and every reader here is scoped to one account id, so
+# "did that consent trip actually happen" could only be answered by opening the
+# panel on a machine holding a session cookie, or by publishing and seeing.
+
+
+async def test_listing_accounts_answers_whether_a_consent_trip_landed(client):
+    http, app = client
+    await db.upsert_account(
+        app.state.db, account_id=ACCOUNT, access_token="tok", username="thenightlybuild"
+    )
+    await db.upsert_youtube_credentials(
+        app.state.db,
+        channel_id=CHANNEL,
+        client_id="cid",
+        client_secret="sec",
+        refresh_token="refresh",
+    )
+    await db.upsert_account(
+        app.state.db,
+        account_id=CHANNEL,
+        access_token="",
+        username="@thenightlybuild",
+        platform=db.PLATFORM_YOUTUBE,
+        brand="thenightlybuild",
+    )
+
+    response = await http.get("/api/accounts", headers=AUTH)
+    assert response.status_code == 200
+    rows = {row["account_id"]: row for row in response.json()["accounts"]}
+    assert set(rows) == {ACCOUNT, CHANNEL}
+    assert rows[CHANNEL]["platform"] == "youtube"
+    assert rows[CHANNEL]["brand"] == "thenightlybuild"
+    assert rows[CHANNEL]["credentials"] is True
+    # Derived from the handle, stripped of its @, so one identity spelling its
+    # handle two ways is still one group.
+    assert rows[ACCOUNT]["brand"] == "thenightlybuild"
+
+
+async def test_an_account_row_whose_credentials_never_landed_says_so(client):
+    """The shape a half-finished registration leaves behind, and the one the
+    scheduler picks up and fails on.
+
+    The registration routes write credentials first precisely so this cannot
+    happen, which makes it worth reporting rather than hiding: a row in this
+    state is a destination that looks set up and cannot publish.
+    """
+    http, app = client
+    await db.upsert_account(
+        app.state.db, account_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
+    )
+
+    rows = (await http.get("/api/accounts", headers=AUTH)).json()["accounts"]
+    assert [row["credentials"] for row in rows] == [False]
+
+
+async def test_listing_accounts_carries_no_credential_of_any_kind(client):
+    """Read by a CLI over the bearer token the pipeline already holds, which is
+    a wider audience than the admin cookie. Nothing here needs a credential in
+    order to answer whether one exists."""
+    http, app = client
+    await db.upsert_account(app.state.db, account_id=ACCOUNT, access_token="ig-secret-token")
+    await db.upsert_youtube_credentials(
+        app.state.db,
+        channel_id=CHANNEL,
+        client_id="client-secret-id",
+        client_secret="the-client-secret",
+        refresh_token="the-refresh-token",
+    )
+    await db.upsert_account(
+        app.state.db, account_id=CHANNEL, access_token="", platform=db.PLATFORM_YOUTUBE
+    )
+
+    body = (await http.get("/api/accounts", headers=AUTH)).text
+    for secret in ("ig-secret-token", "the-client-secret", "the-refresh-token"):
+        assert secret not in body
+
+
+async def test_listing_accounts_refuses_a_bad_token(client):
+    http, _ = client
+    assert (await http.get("/api/accounts")).status_code == 401

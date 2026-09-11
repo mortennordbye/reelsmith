@@ -67,8 +67,36 @@ async def _apply_config_slots(conn: aiosqlite.Connection, cfg: GatewaySettings) 
     for spec in (s for s in specs if s.account):
         by_account.setdefault(spec.account, []).append(spec)
 
-    unnamed = [s for s in specs if not s.account]
     unresolved = False
+
+    # A `brand=` line is every destination that identity holds, which is what
+    # makes registering a fifth platform cost no edit to this config. It is
+    # resolved here rather than at fire time so that a brand naming nothing
+    # fails the same way an unnamed line does, at boot, loudly.
+    for spec in (s for s in specs if s.brand):
+        found = await db.accounts_for_brand(conn, spec.brand)
+        if not found:
+            # The same reasoning as the unnamed case below, and the same
+            # answer. A brand matching no account is "I could not work out
+            # whose this is", not "nobody claims these, delete them", and the
+            # difference matters because the sweep reads an account's absence
+            # from the config as an instruction to delete its slots. Freezing
+            # costs a schedule that stays as it was until somebody fixes the
+            # spelling. Not freezing costs every slot of every account whose
+            # only line was this one, at boot, on a pod that comes up healthy.
+            unresolved = True
+            log.error(
+                "The slot line for brand %r matches no registered account, so the "
+                "schedule is frozen at whatever is already in the database. Check "
+                "the spelling against `GET /api/accounts`, or register that "
+                "destination first.",
+                spec.brand,
+            )
+            continue
+        for account in found:
+            by_account.setdefault(account, []).append(spec)
+
+    unnamed = [s for s in specs if not s.account and not s.brand]
     if unnamed:
         account = cfg.slots_account.strip()
         if not account:

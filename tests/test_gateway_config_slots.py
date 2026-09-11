@@ -19,7 +19,7 @@ import pytest
 
 from gateway import db
 from gateway.app import create_app
-from tests.gateway_harness import ACCOUNT, CHANNEL, FakeMeta, settings
+from tests.gateway_harness import ACCOUNT, CHANNEL, PAGE_ID, FakeMeta, settings
 
 SECOND = "17841400000000001"
 THREE_UNNAMED = "06:00 UTC\n10:00 UTC\n17:00 UTC"
@@ -191,3 +191,122 @@ async def test_the_deletion_says_what_it_deleted(cfg, meta, caplog, monkeypatch)
                 pass
 
     assert any("Removed 1 config slot" in r.getMessage() for r in caplog.records)
+
+
+# --- brand= lines, which is how one line covers an identity ------------------
+#
+# `account=` is one destination and needs one line per platform, each naming an
+# opaque id pasted out of a consent screen. `brand=` names the identity, which
+# is what `accounts.brand` groups, so one line covers every platform it holds
+# and a platform registered afterwards joins that schedule at the next boot.
+# That is the difference between a homelab edit per destination and one per
+# identity, and it is what makes adding the fifth account cost nothing here.
+
+
+async def _register_identity(cfg, *, brand: str) -> None:
+    conn = await db.connect(cfg.db_path)
+    try:
+        await db.upsert_account(conn, account_id=ACCOUNT, access_token="tok", brand=brand)
+        await db.upsert_account(
+            conn,
+            account_id=CHANNEL,
+            access_token="",
+            platform=db.PLATFORM_YOUTUBE,
+            brand=brand,
+        )
+    finally:
+        await conn.close()
+
+
+async def test_one_brand_line_gives_every_platform_that_identity_holds_a_slot(cfg, meta):
+    """The whole point. Two destinations, one line, no ids in the config."""
+    named = settings(cfg.db_path.parent, slots="08:10 UTC brand=thenightlybuild")
+    await _register_identity(named, brand="thenightlybuild")
+
+    async with meta.client() as fake_meta:
+        app = create_app(named, http=fake_meta, background=False)
+        async with app.router.lifespan_context(app):
+            assert len(await db.all_slots(app.state.db, ACCOUNT)) == 1
+            assert len(await db.all_slots(app.state.db, CHANNEL)) == 1
+
+
+async def test_a_destination_registered_later_joins_the_schedule_at_the_next_boot(cfg, meta):
+    """The property worth having, rather than the brevity.
+
+    Registering a platform for an identity that already has a line is an
+    `accounts` row and nothing else. With `account=` it is also an edit to a
+    ConfigMap in another repo, which is the step `CLAUDE.md` warns will be
+    forgotten because nothing links the two.
+    """
+    named = settings(cfg.db_path.parent, slots="08:10 UTC brand=thenightlybuild")
+    await _register_identity(named, brand="thenightlybuild")
+
+    async with meta.client() as fake_meta:
+        app = create_app(named, http=fake_meta, background=False)
+        async with app.router.lifespan_context(app):
+            assert len(await db.all_slots(app.state.db, PAGE_ID)) == 0
+
+    conn = await db.connect(named.db_path)
+    try:
+        await db.upsert_account(
+            conn,
+            account_id=PAGE_ID,
+            access_token="page-token",
+            platform=db.PLATFORM_FACEBOOK,
+            brand="thenightlybuild",
+        )
+    finally:
+        await conn.close()
+
+    async with meta.client() as fake_meta:
+        app = create_app(named, http=fake_meta, background=False)
+        async with app.router.lifespan_context(app):
+            assert len(await db.all_slots(app.state.db, PAGE_ID)) == 1
+
+
+async def test_a_brand_naming_nothing_freezes_the_sweep_rather_than_deleting(cfg, meta):
+    """F0 again, reached by a new route.
+
+    A misspelt brand resolves to no accounts, and the sweep reads an account's
+    absence from the config as an instruction to delete its slots. So the
+    unresolved case has to cover this one too, or a typo in a name somebody
+    types by hand deletes every schedule in the database at boot, on a pod that
+    comes up healthy.
+    """
+    named = settings(cfg.db_path.parent, slots="08:10 UTC brand=thenightlybuild")
+    await _register_identity(named, brand="thenightlybuild")
+
+    async with meta.client() as fake_meta:
+        app = create_app(named, http=fake_meta, background=False)
+        async with app.router.lifespan_context(app):
+            assert len(await db.all_slots(app.state.db, ACCOUNT)) == 1
+
+    typo = settings(named.db_path.parent, slots="08:10 UTC brand=thenightlybiuld")
+    async with meta.client() as fake_meta:
+        app = create_app(typo, http=fake_meta, background=False)
+        async with app.router.lifespan_context(app):
+            assert len(await db.all_slots(app.state.db, ACCOUNT)) == 1
+            assert len(await db.all_slots(app.state.db, CHANNEL)) == 1
+
+
+async def test_a_paused_destination_keeps_its_slots(cfg, meta):
+    """`active` is the kill switch, not an instruction to forget the schedule.
+
+    `publish_queued` reads `active_accounts`, so a paused destination never
+    fires whatever slots it holds. Resolving a brand to active rows only would
+    mean the boot sweep deleted them, and un-pausing in the panel would restore
+    a destination with no schedule until the next rollout.
+    """
+    named = settings(cfg.db_path.parent, slots="08:10 UTC brand=thenightlybuild")
+    await _register_identity(named, brand="thenightlybuild")
+
+    conn = await db.connect(named.db_path)
+    try:
+        await db.set_account_flags(conn, CHANNEL, active=False)
+    finally:
+        await conn.close()
+
+    async with meta.client() as fake_meta:
+        app = create_app(named, http=fake_meta, background=False)
+        async with app.router.lifespan_context(app):
+            assert len(await db.all_slots(app.state.db, CHANNEL)) == 1

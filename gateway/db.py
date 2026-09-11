@@ -795,6 +795,91 @@ async def all_accounts(
     )
 
 
+async def accounts_for_brand(conn: aiosqlite.Connection, brand: str) -> list[str]:
+    """Every destination one identity holds, for a `brand=` slot line.
+
+    **Inactive rows included, deliberately.** `active` is the per-destination
+    kill switch and `publish_queued` already reads `active_accounts`, so an
+    inactive account with slots never fires. Filtering here instead would mean
+    the boot sweep deleted the slots of anything paused in the panel, and
+    un-pausing it would silently give it no schedule until the next rollout.
+    The switch turns a destination off; it is not an instruction to forget when
+    it used to post.
+    """
+    rows = await _all(
+        conn,
+        f"SELECT account_id FROM accounts WHERE brand = ? {_ACCOUNT_ORDER}",
+        (brand,),
+    )
+    return [str(row["account_id"]) for row in rows]
+
+
+async def registered_destinations(conn: aiosqlite.Connection) -> list[dict[str, Any]]:
+    """Every destination this gateway knows about, with no secret in it.
+
+    What `/api/accounts` answers and what `main.py --destinations` reads. It
+    exists because there was no way to ask "is this account registered" at all:
+    the four registration routes are writes, every reader is scoped to one
+    account id, and an unregistered account is indistinguishable from a
+    registered one with an empty queue. So the answer to "did that consent trip
+    happen" was to look in the panel, on the one machine holding a session
+    cookie, or to try publishing.
+
+    `credentials` is whether the row's second write landed. A YouTube or TikTok
+    account row with no credentials is the shape a half-finished registration
+    leaves behind, and it is the one the scheduler picks up and fails on. The
+    routes write credentials first precisely so this cannot happen, which makes
+    a false here worth seeing rather than worth hiding.
+
+    Instagram and Facebook keep their credential on the account row, so both
+    report on the token being non-empty. That is the same question asked of the
+    shape those two actually have rather than a column invented to make four
+    platforms look alike.
+
+    **No token, no secret and no refresh token, in any branch.** This is read by
+    a CLI over the same bearer token the pipeline already holds, which is a
+    wider audience than the admin cookie, and nothing here needs a credential to
+    answer whether one exists.
+    """
+    rows = await _all(conn, f"SELECT * FROM accounts {_ACCOUNT_ORDER}")
+    youtube = {
+        str(r["channel_id"]) for r in await _all(conn, "SELECT channel_id FROM youtube_credentials")
+    }
+    tiktok = {
+        str(r["open_id"]) for r in await _all(conn, "SELECT open_id FROM tiktok_credentials")
+    }
+    slots: dict[str, int] = {}
+    for row in await _all(
+        conn, "SELECT account_id, COUNT(*) AS n FROM schedule_slots GROUP BY account_id"
+    ):
+        slots[str(row["account_id"])] = int(row["n"])
+
+    listed = []
+    for row in rows:
+        account_id = str(row["account_id"])
+        platform = str(row["platform"] or PLATFORM_INSTAGRAM)
+        if platform == PLATFORM_YOUTUBE:
+            has_credentials = account_id in youtube
+        elif platform == PLATFORM_TIKTOK:
+            has_credentials = account_id in tiktok
+        else:
+            has_credentials = bool(str(row["access_token"] or ""))
+        listed.append(
+            {
+                "account_id": account_id,
+                "platform": platform,
+                "brand": str(row["brand"] or ""),
+                "username": str(row["username"] or ""),
+                "active": bool(row["active"]),
+                "credentials": has_credentials,
+                "token_expires_at": str(row["token_expires_at"] or ""),
+                "created_at": str(row["created_at"] or ""),
+                "slots": slots.get(account_id, 0),
+            }
+        )
+    return listed
+
+
 async def set_account_flags(
     conn: aiosqlite.Connection,
     account_id: str,

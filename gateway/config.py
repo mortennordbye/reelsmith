@@ -165,6 +165,14 @@ class GatewaySettings(BaseSettings):
     #   GATEWAY_SLOTS: |
     #     18:00 Europe/Oslo jitter=15
     #     08:30 Europe/Oslo jitter=20 days=6,7
+    #     08:10 Europe/Oslo brand=thenightlybuild
+    #
+    # `brand=` names an identity and covers every destination it holds, which
+    # is one line where `account=` needs one per platform. It is also what
+    # keeps this file out of the way when a destination is added: a platform
+    # registered later joins that identity's schedule at the next boot. A brand
+    # matching no registered account freezes the sweep rather than deleting
+    # anything, the same as an unnamed line that cannot be resolved.
     #
     # Applied at startup and owned by config from then on: these rows are
     # replaced on every boot, so editing one in the admin UI would be undone by

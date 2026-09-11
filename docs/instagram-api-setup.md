@@ -40,12 +40,38 @@ they are the reasons people give up on this:
    `instagram_basic`, `instagram_content_publish` and `pages_read_engagement`
    instead; set `IG_GRAPH_HOST=https://graph.facebook.com` if you go that way.
 
-6. **A long-lived token.** Authorise once, exchange the short-lived token for a
-   long-lived one, put it in `IG_ACCESS_TOKEN`, then run
-   `python main.py --account <name> --refresh-token` to move it into
-   `accounts/<name>/data/ig_token.json`.
+6. **A long-lived token.** Authorise once and exchange the short-lived token
+   for a long-lived one. That is where this document used to end, with two
+   values to paste into two files.
 
-7. **Your IG user ID**, a 17 digit number, into `IG_USER_ID`.
+7. **Hand it to the consent trip**, which does the rest:
+
+   ```bash
+   uv run python scripts/authorise.py instagram --account <name>
+   ```
+
+   It asks for the token on a prompt rather than on argv, refreshes it, and
+   refuses a short-lived one: `ig_refresh_token` only accepts a long-lived
+   token, which turns the commonest mistake here from a publish that works for
+   an hour into a refusal now. Then it reads `GET /me` back, so the account it
+   registers is the one the token actually belongs to rather than an id copied
+   from beside the wrong one, registers it with the gateway, and writes
+   `IG_USER_ID` into `accounts/<name>/.env`.
+
+   Then `python main.py --account <name> --refresh-token` to put this
+   machine's own copy in `accounts/<name>/data/ig_token.json`, which is what
+   `--publish` reads. The gateway holds and refreshes its own separately.
+
+   By hand still works if you would rather: `IG_ACCESS_TOKEN` and `IG_USER_ID`,
+   a 17 digit number, in the account's `.env`. Nothing registers with the
+   gateway that way, so `--enqueue` will queue a row nothing can publish.
+
+**This is the one trip that is a paste rather than a browser flow**, and the
+reason is written in the script: the full flow needs an `/instagram/callback`
+route on the gateway, and that route is half the change. The other half is an
+`Exact` match in `k8s/talos/apps/reelsmith/httproute.yaml` in the homelab repo,
+because that allowlist 404s anything not named in it. Costed rather than
+absent.
 
 If you are also running the DM gateway, add its scopes in the same trip rather
 than making two: see `gateway/README.md`.

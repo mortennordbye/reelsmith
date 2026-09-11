@@ -212,8 +212,12 @@ transient condition.
 
    ```bash
    TIKTOK_CLIENT_KEY=... TIKTOK_CLIENT_SECRET=... \
-     uv run python scripts/tiktok_authorise.py --username '@handle'
+     uv run python scripts/authorise.py tiktok --account <name> --username '@handle'
    ```
+
+   `--account` is required and names the `accounts/<name>/` this destination
+   belongs to. It is what lets the trip write `TIKTOK_OPEN_ID` into that
+   account's `.env` itself and read its `BRAND=`, which is the grouping.
 
    The keys are read from the environment and never from argv, which is visible
    in `ps` and lands in shell history. It opens the consent screen, TikTok
