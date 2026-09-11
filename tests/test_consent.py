@@ -362,3 +362,48 @@ def test_the_terminal_refusal_says_nothing_was_done(monkeypatch):
     with pytest.raises(SystemExit) as raised:
         consent.require_terminal()
     assert "Nothing was opened and nothing was registered" in str(raised.value)
+
+
+# --- Asking for an app credential rather than requiring it up front ----------
+
+
+def test_a_missing_app_secret_is_asked_for_and_can_be_saved(tmp_path, monkeypatch, capsys):
+    """The alternative is a prerequisite, and a prerequisite is the step
+    somebody discovers they have not done after a browser has been opened.
+
+    Every one of these trips is most expensive to restart at exactly that
+    point, and the page the credential comes from is open in a tab by then, so
+    the answer to the prompt is a copy and a paste.
+    """
+    monkeypatch.setattr(consent, "ROOT", tmp_path)
+    (tmp_path / ".env").write_text("GITHUB_TOKEN=x\n")
+    monkeypatch.setattr(consent.getpass, "getpass", lambda _p: "  the-secret  ")
+    monkeypatch.setattr("builtins.input", lambda _p: "y")
+
+    got = consent.ask_secret("FACEBOOK_APP_SECRET", what="Behind Show.", where="https://x")
+
+    assert got == "the-secret"
+    assert "FACEBOOK_APP_SECRET=the-secret" in (tmp_path / ".env").read_text()
+    assert "not echoed" in capsys.readouterr().out
+
+
+def test_declining_to_save_still_returns_it_and_says_so(tmp_path, monkeypatch, capsys):
+    """Offered rather than written. A script that silently appends a secret to
+    a file is one nobody can predict."""
+    monkeypatch.setattr(consent, "ROOT", tmp_path)
+    (tmp_path / ".env").write_text("")
+    monkeypatch.setattr(consent.getpass, "getpass", lambda _p: "the-secret")
+    monkeypatch.setattr("builtins.input", lambda _p: "n")
+
+    assert consent.ask_secret("X", what="w", where="https://x") == "the-secret"
+    assert "X=" not in (tmp_path / ".env").read_text()
+    assert "will ask again" in capsys.readouterr().out
+
+
+def test_pasting_nothing_stops_rather_than_going_on_with_an_empty_secret(tmp_path, monkeypatch):
+    monkeypatch.setattr(consent, "ROOT", tmp_path)
+    monkeypatch.setattr(consent.getpass, "getpass", lambda _p: "   ")
+
+    with pytest.raises(SystemExit) as raised:
+        consent.ask_secret("X", what="w", where="https://x")
+    assert "Nothing pasted" in str(raised.value)

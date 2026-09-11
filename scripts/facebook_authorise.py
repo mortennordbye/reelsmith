@@ -260,13 +260,26 @@ def trip(args: argparse.Namespace) -> consent.Trip:
         consent.open_pages(setup_pages(app_id or "<app-id>"))
         print(f"  The redirect URI this trip uses: {REDIRECT_URI}\n")
 
-    if not app_id or not app_secret:
+    # The app id is public and printed on the page, so a missing one is a
+    # prerequisite worth refusing on: without it the tabs above open on a
+    # placeholder and there is nothing to paste from.
+    if not app_id:
         raise consent.ConsentError(
-            f"No FACEBOOK_APP_ID and FACEBOOK_APP_SECRET, in the environment or\n"
-            f"in .env or accounts/{args.account}/.env. They identify the Meta\n"
-            f"app rather than the Page, so one pair serves every Page and the\n"
-            f"root .env is where the pair belongs. The App settings tab above\n"
-            f"has both."
+            f"No FACEBOOK_APP_ID, in the environment or in .env or\n"
+            f"accounts/{args.account}/.env. It identifies the Meta app rather\n"
+            f"than the Page, so one id serves every Page and the root .env is\n"
+            f"where it belongs. It is public: App settings, Basic, top of the\n"
+            f"page, next to the secret."
+        )
+
+    # The secret is asked for rather than required up front. Requiring it is
+    # the step somebody discovers they have not done after a browser has been
+    # opened, and the tab it comes from is now open in front of them.
+    if not app_secret:
+        app_secret = consent.ask_secret(
+            "FACEBOOK_APP_SECRET",
+            what="App settings, Basic, behind the Show button beside it.",
+            where=f"{APPS_URL}{app_id}/settings/basic/",
         )
 
     page = choose(pages(user_token(authorise(app_id), app_id, app_secret)))
