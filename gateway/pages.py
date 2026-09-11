@@ -54,20 +54,31 @@ router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 
+def _public(request: Request) -> dict:
+    """What every public page needs, which is one thing.
+
+    The contact address is a setting rather than a string in three templates,
+    because it is the last identifying text on pages that are otherwise
+    deliberately identity-neutral. Naming no account is what lets one policy
+    URL cover every identity this service publishes for.
+    """
+    return {"contact_email": request.app.state.cfg.contact_email}
+
+
 @router.get("/", response_class=HTMLResponse, name="index_page")
 async def index(request: Request) -> Any:
-    """What this account is, for somebody who arrived from an app listing."""
-    return templates.TemplateResponse(request, "index.html", {})
+    """What this service is, for somebody who arrived from an app listing."""
+    return templates.TemplateResponse(request, "index.html", _public(request))
 
 
 @router.get("/privacy", response_class=HTMLResponse, name="privacy_page")
 async def privacy(request: Request) -> Any:
-    return templates.TemplateResponse(request, "privacy.html", {})
+    return templates.TemplateResponse(request, "privacy.html", _public(request))
 
 
 @router.get("/terms", response_class=HTMLResponse, name="terms_page")
 async def terms(request: Request) -> Any:
-    return templates.TemplateResponse(request, "terms.html", {})
+    return templates.TemplateResponse(request, "terms.html", _public(request))
 
 
 def _callback(request: Request, *, platform: str, script: str) -> Any:

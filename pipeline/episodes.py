@@ -34,9 +34,23 @@ log = logging.getLogger(__name__)
 
 _MAX_ATTEMPTS = 3
 
+# The claim is a placeholder the account fills in, not a constant.
+#
+# It read the second account's end card line verbatim, which was wrong twice
+# over. **This repo is public**, so a line naming an identity puts that
+# identity in it, which is what `PROFILE.md` is gitignored to prevent, and the
+# handle was already carried alongside account 1's throughout the tests.
+# And a claim is a fact about one account, so a hardcoded one is a prompt that
+# cannot serve a second niche, which `CLAUDE.md` already says needs one
+# `SYSTEM_PROMPT` per niche.
+#
+# `ENDCARD_TAGLINE` is where it lives, on the account, next to the end card it
+# is the text of. Empty, the sentence is dropped rather than printed with
+# nothing after it, the same rule `youtube_description` follows for a missing
+# repo line.
 EPISODE_SYSTEM = """You write one episode of a short video account whose whole
 claim is that every piece of advice arrives with a source a viewer could go and
-check. The end card reads "Self help with a citation". The audience is working
+check.{claim} The audience is working
 adults, many of them engineers, who have seen a thousand generated videos.
 
 The arc, in order, and every beat earns its place:
@@ -102,6 +116,18 @@ def _prompt(subject: SubjectCandidate, note: str = "") -> str:
     )
 
 
+def episode_system(cfg: Settings) -> str:
+    """The system prompt with this account's own claim in it.
+
+    A function rather than an f-string at import time, because `EPISODE_SYSTEM`
+    is read by tests and by anyone reading the file, and the account is not
+    selected when this module is imported.
+    """
+    tagline = (cfg.endcard_tagline or "").strip().rstrip(".")
+    claim = f' The end card reads "{tagline}".' if tagline else ""
+    return EPISODE_SYSTEM.format(claim=claim)
+
+
 def write(cfg: Settings, subject: SubjectCandidate) -> EpisodeScript:
     """One episode, or a raised error. Never a half script.
 
@@ -113,7 +139,9 @@ def write(cfg: Settings, subject: SubjectCandidate) -> EpisodeScript:
     """
     prompt = _prompt(subject)
     for attempt in range(_MAX_ATTEMPTS):
-        envelope = claude_cli.run(prompt, schema(), cfg, system=EPISODE_SYSTEM, research=True)
+        envelope = claude_cli.run(
+            prompt, schema(), cfg, system=episode_system(cfg), research=True
+        )
         payload = envelope.get("structured_output") or claude_cli.payload(envelope)
         if payload is None:
             raise claude_cli.ClaudeError(

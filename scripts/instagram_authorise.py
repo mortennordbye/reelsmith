@@ -8,7 +8,7 @@ and is the step that does not survive a fifth.
 
 Run it once per account:
 
-    uv run python scripts/authorise.py instagram --account thewholequote
+    uv run python scripts/authorise.py instagram --account <name>
 
 It opens the Meta app dashboard on the page the token comes from, walks the
 three steps there, then asks for the long-lived user token on a prompt rather

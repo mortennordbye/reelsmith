@@ -1,27 +1,23 @@
 {% extends "public_base.html" %}
-{% block title %}The Nightly Build{% endblock %}
+{% block title %}reelsmith{% endblock %}
 {% block content %}
-<h1>The Nightly Build</h1>
-<p class="dateline">A daily short video about an open source developer tool.</p>
+<h1>reelsmith</h1>
+<p class="dateline">An automated short video publishing service.</p>
 
-<p class="lede">Every night this service picks a trending open source repository,
-writes a short script about it, narrates it, renders a vertical video and posts
-it. Roughly 45 seconds, no hype, aimed at people who write software for a
-living.</p>
+<p class="lede">Every night this service picks a subject, writes a short
+script about it, narrates it, renders a vertical video and posts it. Roughly 45
+seconds, no hype, aimed at adults who have seen a thousand generated videos.</p>
 
 <h2>Where it posts</h2>
-<ul>
-  <li><a href="https://www.instagram.com/thenightlybuild/">Instagram</a></li>
-  <li><a href="https://www.youtube.com/@thenightlybuild">YouTube</a></li>
-  <li><a href="https://www.tiktok.com/@thenightlybuild">TikTok</a></li>
-  <li><a href="https://www.facebook.com/1236596692875712">Facebook</a></li>
-</ul>
+<p>To accounts on <strong>Instagram</strong>, <strong>YouTube</strong>,
+<strong>TikTok</strong> and <strong>Facebook</strong>, all of them owned by the
+operator. It never posts anywhere else and it cannot be pointed at an account
+it has not been given credentials for.</p>
 
 <h2>How it works</h2>
-<p>A scheduled job ranks candidate repositories by how fast they are gaining
-stars, writes and renders a video, and adds it to a queue. This service holds
-that queue and publishes from it on a timetable. Anything queued can be
-cancelled before its slot fires.</p>
+<p>A scheduled job ranks candidate subjects, writes and renders a video, and
+adds it to a queue. This service holds that queue and publishes from it on a
+timetable. Anything queued can be cancelled before its slot fires.</p>
 
 <p>The whole thing is open source, including this page. You can read exactly
 what it does in <a href="https://github.com/mortennordbye/reelsmith">the
@@ -35,5 +31,5 @@ because the platforms require them for any application using their APIs,
 including one whose only user is the person who wrote it.</p>
 
 <h2>Contact</h2>
-<p><a href="mailto:thenightlybuild@nordbye.it">thenightlybuild@nordbye.it</a></p>
+<p><a href="mailto:{{ contact_email }}">{{ contact_email }}</a></p>
 {% endblock %}

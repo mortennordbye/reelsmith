@@ -1,26 +1,20 @@
 {% extends "public_base.html" %}
-{% block title %}Privacy policy - The Nightly Build{% endblock %}
+{% block title %}Privacy policy - reelsmith{% endblock %}
 {% block content %}
 <h1>Privacy policy</h1>
-<p class="dateline">Last updated 27 August 2026.</p>
+<p class="dateline">Last updated 11 September 2026.</p>
 
-<p class="lede">This policy covers <strong>The Nightly Build</strong>, an
-automated publishing service that posts short videos about open source
-developer tools to
-<a href="https://www.instagram.com/thenightlybuild/">@thenightlybuild</a> on
-Instagram,
-<a href="https://www.youtube.com/@thenightlybuild">@thenightlybuild</a> on
-YouTube and
-<a href="https://www.tiktok.com/@thenightlybuild">@thenightlybuild</a> on
-TikTok and <a href="https://www.facebook.com/1236596692875712">The Nightly Build</a> on
-Facebook. It also covers the comment and direct
-message assistant attached to the Instagram account, which is described below
-and is currently dormant.</p>
+<p class="lede">This policy covers <strong>reelsmith</strong>, an automated
+publishing service that posts short videos to accounts on <strong>Instagram</strong>,
+<strong>YouTube</strong>, <strong>TikTok</strong> and <strong>Facebook</strong>,
+all of them owned by the operator. It also covers the comment and direct message
+assistant attached to the Instagram accounts, which is described below and is
+currently dormant.</p>
 
 <p>The software is open source and you can read exactly what it does in
 <a href="https://github.com/mortennordbye/reelsmith">this repository</a>.</p>
 
-<p>Contact: <strong><a href="mailto:thenightlybuild@nordbye.it">thenightlybuild@nordbye.it</a></strong></p>
+<p>Contact: <strong><a href="mailto:{{ contact_email }}">{{ contact_email }}</a></strong></p>
 
 <h2>Who this affects</h2>
 <p><strong>If you simply watch the videos, this service holds nothing about you
@@ -94,8 +88,8 @@ and it is removed. Post performance figures are kept indefinitely, because they
 describe the account's own videos rather than any person.</p>
 
 <h2>Deleting your data</h2>
-<p>Email <strong><a href="mailto:thenightlybuild@nordbye.it">thenightlybuild@nordbye.it</a></strong>
-from any address, or send a direct message to the Instagram account, saying you
+<p>Email <strong><a href="mailto:{{ contact_email }}">{{ contact_email }}</a></strong>
+from any address, or send a direct message to the account, saying you
 want your data deleted. Include your handle so the record can be found. It will
 be deleted within 30 days, usually sooner.</p>
 <p>Blocking the account, or deleting your comment, also stops any further

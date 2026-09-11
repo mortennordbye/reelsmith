@@ -46,7 +46,7 @@ IDS = {
     # is here rather than in a tidier fixture value.
     "TIKTOK_OPEN_ID": "-000y6NKYZ3EEbUGgXiyJ9nG66a_xqrF68Me",
     "FACEBOOK_PAGE_ID": "104739283746152",
-    "BRAND": "thewholequote",
+    "BRAND": "secondbrand",
 }
 
 # Not ids and not credentials: what the render host needs in order to render.
@@ -59,9 +59,9 @@ RENDER_SIDE = {
     "CHATTERBOX_REF": "accounts/other/ref/voice.wav",
     "CHATTERBOX_EXAGGERATION": "0.52",
     "CHATTERBOX_CFG_WEIGHT": "0.48",
-    "ENDCARD_NAME": "The Whole Quote",
-    "ENDCARD_HANDLE": "@thewholequote",
-    "ENDCARD_TAGLINE": "Self help with a citation",
+    "ENDCARD_NAME": "Second Brand",
+    "ENDCARD_HANDLE": "@secondbrand",
+    "ENDCARD_TAGLINE": "A tagline that is not account 1's",
 }
 
 

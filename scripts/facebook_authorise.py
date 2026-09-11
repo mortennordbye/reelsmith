@@ -7,7 +7,7 @@ token rather than a client pair plus a refresh token.
 
 Run it once per Page:
 
-    uv run python scripts/authorise.py facebook --account thewholequote
+    uv run python scripts/authorise.py facebook --account <name>
 
 It reads `FACEBOOK_APP_ID` and `FACEBOOK_APP_SECRET` from the environment,
 never from argv, which is visible in `ps` and lands in shell history.

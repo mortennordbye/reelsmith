@@ -9,7 +9,7 @@ account's `.env`.
 
 Run it once per account:
 
-    uv run python scripts/authorise.py tiktok --account thewholequote
+    uv run python scripts/authorise.py tiktok --account <name>
 
 It reads `TIKTOK_CLIENT_KEY` and `TIKTOK_CLIENT_SECRET` from the environment,
 never from argv, which is visible in `ps` and lands in shell history. The result
