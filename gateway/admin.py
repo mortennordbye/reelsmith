@@ -1079,6 +1079,89 @@ async def publish_now(request: Request, queued_id: int) -> Any:
     return _back(request)
 
 
+@router.post("/queue/publish-all")
+async def publish_all_now(request: Request) -> Any:
+    """Publish what the next slot fire would publish, on every destination, now.
+
+    **A rehearsal of the schedule rather than a way around it.** A new identity
+    is registered, credentialled and queued, and the only thing that proves any
+    of it works is a post coming out the other end. Waiting for 08:10 to find
+    out that a token was minted wrong, or a Page id is the one from a URL,
+    costs a day per attempt, and the first attempt is exactly when something is
+    most likely to be wrong.
+
+    Each destination contributes the row `next_approved` would hand a due slot,
+    which is what makes this a rehearsal: the same row, chosen the same way,
+    published by the same function. A destination with nothing armed
+    contributes nothing rather than reaching for a draft, because a draft is
+    deliberately not armed and this is not the control that decides that.
+
+    **It does not touch the slots**, exactly as `publish_now` does not, and here
+    that is the feature rather than a caveat. Today's fire is still due, so the
+    schedule still gets to prove itself on its own timetable while this proves
+    the publishing path immediately. The two questions are separate and this
+    answers only one of them.
+
+    **It refuses to run unscoped.** `_scope` falls back to every account when
+    no identity is chosen, which is right for a page and wrong for a button
+    that publishes: one misread click would fire every identity at once. A
+    brand or a destination has to be selected, which is also the state anyone
+    validating a new account is already in.
+
+    Every row is claimed before anything is sent, so a tick landing mid-flight
+    finds nothing to take, and every row with a container is skipped, which is
+    the same line the scheduler and `cancel` draw. It returns before the posts
+    exist, for the reason `publish_now` does: the rows' own states are the
+    progress bar.
+    """
+    scope = await _scope(request)
+    if not scope["selected"] and not scope["brand"]:
+        log.warning("Publish all was refused because no identity is selected")
+        return _back(request)
+
+    conn = request.app.state.db
+    started: list[str] = []
+    for account in scope["visible"]:
+        account_id = str(account["account_id"])
+        row = await db.next_approved(conn, account_id)
+        if row is None:
+            log.info("Publish all: %s has nothing armed", account_id)
+            continue
+        if row["container_id"]:
+            log.warning(
+                "Publish all: queue %d has container %s, so it was skipped",
+                row["id"], row["container_id"],
+            )
+            continue
+        if not await db.claim_queued(conn, int(row["id"])):
+            log.info("Publish all: queue %d was taken by a tick first", row["id"])
+            continue
+
+        claimed = await db.get_queued(conn, int(row["id"]))
+        task = asyncio.create_task(
+            scheduler.publish_queued(
+                conn,
+                request.app.state.graph,
+                request.app.state.cfg,
+                request.app.state.metrics,
+                account=account,
+                queued=claimed,
+            )
+        )
+        # Held for the reason `publish_now` holds its one: without a reference
+        # this is a task that can vanish between the upload and the status poll.
+        _in_flight.add(task)
+        task.add_done_callback(_in_flight.discard)
+        started.append(f"{account['platform']}:{row['id']}")
+
+    log.info(
+        "Publish all for %r started %d of %d destination(s): %s",
+        scope["brand"] or scope["selected"]["account_id"],
+        len(started), len(scope["visible"]), ", ".join(started) or "none",
+    )
+    return _back(request)
+
+
 @router.post("/queue/{queued_id}/hold")
 async def hold(request: Request, queued_id: int) -> Any:
     row = await _require_row(request, queued_id)

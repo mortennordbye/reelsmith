@@ -19,7 +19,7 @@ import pytest
 from gateway import db, schedule
 from gateway.app import create_app
 from gateway.config import GatewayConfigError
-from tests.gateway_harness import ACCOUNT, API_TOKEN, FakeMeta, settings
+from tests.gateway_harness import ACCOUNT, API_TOKEN, CHANNEL, FakeMeta, settings
 
 AUTH = {"authorization": f"Bearer {API_TOKEN}"}
 LINK = "https://github.com/astral-sh/uv"
@@ -1468,3 +1468,112 @@ async def test_the_health_page_counts_posts_that_carry_a_platform_label(client):
     body = (await http.get("/admin/health")).text
 
     assert ">3<" in body.replace(" ", "").replace("\n", "")
+
+
+# --- Publishing every destination of one identity at once --------------------
+#
+# A new identity is registered, credentialled and queued, and the only thing
+# that proves any of it works is a post coming out the other end. Waiting for
+# 08:10 to find out that a token was minted wrong, or that a Page id is the one
+# from a URL, costs a day per attempt, and the first attempt is exactly when
+# something is most likely to be wrong.
+
+
+async def _second_destination(app, *, brand: str) -> str:
+    await db.upsert_account(
+        app.state.db, account_id=ACCOUNT, access_token="tok", username="nightly", brand=brand
+    )
+    await db.upsert_account(
+        app.state.db,
+        account_id=CHANNEL,
+        access_token="",
+        username="@nightly",
+        platform=db.PLATFORM_YOUTUBE,
+        brand=brand,
+    )
+    return CHANNEL
+
+
+async def test_publish_all_claims_the_next_row_on_every_destination(client):
+    http, app = client
+    channel = await _second_destination(app, brand="one")
+    first = (await queue(http, approved=True))["id"]
+    second = (await queue(http, approved=True, account_id=channel))["id"]
+
+    await http.post("/admin/queue/publish-all?brand=one")
+
+    # Asserted on `attempts` rather than on `state`, because a publish that
+    # fails is re-armed for its next try, so by the time this reads the row it
+    # may legitimately be `approved` again. `claim_queued` increments attempts
+    # and nothing puts that back, which makes it the durable evidence that the
+    # row was taken.
+    for queued_id in (first, second):
+        assert (await db.get_queued(app.state.db, queued_id))["attempts"] >= 1, queued_id
+
+
+async def test_publish_all_takes_one_row_per_destination_not_the_whole_queue(client):
+    """It is a rehearsal of a slot fire, and a slot takes one row.
+
+    Draining the queue would be a different and much worse button: the point is
+    to prove the path works, not to spend everything queued behind it.
+    """
+    http, app = client
+    await _second_destination(app, brand="one")
+    first = (await queue(http, approved=True))["id"]
+    behind = (await queue(http, approved=True))["id"]
+
+    await http.post("/admin/queue/publish-all?brand=one")
+
+    assert (await db.get_queued(app.state.db, first))["attempts"] >= 1
+    assert (await db.get_queued(app.state.db, behind))["attempts"] == 0
+
+
+async def test_publish_all_refuses_when_no_identity_is_selected(client):
+    """`_scope` falls back to every account when nothing is chosen, which is
+    right for a page and wrong for a button that publishes."""
+    http, app = client
+    queued_id = (await queue(http, approved=True))["id"]
+
+    await http.post("/admin/queue/publish-all")
+
+    assert (await db.get_queued(app.state.db, queued_id))["attempts"] == 0
+
+
+async def test_publish_all_skips_a_row_that_already_has_a_container(client):
+    """The same line the scheduler and cancel draw: something exists at the
+    platform and may already be live."""
+    http, app = client
+    await _second_destination(app, brand="one")
+    queued_id = (await queue(http, approved=True))["id"]
+    await db.set_container(app.state.db, queued_id, "container-123")
+
+    await http.post("/admin/queue/publish-all?brand=one")
+
+    assert (await db.get_queued(app.state.db, queued_id))["attempts"] == 0
+
+
+async def test_publish_all_leaves_a_draft_alone(client):
+    """A draft is deliberately not armed, and this is not the control that
+    decides that. It publishes what a slot would publish."""
+    http, app = client
+    await _second_destination(app, brand="one")
+    queued_id = (await queue(http))["id"]
+
+    await http.post("/admin/queue/publish-all?brand=one")
+
+    assert (await db.get_queued(app.state.db, queued_id))["state"] == db.QUEUE_DRAFT
+
+
+async def test_publish_all_does_not_consume_the_slot(client):
+    """The feature rather than a caveat. Today's fire is still due, so the
+    schedule still proves itself on its own timetable while this proves the
+    publishing path immediately. Two questions, and this answers one."""
+    http, app = client
+    await _second_destination(app, brand="one")
+    await db.add_slot(app.state.db, account_id=ACCOUNT, hour=8, minute=10, tz="UTC")
+    await queue(http, approved=True)
+    before = [dict(r) for r in await db.all_slots(app.state.db, ACCOUNT)]
+
+    await http.post("/admin/queue/publish-all?brand=one")
+
+    assert [dict(r) for r in await db.all_slots(app.state.db, ACCOUNT)] == before
