@@ -45,6 +45,38 @@
       --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
       --sans: "Avenir Next", Inter, ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
     }
+    /* The plain look: the same panel with the joke taken out.
+       Only tokens and a handful of `display: none`, so a component is never
+       written twice and a new one is plain without being told. Neutral slate
+       rather than a light ground, because every platform badge is a light
+       glyph on a dark tint and inverting the page would mean restating all
+       four, which is the one set of colours this file argues hardest about. */
+    body.skin-plain {
+      --bg: #14161a; --panel: #171a1f; --panel-2: #1d2128;
+      --line: #2a2f38; --line-2: #39404c;
+      --ink: #e8eaed; --dim: #a8afba; --faint: #79808c;
+      /* Held at the same hue rather than retuned. Gold was picked because it
+         collides with none of the four platform hues, and that reasoning does
+         not change because the wallpaper came off. Muted, not replaced. */
+      --accent: #c9a227; --accent-soft: #e0bf5a;
+      --warn: #c9a227;
+      --r-lg: 10px;
+    }
+    /* The joke, in four parts. Hidden here rather than branched on inside six
+       templates, so a page that grows a quip tomorrow is covered already. */
+    body.skin-plain .wall,
+    body.skin-plain .quip,
+    body.skin-plain .boss { display: none; }
+    /* Matched at the same depth as the rules further down, because `header
+       .brand` is two selectors and `body.skin-plain .brand` loses to it. The
+       frame and the neon are the two things that make this a sign rather than
+       a wordmark, so both have to go or neither does. */
+    body.skin-plain header .brand {
+      border: 0; box-shadow: none; padding: 5px 0 6px;
+    }
+    body.skin-plain header .brand .wm {
+      color: var(--ink); font-size: 17px; letter-spacing: .02em;
+    }
     * { box-sizing: border-box; }
     body {
       margin: 0; background: var(--bg); color: var(--ink);
@@ -346,16 +378,19 @@
     {% block style %}{% endblock %}
   </style>
 </head>
-<body>
+{% set skin = skin_of(request) %}
+<body class="skin-{{ skin }}">
   {# Behind the login, like everything else on `router`, so the login page gets
-     the plain ground rather than a broken image request. #}
-  {% if page != 'login' %}
+     the plain ground rather than a broken image request. Not requested at all
+     in the plain look: hiding it with CSS would still cost the download, and
+     the room photograph is the largest asset the panel has. #}
+  {% if page != 'login' and skin == 'loud' %}
     <div class="wall" style="background-image:url('{{ url_for('asset', name='boss-room.jpg') }}')"></div>
   {% endif %}
   <header>
     <span class="brand">
-      <span class="wm">SLOPENGINE</span>
-      <span class="sub">reelsmith</span>
+      <span class="wm">{{ 'SLOPENGINE' if skin == 'loud' else 'reelsmith' }}</span>
+      {% if skin == 'loud' %}<span class="sub">reelsmith</span>{% endif %}
     </span>
     {% if page != 'login' %}
       {# The account choice rides on every link, or navigating away from an
@@ -369,6 +404,7 @@
         <a href="{{ url_for('repos_page') }}{{ q }}" class="{{ 'on' if page == 'repos' }}">Repos</a>
         <a href="{{ url_for('slots_page') }}{{ q }}" class="{{ 'on' if page == 'slots' }}">Slots</a>
         <a href="{{ url_for('health_page') }}{{ q }}" class="{{ 'on' if page == 'health' }}">Health</a>
+        <a href="{{ url_for('settings_page') }}{{ q }}" class="{{ 'on' if page == 'settings' }}">Settings</a>
       </nav>
 
       {# Only worth screen space once there is a choice to make. At one account

@@ -258,11 +258,38 @@ def _quip_for(page: str) -> str:
     return _QUIPS.get(page, "")
 
 
+# The two looks this panel comes in. `loud` is the one it has always had: the
+# wordmark in its frame, the room behind it, the manager and the quips. `plain`
+# is the same panel with the joke taken out, for when it is being shown to
+# somebody, or read at an hour when a photograph of a cat is not welcome.
+#
+# A cookie rather than a setting on the service, because it is a preference of
+# whoever is looking rather than a fact about the deployment, and two people
+# can hold different ones. It is also the reason it needs no migration and
+# cannot break publishing: the worst a bad value does is fall back to `loud`.
+SKINS = ("loud", "plain")
+SKIN_COOKIE = "skin"
+
+
+def _skin_of(request: Request) -> str:
+    """Which look this viewer has chosen, validated rather than trusted.
+
+    Straight into a class name on `body`, so an unchecked cookie would be an
+    attacker-controlled string in the markup. Anything unrecognised is `loud`,
+    which is also what a first visit gets.
+    """
+    chosen = request.cookies.get(SKIN_COOKIE, "")
+    return chosen if chosen in SKINS else SKINS[0]
+
+
 templates.env.filters["fmt"] = _fmt
 templates.env.filters["ago"] = _ago
 templates.env.filters["until"] = _until
 templates.env.filters["clock"] = _clock
 templates.env.globals["quip_for"] = _quip_for
+# Takes the request because a cookie is per viewer, unlike the other globals
+# here, which are facts about the service.
+templates.env.globals["skin_of"] = _skin_of
 
 
 def _display_tz(cfg: Any, slots: list[Any]) -> str:
@@ -492,23 +519,51 @@ async def _machine(conn: Any, scope: dict[str, Any]) -> dict[str, Any]:
     at the first step the gateway has a record of. Inventing the rest would put
     a number on this page that nothing could check.
     """
-    ids = [account["account_id"] for account in scope["visible"]]
-    single = ids[0] if len(ids) == 1 else None
+    # Summed across the scope's destinations rather than read once.
+    #
+    # This used to pass a single account id when the scope held exactly one and
+    # `None` otherwise, and `None` means every account. That was right while the
+    # only scopes were one destination or the whole service. An identity is
+    # neither: it holds several destinations, so scoping to a brand fell through
+    # to the `None` branch and counted the other identity's work as this one's.
+    # Invisible until there were two identities to leak between, which there
+    # were from 2026-09-11.
+    ids = [str(account["account_id"]) for account in scope["visible"]]
 
-    covered = await db.covered_repos(conn, single, limit=10_000)
-    rendered = await db.rendered_repos_list(conn, single, limit=10_000)
-    published = await db.published_media(conn, single, limit=10_000)
-    depth = await db.queue_depth(conn, single)
+    # Repos are unioned and posts are summed, which is the difference between
+    # the two kinds of number on this strip. One video committed to an identity
+    # is one repo on each of its destinations, so summing would report a single
+    # night's work as three or four; the same video published to them is
+    # genuinely that many posts.
+    covered: set[str] = set()
+    rendered: set[str] = set()
+    nights: set[str] = set()
+    published = 0
+    queued = 0
+    for account_id in ids:
+        for row in await db.covered_repos(conn, account_id, limit=10_000):
+            covered.add(str(row["repo_full_name"]))
+        for row in await db.rendered_repos_list(conn, account_id, limit=10_000):
+            # Guarded the way `covered_repos` guards its own, because the second
+            # niche's subjects are not repositories and an empty name counted as
+            # a repo would report an account that has covered none as covering
+            # one.
+            if name := str(row["repo_full_name"] or ""):
+                rendered.add(name)
+            if stamp := (row["rendered_at"] or ""):
+                nights.add(stamp[:10])
+        published += len(await db.published_media(conn, account_id, limit=10_000))
+        depth = await db.queue_depth(conn, account_id)
+        queued += sum(depth.get(state, 0) for state in db.QUEUE_LIVE_STATES)
 
-    # Nights that produced something, which is the closest honest reading of
-    # "how long has this run on its own". One night can render several.
-    nights = {stamp[:10] for row in rendered if (stamp := row["rendered_at"] or "")}
     return {
         "covered": len(covered),
         "rendered": len(rendered),
-        "queued": sum(depth.get(state, 0) for state in db.QUEUE_LIVE_STATES),
-        "published": len(published),
-        "destinations": len(scope["visible"]),
+        "queued": queued,
+        "published": published,
+        "destinations": len(ids),
+        # Nights that produced something, which is the closest honest reading of
+        # "how long has this run on its own". One night can render several.
         "nights": len(nights),
     }
 
@@ -877,6 +932,46 @@ async def repos_page(request: Request) -> Any:
         "repos.html",
         {"boards": boards, "cfg": cfg, "page": "repos", "scope": scope},
     )
+
+
+@router.get("/settings", response_class=HTMLResponse, name="settings_page")
+async def settings_page(request: Request) -> Any:
+    """What this viewer can change, which is currently one thing.
+
+    Deliberately not a page of service configuration. Everything that decides
+    what publishes lives in the ConfigMap and is applied at boot, where it is
+    reviewable and survives a pod being replaced; a panel that could change it
+    would be a second source of truth for the schedule. This holds preferences
+    of whoever is looking, and nothing here reaches a post.
+    """
+    return templates.TemplateResponse(
+        request,
+        "settings.html",
+        {"cfg": request.app.state.cfg, "page": "settings", "scope": await _scope(request)},
+    )
+
+
+@router.post("/settings/skin")
+async def set_skin(request: Request) -> Any:
+    """Store the chosen look for a year, or fall back to the loud one.
+
+    A year rather than a session, because the alternative is a panel that
+    changes its appearance every time the login expires, which reads as a bug
+    rather than as a default.
+    """
+    form = await request.form()
+    chosen = str(form.get("skin") or "")
+    response = RedirectResponse(request.url_for("settings_page"), status_code=303)
+    response.set_cookie(
+        SKIN_COOKIE,
+        chosen if chosen in SKINS else SKINS[0],
+        max_age=60 * 60 * 24 * 365,
+        httponly=False,
+        samesite="strict",
+        secure=request.url.scheme == "https",
+        path="/admin",
+    )
+    return response
 
 
 @router.get("/health", response_class=HTMLResponse, name="health_page")
