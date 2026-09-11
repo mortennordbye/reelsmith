@@ -103,7 +103,7 @@
             </td>
             <td>
               {% if d.token_days is not none %}
-                <span class="{{ 'bad' if d.token_days < 15 else ('warn' if d.token_days < 21 else '') }}">{{ d.token_days | round | int }} days</span>
+                <span class="{{ d.token_level }}">{{ d.token_days | round | int }} days</span>
               {% elif not d.expires %}<span class="faint">does not expire</span>
               {% else %}<span class="faint">not recorded</span>{% endif %}
             </td>

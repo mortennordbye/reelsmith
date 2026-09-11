@@ -61,7 +61,7 @@
       {% if not s.chart %}
         <p class="empty">
           Nothing to compare yet. The chart needs two posts with a retention reading, and
-          {{ s.measured }} of the {{ s.total }} published have one so far.
+          {{ s.measured }} of the {{ s.total }} published {{ 'has' if s.measured == 1 else 'have' }} one so far.
         </p>
       {% else %}
         {% set c = s.chart %}

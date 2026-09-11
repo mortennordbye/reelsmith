@@ -87,10 +87,13 @@ def names(platforms: list[str]) -> str:
     return f"{', '.join(words[:-1])} and {words[-1]}"
 
 
-# A token under this many days is a problem, and under the second a warning.
-# Fifteen is where Health already turned the number red.
-TOKEN_BAD_DAYS = 15
-TOKEN_WARN_DAYS = 21
+# An Instagram token is refreshed by the gateway once it is inside
+# `token_refresh_margin_days`, so days left above that margin are normal and a
+# token more than a day under it is a refresh that is failing. Under this many
+# days that failure is urgent.
+TOKEN_BAD_DAYS_LEFT = 7
+# TikTok's refresh token lasts a year and cannot be renewed without consent.
+TIKTOK_WARN_DAYS = 30
 # A destination that has published this many posts and stored no reading for
 # any of them has a sweep that is not working, rather than posts that are new.
 NO_READINGS_AFTER = 3
@@ -135,6 +138,21 @@ def claim_is_stale(row: Any, *, moment: datetime | None = None) -> bool:
 
 
 _DIGEST = re.compile(r"-[0-9a-f]{6,}$")
+_DEAD_UPLOAD = re.compile(r"\bContainer \S+ is (ERROR|EXPIRED)\b")
+
+
+def upload_is_dead(row: Any) -> bool:
+    """Whether a failed row's upload is one Meta will never publish.
+
+    Read from the failure text, because rows that failed before the gateway
+    said so in words carry only `Container <id> is ERROR`, and those are exactly
+    the ones waiting for a decision.
+    """
+    return (
+        str(row["state"]) == db.QUEUE_FAILED
+        and bool(row["container_id"])
+        and bool(_DEAD_UPLOAD.search(str(row["failure"] or "")))
+    )
 
 
 def subject_of(row: Any) -> str:
@@ -233,6 +251,12 @@ class Issue:
     def headline(self) -> str:
         return self.lead.format(where=names(self.platforms))
 
+    @property
+    def short(self) -> str:
+        """The headline without the platform, for a cell already under its name."""
+        text = re.sub(r"\s+on$", "", self.lead.format(where="").strip()).strip()
+        return text[:1].upper() + text[1:]
+
 
 def merge_issues(issues: list[Issue]) -> list[Issue]:
     merged: dict[tuple[str, ...], Issue] = {}
@@ -278,6 +302,8 @@ class Destination:
     readings: int = 0
     last_reading: datetime | None = None
     token_days: float | None = None
+    # Whole days since the oldest failed post failed, for "9 days ago".
+    failed_days: int | None = None
     issues: list[Issue] = field(default_factory=list)
 
     @property
@@ -312,6 +338,30 @@ class Destination:
     def level(self) -> str:
         return min((i.level for i in self.issues), key=level_rank, default="ok")
 
+    @property
+    def token_level(self) -> str:
+        return next((i.level for i in self.issues if i.tag == "Token"), "")
+
+    @property
+    def connection(self) -> tuple[str, str]:
+        """The connection's own health, apart from anything wrong with a post.
+
+        A destination whose posts failed is still connected, and showing
+        "Failed" as its state read as a broken account.
+        """
+        if not self.active:
+            return "Paused", "off"
+        if self.token_days is not None and self.token_days < 0:
+            return "Token expired", "bad"
+        if self.token_level:
+            return "Token needs attention", self.token_level
+        return "Connected", "ok"
+
+    @property
+    def problems(self) -> list[Issue]:
+        """Everything wrong that is not the connection itself."""
+        return [i for i in self.issues if i.tag not in ("Paused", "Token")]
+
 
 def no_readings_reason(platform: str, cfg: Any) -> str:
     """Why a destination has published and stored nothing, as far as it is known.
@@ -340,52 +390,107 @@ def no_readings_reason(platform: str, cfg: Any) -> str:
     return "Check that the insights sweep is on and that the token still reads insights."
 
 
+def _ago_phrase(days: int | None) -> str:
+    if days is None:
+        return ""
+    return "today" if days == 0 else "yesterday" if days == 1 else f"{days} days ago"
+
+
+def _token_issue(dest: Destination, cfg: Any) -> Issue | None:
+    days = dest.token_days
+    if days is None:
+        return None
+    where, brand = [dest.platform], dest.brand
+    command = f"uv run python scripts/authorise.py {dest.platform} --account <name>"
+    if days < 0:
+        return Issue("bad", "Token", "The {where} token has expired",
+                     f"An expired token cannot be refreshed. Authorise again: {command}",
+                     brand, "setup", where)
+    if dest.caps.token_clock == "account":
+        margin = int(getattr(cfg, "token_refresh_margin_days", 15))
+        if days >= margin - 1:
+            return None
+        return Issue(
+            "bad" if days < TOKEN_BAD_DAYS_LEFT else "warn", "Token",
+            f"{{where}} token was not refreshed, {int(days)} days left",
+            f"The gateway refreshes it once it is inside {margin} days, so that refresh is "
+            f"failing and the gateway log says why. If the token was revoked, authorise "
+            f"again: {command}",
+            brand, "setup", where,
+        )
+    if days < TIKTOK_WARN_DAYS:
+        return Issue(
+            "bad" if days < TOKEN_BAD_DAYS_LEFT else "warn", "Token",
+            f"{{where}} authorisation lapses in {int(days)} days",
+            f"It cannot be renewed without consent. Authorise again before it does: {command}",
+            brand, "setup", where,
+        )
+    return None
+
+
 def _issues(dest: Destination, cfg: Any) -> list[Issue]:
+    """What is wrong with one destination, each with how to fix it.
+
+    The `rest` of every issue is the fix, in the words of the page that holds
+    it, because a problem the panel names and does not explain is a problem
+    someone has to go and research.
+    """
     where = [dest.platform]
     brand = dest.brand
     if not dest.active:
         return [
-            Issue("info", "Paused", "{where} is paused", "Nothing polls or publishes there.",
+            Issue("info", "Paused", "{where} is paused",
+                  "Nothing polls or publishes there until it is resumed on Setup.",
                   brand, "setup", where)
         ]
     found: list[Issue] = []
     if dest.failed:
-        plural = "es" if dest.failed != 1 else ""
-        found.append(Issue("bad", "Failed", f"{dest.failed} failed publish{plural} on {{where}}",
-                           "It needs a retry or a give up." if dest.failed == 1
-                           else "Each needs a retry or a give up.",
-                           brand, "schedule", where))
+        when = _ago_phrase(dest.failed_days)
+        if dest.failed == 1:
+            rest = f"It failed {when}. " if when else ""
+            rest += "Open Schedule to see why, then retry it or give up on it."
+        else:
+            rest = f"The oldest failed {when}. " if when else ""
+            rest += "Open Schedule to see why, then retry or give up on each."
+        found.append(Issue(
+            "bad", "Failed post",
+            f"{dest.failed} post{'s' if dest.failed != 1 else ''} failed to publish on {{where}}",
+            rest, brand, "schedule", where,
+        ))
     if dest.stale:
         plural = "s" if dest.stale != 1 else ""
-        found.append(Issue("bad", "Stuck",
-                           f"{dest.stale} claim{plural} on {{where}} never finished",
-                           "Check the account before retrying, the post may be live.",
-                           brand, "schedule", where))
-    if dest.token_days is not None:
-        if dest.token_days < 0:
-            found.append(Issue("bad", "Token", "The {where} token has expired",
-                               "An expired long lived token cannot be refreshed. Authorise again.",
-                               brand, "setup", where))
-        elif dest.token_days < TOKEN_WARN_DAYS:
-            level = "bad" if dest.token_days < TOKEN_BAD_DAYS else "warn"
-            found.append(Issue(level, "Token",
-                               f"{{where}} token expires in {int(dest.token_days)} days",
-                               "Refresh it before it lapses, because a lapsed one cannot be.",
-                               brand, "setup", where))
+        found.append(Issue(
+            "bad", "Stuck", f"{dest.stale} post{plural} on {{where}} never finished publishing",
+            "Look for the post on the account, then give up on it on Schedule.",
+            brand, "schedule", where,
+        ))
+    token = _token_issue(dest, cfg)
+    if token is not None:
+        found.append(token)
     if not dest.slots_per_day:
-        found.append(Issue("info", "No slot", "No active slot on {where}",
-                           "Nothing goes out there on its own.", brand, "setup", where))
+        found.append(Issue(
+            "info", "No slot", "No active slot on {where}",
+            "Nothing goes out there on its own. Add a GATEWAY_SLOTS line for the brand, "
+            "or a slot on Setup.",
+            brand, "setup", where,
+        ))
     elif dest.armed == 0:
-        found.append(Issue("bad", "Empty", "Nothing armed on {where}",
-                           "The next slot fires into an empty queue.", brand, "schedule", where))
+        found.append(Issue(
+            "bad", "Empty", "Nothing armed on {where}",
+            "The next slot fires into an empty queue. Render or approve a video for this brand.",
+            brand, "schedule", where,
+        ))
     elif dest.runway is not None and dest.runway <= 1:
-        found.append(Issue("warn", "Runway", f"{dest.runway:.1f} days of posts left on {{where}}",
-                           "Render or approve something before the queue runs dry.",
-                           brand, "schedule", where))
+        found.append(Issue(
+            "warn", "Runway", f"{dest.runway:.1f} days of posts left on {{where}}",
+            "Render or approve more before the queue runs dry.",
+            brand, "schedule", where,
+        ))
     if dest.published >= NO_READINGS_AFTER and dest.readings == 0:
-        found.append(Issue("warn", "No data",
-                           f"No readings stored for {dest.published} posts on {{where}}",
-                           no_readings_reason(dest.platform, cfg), brand, "performance", where))
+        found.append(Issue(
+            "warn", "No data", f"No readings stored for {dest.published} posts on {{where}}",
+            no_readings_reason(dest.platform, cfg), brand, "performance", where,
+        ))
     return found
 
 
@@ -400,6 +505,7 @@ async def load_destinations(
         slots[str(slot["account_id"])] = slots.get(str(slot["account_id"]), 0) + 1
     activity = await db.destination_activity(conn)
     tiktok_expiry = await db.tiktok_refresh_expiries(conn)
+    failed_since = await db.failed_since_by_account(conn)
 
     out: dict[str, Destination] = {}
     for brand in brands:
@@ -427,6 +533,9 @@ async def load_destinations(
                 expires = db.parse_iso(tiktok_expiry.get(account_id))
             if expires is not None:
                 dest.token_days = (expires - moment).total_seconds() / 86_400
+            failed_at = db.parse_iso(failed_since.get(account_id))
+            if dest.failed and failed_at is not None:
+                dest.failed_days = max(0, int((moment - failed_at).total_seconds() // 86_400))
             dest.issues = _issues(dest, cfg)
             out[account_id] = dest
     return out
@@ -679,7 +788,15 @@ def by_day(plans_: list[Plan], moment: datetime) -> list[tuple[str, list[Plan]]]
 async def decisions(
     conn: Any, brand: Brand, dests: dict[str, Destination], *, moment: datetime
 ) -> list[dict[str, Any]]:
-    """Failed rows and abandoned claims: the ones waiting on a person."""
+    """Failed rows and abandoned claims: the ones waiting on a person.
+
+    Each carries what the template needs to say what it means: how old it is,
+    whether the upload is one the platform will never publish, and where else
+    the same video already went out.
+    """
+    platform_of = {
+        str(a["account_id"]): str(a["platform"] or db.PLATFORM_INSTAGRAM) for a in brand.accounts
+    }
     out: list[dict[str, Any]] = []
     for account in brand.accounts:
         dest = dests[str(account["account_id"])]
@@ -687,9 +804,31 @@ async def decisions(
             conn, account_id=dest.account_id, states=(db.QUEUE_FAILED, db.QUEUE_CLAIMED), limit=30
         ):
             stale = row["state"] == db.QUEUE_CLAIMED and claim_is_stale(row, moment=moment)
-            if row["state"] == db.QUEUE_FAILED or stale:
-                out.append({"platform": dest.platform, "row": row, "stale": stale,
-                            "subject": subject_of(row)})
+            if row["state"] != db.QUEUE_FAILED and not stale:
+                continue
+            elsewhere: list[str] = []
+            if row["video_name"]:
+                for other in await db.rows_for_video(conn, str(row["video_name"])):
+                    other_platform = platform_of.get(str(other["account_id"]))
+                    if (
+                        other_platform
+                        and other_platform != dest.platform
+                        and other["state"] == db.QUEUE_PUBLISHED
+                        and other_platform not in elsewhere
+                    ):
+                        elsewhere.append(other_platform)
+            held = db.parse_iso(row["claimed_at"] or row["created_at"])
+            out.append({
+                "platform": dest.platform,
+                "row": row,
+                "stale": stale,
+                "dead": upload_is_dead(row),
+                "subject": subject_of(row),
+                "elsewhere": sorted(elsewhere, key=_rank),
+                "age_days": (
+                    max(0, int((moment - held).total_seconds() // 86_400)) if held else None
+                ),
+            })
     return out
 
 

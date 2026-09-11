@@ -84,32 +84,51 @@
     <header><h2>Needs a decision</h2><span class="hint">{{ decisions | length }}</span></header>
     {% for d in decisions %}
       {% set row = d.row %}
+      {% set name = platform_name(d.platform) %}
       <div class="vrow" style="grid-template-columns:minmax(0,1fr) auto">
         <div>
           <span class="chip {{ d.platform }} {{ 'stuck' if d.stale else 'st-failed' }}">
-            <span class="st">{{ 'claimed, never finished' if d.stale else 'failed' }}</span> {{ platform_name(d.platform) }}
+            <span class="st">{{ 'never finished' if d.stale else 'failed' }}</span> {{ name }}
           </span>
           <strong style="margin-left:6px">{{ d.subject }}</strong>
-          {% if row['hook'] %}<p class="hook" style="margin-top:6px">{{ row['hook'] }}</p>{% endif %}
-          <span class="meta mono muted">
-            {% if d.stale %}Claimed {{ (row['claimed_at'] or row['created_at'] or '')[:16] | replace('T', ' ') }} and never finished. Check the account before retrying, the post may be live.{% else %}{{ row['failure'] }}{% endif %}
-          </span>
-          {% if not d.stale and row['container_id'] %}
-            <span class="meta small warn">
-              {% if d.platform == 'tiktok' %}The upload may already be waiting in the TikTok inbox. Look there before retrying, or the retry makes a second copy.{% else %}{{ platform_name(d.platform) }} accepted an upload for this one. Check the account before retrying.{% endif %}
-            </span>
+          {% if d.age_days is not none %}
+            <span class="small muted" style="margin-left:6px">{{ 'today' if d.age_days == 0 else ('yesterday' if d.age_days == 1 else d.age_days ~ ' days ago') }}</span>
           {% endif %}
+          {% if row['hook'] %}<p class="hook" style="margin-top:6px">{{ row['hook'] }}</p>{% endif %}
+          <span class="meta mono muted">{{ row['failure'] if not d.stale else 'Claimed and never finished.' }}</span>
+          <p class="small" style="margin:8px 0 0;max-width:80ch">
+            {% if d.stale %}
+              <strong>What it means:</strong> the gateway stopped partway through publishing, so it cannot tell whether the post went live.
+              <strong>To fix:</strong> look for it on {{ name }}, then give up on it here.
+            {% elif d.dead %}
+              <strong>What it means:</strong> {{ name }} rejected the upload while processing it and gave no reason, so nothing went live.
+              {% if d.elsewhere %}The same video is already out on {{ platform_list(d.elsewhere) }}, so the file itself is fine.{% endif %}
+              <strong>To fix:</strong> Retry now sends a fresh upload. If it fails the same way, give up on it.
+              {% if d.age_days and d.age_days > 2 %}It is {{ d.age_days }} days old, so a retry posts it late, and giving up is just as reasonable.{% endif %}
+            {% elif row['container_id'] and d.platform == 'tiktok' %}
+              <strong>What it means:</strong> the upload reached TikTok but had not finished processing when the gateway stopped waiting.
+              <strong>To fix:</strong> look in the TikTok inbox first. If the video is there, post it from the app and give up here, because a retry makes a second copy.
+            {% elif row['container_id'] %}
+              <strong>What it means:</strong> {{ name }} accepted an upload, and the gateway cannot tell whether it went live.
+              <strong>To fix:</strong> check the account. If the post is not there, retry; if it is, give up here.
+            {% else %}
+              <strong>What it means:</strong> nothing reached {{ name }}.
+              <strong>To fix:</strong> Retry now sends it again once the cause above is sorted.
+            {% endif %}
+          </p>
         </div>
         <div class="acts">
-          {% if not d.stale %}
-            <form class="inline" method="post" action="{{ url_for('approve', queued_id=row['id']) }}">
-              <button {% if row['container_id'] %}title="The platform already accepted an upload for this one, so check the account for a duplicate before retrying"{% endif %}>Retry{% if row['container_id'] %} ⚠{% endif %}</button>
+          {% if not d.stale and (d.dead or not row['container_id']) %}
+            <form class="inline" method="post" action="{{ url_for('publish_now', queued_id=row['id']) }}">
+              <button class="primary" title="Send it now instead of waiting for the next slot">Retry now</button>
             </form>
-            {% if not row['container_id'] %}
-              <form class="inline" method="post" action="{{ url_for('publish_now', queued_id=row['id']) }}">
-                <button title="Send it now instead of waiting for the next slot">Retry now</button>
-              </form>
-            {% endif %}
+            <form class="inline" method="post" action="{{ url_for('approve', queued_id=row['id']) }}">
+              <button title="Arm it for the next slot">Retry at next slot</button>
+            </form>
+          {% elif not d.stale %}
+            <form class="inline" method="post" action="{{ url_for('approve', queued_id=row['id']) }}">
+              <button title="Something may exist at the platform, so check the account for a duplicate before retrying">Retry ⚠</button>
+            </form>
           {% endif %}
           <form class="inline" method="post" action="{{ url_for('cancel', queued_id=row['id']) }}">
             <button class="link">Give up</button>

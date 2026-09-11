@@ -57,7 +57,7 @@
             <th>Token</th>
             <td>
               {% if d.token_days is not none %}
-                <span class="{{ 'bad' if d.token_days < 15 else ('warn' if d.token_days < 21 else '') }}">{{ d.token_days | round | int }} days left</span>
+                <span class="{{ d.token_level }}">{{ d.token_days | round | int }} days left</span>
               {% elif not d.expires %}Does not expire
               {% else %}Expiry not recorded{% endif %}
             </td>

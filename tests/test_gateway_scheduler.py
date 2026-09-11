@@ -252,13 +252,23 @@ async def test_a_failure_after_the_container_stops_and_waits(conn, cfg):
 
 
 async def test_a_container_that_errors_is_not_retried_either(conn, cfg):
+    """Stopped rather than re-armed for the next slot, because a file Meta could
+    not process usually fails the same way again and each attempt spends a slot.
+
+    It is still safe to retry by hand, and the failure says so in words: Meta
+    never publishes an ERROR container and `media_publish` was never called.
+    That sentence is what the panel reads to offer a clean retry.
+    """
     meta = PublishingMeta()
     meta.container_status = "ERROR"
     queued_id = await queue_one(conn)
     await due_slot(conn)
 
     await scheduler.tick_once(conn, graph_for(meta, cfg), cfg, Metrics())
-    assert (await db.get_queued(conn, queued_id))["state"] == db.QUEUE_FAILED
+    row = await db.get_queued(conn, queued_id)
+    assert row["state"] == db.QUEUE_FAILED
+    assert "nothing was published" in row["failure"]
+    assert meta.published == []
 
 
 async def test_retries_are_bounded(conn, cfg):
