@@ -29,6 +29,7 @@ derives from the handle exactly as it does today.
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
 import secrets
 import sys
@@ -299,6 +300,46 @@ def paste_code(url: str, state: str, *, platform: str, watch_for: list[str]) -> 
 
 def new_state() -> str:
     return secrets.token_urlsafe(24)
+
+
+def ask_secret(key: str, *, what: str, where: str) -> str:
+    """Take an app credential on a hidden prompt, and offer to write it down.
+
+    The alternative is a prerequisite: put this in `.env` before you start.
+    That reads fine in a runbook and is the step somebody discovers they have
+    not done after a browser has been opened, which is where every one of these
+    trips is most expensive to restart. The Instagram trip already worked this
+    way, and the shape is the same one: the page it comes from is open in a tab,
+    so the answer to the prompt is a copy and a paste.
+
+    Hidden, and never taken on the command line, for the reason none of these
+    scripts has an argparse argument for a credential: argv is visible in `ps`
+    and lands in shell history.
+
+    Offered rather than written, because it is a secret and a script that
+    silently appends one to a file is a script nobody can predict. Saying yes
+    means the next identity is not asked at all, which is the point: this
+    identifies the app and one app serves every account.
+    """
+    print(
+        f"\n{key} is not set, in the environment or in either .env.\n"
+        f"{what}\n"
+        f"  {where}\n"
+        f"It is not echoed, so nothing will appear as you paste."
+    )
+    value = getpass.getpass(f"{key}: ").strip()
+    if not value:
+        raise ConsentError(f"Nothing pasted. {key} is needed to go on.")
+
+    if input(f"\nSave it to {ROOT / '.env'} so this is asked once? [y/N] ").strip().lower() == "y":
+        env = ROOT / ".env"
+        text = env.read_text() if env.exists() else ""
+        after, what_happened = set_env_key(text, key, value)
+        env.write_text(after)
+        print(f".env: {key} {what_happened}")
+    else:
+        print("Not saved, so the next trip will ask again.")
+    return value
 
 
 # --- Writing the account key down ------------------------------------------

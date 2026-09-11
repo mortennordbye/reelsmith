@@ -152,12 +152,21 @@ def trip(args: argparse.Namespace) -> consent.Trip:
     cfg = consent.account_settings(args.account)
     client_key = os.environ.get("TIKTOK_CLIENT_KEY", "") or cfg.tiktok_client_key
     client_secret = os.environ.get("TIKTOK_CLIENT_SECRET", "") or cfg.tiktok_client_secret
-    if not client_key or not client_secret:
+    if not client_key:
         raise consent.ConsentError(
-            f"No TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET, in the environment\n"
-            f"or in .env or accounts/{args.account}/.env. They identify the app\n"
-            f"rather than the account, so one pair serves every account and the\n"
-            f"root .env is where the pair belongs."
+            f"No TIKTOK_CLIENT_KEY, in the environment or in .env or\n"
+            f"accounts/{args.account}/.env. It identifies the app rather than\n"
+            f"the account, so one key serves every account and the root .env is\n"
+            f"where it belongs. Remember it is the sandbox's, starting `sb`."
+        )
+    if not client_secret:
+        client_secret = consent.ask_secret(
+            "TIKTOK_CLIENT_SECRET",
+            what=(
+                "The developer portal, under the app's credentials. "
+                "The sandbox's, not production's."
+            ),
+            where="https://developers.tiktok.com/apps",
         )
 
     tokens = exchange(authorise(client_key), client_key, client_secret)
