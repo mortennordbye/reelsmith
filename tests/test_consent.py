@@ -179,6 +179,9 @@ def test_the_account_env_is_layered_over_the_root_one(tmp_path, monkeypatch):
     """
     monkeypatch.setattr(consent, "ACCOUNTS_DIR", tmp_path)
     monkeypatch.setattr(consent, "ROOT", tmp_path)
+    # `ask_secret` opens the page the secret is on before it prompts, which in a
+    # test run is a real tab on the developer's machine.
+    monkeypatch.setattr(consent.webbrowser, "open", lambda _url: None)
     (tmp_path / ".env").write_text("YOUTUBE_CLIENT_ID=shared-app\nGITHUB_TOKEN=root\n")
     (tmp_path / "acct").mkdir()
     (tmp_path / "acct" / ".env").write_text("YOUTUBE_CLIENT_SECRET=from-the-account\n")
@@ -194,6 +197,9 @@ def test_an_account_may_override_the_shared_app(tmp_path, monkeypatch):
     layers rather than simply reading the root file."""
     monkeypatch.setattr(consent, "ACCOUNTS_DIR", tmp_path)
     monkeypatch.setattr(consent, "ROOT", tmp_path)
+    # `ask_secret` opens the page the secret is on before it prompts, which in a
+    # test run is a real tab on the developer's machine.
+    monkeypatch.setattr(consent.webbrowser, "open", lambda _url: None)
     (tmp_path / ".env").write_text("YOUTUBE_CLIENT_ID=shared-app\n")
     (tmp_path / "acct").mkdir()
     (tmp_path / "acct" / ".env").write_text("YOUTUBE_CLIENT_ID=its-own-app\n")
@@ -281,6 +287,9 @@ def test_asking_for_a_secret_opens_the_page_it_is_on(tmp_path, monkeypatch):
     """The rule, stated as a test. The page and the prompt arrive together, so
     what is on screen is always the thing being asked for."""
     monkeypatch.setattr(consent, "ROOT", tmp_path)
+    # `ask_secret` opens the page the secret is on before it prompts, which in a
+    # test run is a real tab on the developer's machine.
+    monkeypatch.setattr(consent.webbrowser, "open", lambda _url: None)
     (tmp_path / ".env").write_text("")
     monkeypatch.setattr(consent.getpass, "getpass", lambda _p: "s")
     monkeypatch.setattr("builtins.input", lambda _p: "n")
@@ -358,6 +367,9 @@ def test_a_missing_app_secret_is_asked_for_and_can_be_saved(tmp_path, monkeypatc
     the answer to the prompt is a copy and a paste.
     """
     monkeypatch.setattr(consent, "ROOT", tmp_path)
+    # `ask_secret` opens the page the secret is on before it prompts, which in a
+    # test run is a real tab on the developer's machine.
+    monkeypatch.setattr(consent.webbrowser, "open", lambda _url: None)
     (tmp_path / ".env").write_text("GITHUB_TOKEN=x\n")
     monkeypatch.setattr(consent.getpass, "getpass", lambda _p: "  the-secret  ")
     monkeypatch.setattr("builtins.input", lambda _p: "y")
@@ -373,6 +385,9 @@ def test_declining_to_save_still_returns_it_and_says_so(tmp_path, monkeypatch, c
     """Offered rather than written. A script that silently appends a secret to
     a file is one nobody can predict."""
     monkeypatch.setattr(consent, "ROOT", tmp_path)
+    # `ask_secret` opens the page the secret is on before it prompts, which in a
+    # test run is a real tab on the developer's machine.
+    monkeypatch.setattr(consent.webbrowser, "open", lambda _url: None)
     (tmp_path / ".env").write_text("")
     monkeypatch.setattr(consent.getpass, "getpass", lambda _p: "the-secret")
     monkeypatch.setattr("builtins.input", lambda _p: "n")
@@ -384,6 +399,9 @@ def test_declining_to_save_still_returns_it_and_says_so(tmp_path, monkeypatch, c
 
 def test_pasting_nothing_stops_rather_than_going_on_with_an_empty_secret(tmp_path, monkeypatch):
     monkeypatch.setattr(consent, "ROOT", tmp_path)
+    # `ask_secret` opens the page the secret is on before it prompts, which in a
+    # test run is a real tab on the developer's machine.
+    monkeypatch.setattr(consent.webbrowser, "open", lambda _url: None)
     monkeypatch.setattr(consent.getpass, "getpass", lambda _p: "   ")
 
     with pytest.raises(SystemExit) as raised:

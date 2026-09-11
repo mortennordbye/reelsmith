@@ -1331,7 +1331,9 @@ async def test_a_reel_with_no_reading_yet_says_so_rather_than_showing_zero(clien
 
     body = (await http.get(LIBRARY)).text
 
-    assert "No reading yet" in body
+    # In the cell, not in the page's explanation of what the words mean, which
+    # is how this passed while the cell said "None stored".
+    assert ">No reading yet</span>" in body
 
 
 async def test_the_picker_offers_every_brand(client):
@@ -1897,6 +1899,59 @@ async def test_the_library_offers_no_player_for_a_pruned_video(client):
     assert body.count("<video") == 1
     assert f'src="/media/{live}"' in body
     assert "pruned after publishing" in body
+
+
+async def test_a_platform_that_never_reported_is_not_shown_as_zero_views(client):
+    """"0 TikTok views" on a destination that has stored nothing is a result
+    nobody measured."""
+    http, app = client
+    await db.upsert_account(
+        app.state.db, account_id="tt-open", access_token="", username="@nightly",
+        platform=db.PLATFORM_TIKTOK, brand="nightly",
+    )
+    qid = await db.enqueue_post(
+        app.state.db, account_id="tt-open", video_name="v.mp4", cover_name=None,
+        caption="c", keyword="UV", link=LINK, approved=True,
+    )
+    await db.mark_queue_published(app.state.db, qid, media_id="pub-1", permalink=None)
+
+    body = (await http.get(LIBRARY)).text
+
+    assert "TikTok readings stored" in body
+    assert ">0</span><span class=\"l\">TikTok views" not in body
+
+
+async def test_one_fresh_post_does_not_blame_the_sweep(client):
+    """A post published an hour ago has no reading because it is an hour old.
+    Telling someone to check the sweep's flag for that sends them debugging
+    something that works."""
+    http, app = client
+    await db.upsert_account(
+        app.state.db, account_id="UC-chan", access_token="", username="@nightly",
+        platform=db.PLATFORM_YOUTUBE, brand="nightly",
+    )
+    qid = await db.enqueue_post(
+        app.state.db, account_id="UC-chan", video_name="v.mp4", cover_name=None,
+        caption="c", keyword="UV", link=LINK, approved=True,
+    )
+    await db.mark_queue_published(app.state.db, qid, media_id="yt-1", permalink=None)
+
+    body = (await http.get(PERFORMANCE)).text
+
+    assert "GATEWAY_YOUTUBE_INSIGHTS_ENABLED" not in body
+    assert "No reading yet" in body
+
+
+async def test_one_failed_publish_reads_in_the_singular(client):
+    http, app = client
+    await db.add_slot(app.state.db, account_id=ACCOUNT, hour=8, minute=10, tz="UTC")
+    queued_id = (await queue(http, approved=True))["id"]
+    await db.set_queue_state(app.state.db, queued_id, db.QUEUE_FAILED, failure="boom")
+
+    body = (await http.get("/admin/")).text
+
+    assert "1 failed publish on Instagram" in body
+    assert "It needs a retry or a give up." in body
 
 
 async def test_search_finds_a_video_by_its_hook(client):

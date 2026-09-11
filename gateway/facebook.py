@@ -383,7 +383,9 @@ INSIGHT_METRICS = (
     "blue_reels_play_count",
     # People who saw it at least once, whether or not they played it. Meta is
     # the only platform of the four that reports this, on both its surfaces.
-    "post_impressions_unique",
+    # `post_impressions_unique` until Meta retired it: production refused it as
+    # an invalid metric on 2026-09-11, and this is the name Meta gives instead.
+    "post_total_media_view_unique",
     # Milliseconds, and it includes replays, so it can exceed the video length
     # exactly as a looping Short does on YouTube.
     "post_video_avg_time_watched",
@@ -463,7 +465,7 @@ def parse_reading(video_id: str, payload: dict) -> Reading:
     return Reading(
         video_id=video_id,
         views=count("blue_reels_play_count"),
-        reach=count("post_impressions_unique"),
+        reach=count("post_total_media_view_unique"),
         likes=likes,
         comments=int(comments) if isinstance(comments, (int, float)) else 0,
         avg_watch_ms=count("post_video_avg_time_watched"),

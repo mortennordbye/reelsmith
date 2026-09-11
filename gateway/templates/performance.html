@@ -60,8 +60,8 @@
       <header><h2>{{ badge('instagram') }} The opening</h2><span class="hint">{{ s.dest.handle }}</span></header>
       {% if not s.chart %}
         <p class="empty">
-          Nothing to compare yet. {{ s.total }} published, {{ s.measured }} with a retention
-          reading, and a reading takes a few hours to arrive.
+          Nothing to compare yet. The chart needs two posts with a retention reading, and
+          {{ s.measured }} of the {{ s.total }} published have one so far.
         </p>
       {% else %}
         {% set c = s.chart %}
@@ -216,7 +216,9 @@
         {% elif s.reason %}
           <p class="small"><span class="sev warn">No readings</span> {{ s.dest.published }} published and nothing stored. {{ s.reason }}</p>
         {% else %}
-          <p class="empty" style="padding:0">No readings yet.</p>
+          <p class="small muted" style="margin:0">
+            {{ 'No reading yet. The first one can take a couple of days to arrive.' if s.dest.published else 'Nothing published yet.' }}
+          </p>
         {% endif %}
       </div>
     </section>

@@ -41,7 +41,7 @@ HOOK = "Ponytail makes your coding agent stop and ask"
 # One Reel's insights, in the metric names Meta uses on this edge.
 READING = {
     "blue_reels_play_count": 1614,
-    "post_impressions_unique": 1180,
+    "post_total_media_view_unique": 1180,
     "post_video_avg_time_watched": 8_200,
     "post_video_view_time": 210_000,
     # A breakdown by reaction type rather than a count, which is the one entry
@@ -119,14 +119,14 @@ async def test_a_metric_meta_refuses_is_dropped_named_and_probed_once(
         await publish(conn)
         await publish(conn, video_id="fb-video-2")
         meta.facebook.insights = {"fb-video-1": READING, "fb-video-2": READING}
-        meta.facebook.rejected_metrics = {"post_impressions_unique"}
+        meta.facebook.rejected_metrics = {"post_total_media_view_unique"}
 
         with caplog.at_level("WARNING"):
             assert await sweep(conn, meta, cfg, metrics) == 2
 
         assert (await db.latest_insights(conn, PAGE_ID))["fb-video-1"]["views"] == 1614
-        assert "post_impressions_unique" in caplog.text
-        remaining = [m for m in facebook.INSIGHT_METRICS if m != "post_impressions_unique"]
+        assert "post_total_media_view_unique" in caplog.text
+        remaining = [m for m in facebook.INSIGHT_METRICS if m != "post_total_media_view_unique"]
         # Probed once for the whole sweep, not once per Reel: the second post
         # asks straight for what is left.
         probes = [asked for asked in meta.facebook.metric_requests if len(asked) == 1]

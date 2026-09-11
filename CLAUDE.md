@@ -483,8 +483,12 @@ attempted*:
   valid insights metric`, so no Page had a reading, and the error does not say
   which name. `facebook.read_insights` probes each metric once per process,
   remembers the refused ones, names them in a warning and reads with the rest.
-  A refused column reads 0 until `INSIGHT_METRICS` is corrected from that log
-  line.
+  Its first production run named `post_impressions_unique`, which is now
+  `post_total_media_view_unique`. **The reads then failed on `(#200)
+  read_insights permission missing`.** The consent trip had left that scope out
+  on the belief that it covers Page level insights only; a Reel's own numbers
+  need it too, so a Page authorised before 2026-09-11 has to walk the trip
+  again before it stores anything.
 - **`is_aigc` and `containsSyntheticMedia` are the same question and they move
   together.** Both are `false`, and since 2026-08-26 for a reason rather than
   because a value had to be sent: the fields ask whether the content depicts

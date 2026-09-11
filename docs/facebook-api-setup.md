@@ -238,18 +238,21 @@ on the public internet.
 failing to serve a route it plainly has, and the fix is in a repository you
 were not looking at.
 
-## The scopes, and why there are only three
+## The scopes, and why there are four
 
-`pages_show_list`, `pages_manage_posts`, `pages_read_engagement`.
+`pages_show_list`, `pages_manage_posts`, `pages_read_engagement`, `read_insights`.
 
 - `pages_show_list` is what makes `GET /me/accounts` return anything.
 - `pages_manage_posts` is the publish.
-- `pages_read_engagement` is the insights sweep, including the comment count.
+- `pages_read_engagement` is the comment count on a video node.
+- `read_insights` is the Reel's own numbers.
 
-**`read_insights` is deliberately absent.** It covers Page level insights, and
-nothing here reads those: the sweep asks a video node for its own numbers, which
-is post level. A scope an app does not use is a named rejection reason at review
-time, so this list should not grow speculatively.
+**`read_insights` was left out until 2026-09-11, and that was wrong.** This page
+said it covers Page level insights only, so a sweep asking a video node for its
+own numbers would not need it. Production answered every Reel with `(#200)
+read_insights permission missing`, so no Page had ever stored a reading. A Page
+authorised before that date holds a token without it and has to walk the
+consent trip again: `uv run python scripts/authorise.py facebook --account <name>`.
 
 **App Review is not expected to be needed.** An admin of both the app and the
 Page is granted all three without it. Review is what publishing to somebody
@@ -318,7 +321,7 @@ one request per Reel per sweep.
 | column | metric |
 |---|---|
 | `views` | `blue_reels_play_count` |
-| `reach` | `post_impressions_unique` |
+| `reach` | `post_total_media_view_unique` (was `post_impressions_unique`, retired by Meta) |
 | `likes` | `post_video_likes_by_reaction_type`, summed |
 | `comments` | the node's own `comments.summary` |
 | `avg_watch_ms` | `post_video_avg_time_watched` |
