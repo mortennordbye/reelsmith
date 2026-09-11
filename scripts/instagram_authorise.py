@@ -68,15 +68,22 @@ def _graph(host: str, path: str, params: dict) -> dict:
 def refresh(host: str, token: str) -> tuple[str, int | None]:
     """Trade the pasted token for a fresh 60 days, and prove it is long-lived.
 
-    `ig_refresh_token` refuses a short-lived token, which is the check worth
-    having: the mistake this catches otherwise surfaces as an account that
-    published once and then stopped, with a failure saying the token is invalid
-    rather than saying it was born wrong. The same shape as the third step of
-    the Facebook trip, and there for the same reason.
+    A refusal here is **not** fatal, and the first version of this was wrong
+    about that in the direction that blocks the normal path. `ig_refresh_token`
+    does refuse a short-lived token, which is the check worth wanting: that
+    mistake otherwise surfaces as an account that published once and stopped,
+    with a failure saying the token is invalid rather than that it was born
+    wrong. But Meta refuses a token under 24 hours old as well, and the
+    ordinary way to get one of these is the dashboard's Generate token button,
+    which hands back a long-lived token that is seconds old. Matching on the
+    wording of the refusal is no answer either, since that is Meta's text to
+    change.
 
-    Meta also refuses a token under 24 hours old, which is not an error worth
-    acting on: a token that new has 59 days left. So that one refusal is
-    allowed through with what was pasted.
+    So it warns and carries on with what was pasted, recording no expiry. That
+    is not a shrug: an unknown expiry is what the gateway already treats as due
+    for refresh, so a genuinely short-lived token fails there, visibly, on a
+    service that is watched, rather than here on a trip that would have to be
+    walked again.
     """
     try:
         data = _graph(host, "/refresh_access_token", {
@@ -84,10 +91,15 @@ def refresh(host: str, token: str) -> tuple[str, int | None]:
             "access_token": token,
         })
     except consent.ConsentError as exc:
-        if "24 hours" in str(exc):
-            print("\nMeta says the token is under 24 hours old, so it has nearly 60 days left.")
-            return token, None
-        raise
+        print(
+            f"\nMeta would not refresh that token:\n  {exc}\n"
+            f"That is expected for a token minted in the last 24 hours, which\n"
+            f"a freshly generated one is, and it has nearly 60 days either way.\n"
+            f"It is not expected for a short-lived token, which would stop\n"
+            f"working in about an hour. Registering with no expiry recorded,\n"
+            f"which the gateway reads as due for refresh."
+        )
+        return token, None
     return data.get("access_token") or token, data.get("expires_in")
 
 
