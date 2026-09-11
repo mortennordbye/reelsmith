@@ -257,64 +257,46 @@ def test_a_personal_account_is_refused(monkeypatch):
     assert "Personal" in str(raised.value)
 
 
-def test_a_known_app_opens_every_page_the_setup_needs(monkeypatch):
-    """The complaint this answers: the YouTube trip opens a browser and you are
-    where you need to be, and this one printed a documentation path.
+def test_the_prerequisites_are_printed_and_not_opened(monkeypatch, capsys):
+    """The complaint that produced this, in one test.
 
-    Three tabs, because the setup is three places and one of them is on a
-    different site: the app's roles page, the Instagram product page, and
-    Instagram itself, where the tester invite is accepted.
+    Opening every page the setup touches, at once, put four tabs on screen with
+    nothing saying which was current. A page is opened at the moment its value
+    is asked for, by the prompt that needs it, and nowhere else. These two have
+    no prompt behind them.
     """
     from scripts import instagram_authorise as ig
 
     opened = []
-    monkeypatch.setattr(ig.webbrowser, "open", opened.append)
-    ig.open_dashboard("1234567890")
+    monkeypatch.setattr(consent.webbrowser, "open", opened.append)
+    consent.list_prerequisites(ig.prerequisites("1234567890"))
 
-    assert opened == [
-        "https://developers.facebook.com/apps/1234567890/roles/roles/",
-        ig.INVITES_URL,
-        "https://developers.facebook.com/apps/1234567890/"
-        "instagram-business/API-setup-with-instagram-login/",
-    ]
+    printed = capsys.readouterr().out
+    assert opened == [], "a prerequisite was opened rather than printed"
+    assert "https://developers.facebook.com/apps/1234567890/roles/roles/" in printed
+    assert ig.INVITES_URL in printed
 
 
-def test_an_unverified_path_says_so_rather_than_looking_authoritative(monkeypatch, capsys):
-    """A wrong deep link is worse than the apps list: it lands on a 404 that
-    reads as the feature being gone rather than as a stale constant.
-
-    Every path in `STEPS` is confirmed today, all three having been walked on
-    2026-09-11, so this drives the flag rather than a live entry. Deleting the
-    test along with the last unconfirmed path would delete the mechanism the
-    next platform needs.
-    """
-    from scripts import instagram_authorise as ig
-
-    monkeypatch.setattr(ig.webbrowser, "open", lambda _u: None)
-    monkeypatch.setattr(ig, "STEPS", [("guessed/path/", False, "Something.")])
-    ig.open_dashboard("1234567890")
-
-    assert "not yet verified" in capsys.readouterr().out
-
-
-def test_a_confirmed_path_claims_nothing(monkeypatch, capsys):
-    """The other half, so the note cannot become decoration printed on every
-    line regardless."""
-    from scripts import instagram_authorise as ig
-
-    monkeypatch.setattr(ig.webbrowser, "open", lambda _u: None)
-    ig.open_dashboard("1234567890")
-
-    assert "not yet verified" not in capsys.readouterr().out
-
-
-def test_no_app_id_falls_back_to_the_apps_list(monkeypatch):
-    from scripts import instagram_authorise as ig
-
+def test_asking_for_a_secret_opens_the_page_it_is_on(tmp_path, monkeypatch):
+    """The rule, stated as a test. The page and the prompt arrive together, so
+    what is on screen is always the thing being asked for."""
+    monkeypatch.setattr(consent, "ROOT", tmp_path)
+    (tmp_path / ".env").write_text("")
+    monkeypatch.setattr(consent.getpass, "getpass", lambda _p: "s")
+    monkeypatch.setattr("builtins.input", lambda _p: "n")
     opened = []
-    monkeypatch.setattr(ig.webbrowser, "open", opened.append)
-    ig.open_dashboard("")
-    assert opened == [ig.APPS_URL]
+    monkeypatch.setattr(consent.webbrowser, "open", opened.append)
+
+    consent.ask_secret("K", what="Behind Show.", where="https://example.test/basic/")
+
+    assert opened == ["https://example.test/basic/"]
+
+
+def test_no_app_id_falls_back_to_the_apps_list():
+    """Still one click from the right place rather than a file path."""
+    from scripts import instagram_authorise as ig
+
+    assert ig.prerequisites("")[0][0] == ig.APPS_URL
 
 
 def test_every_flow_refuses_before_opening_anything_without_a_terminal(monkeypatch):
