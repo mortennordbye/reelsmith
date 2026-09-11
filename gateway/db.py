@@ -17,6 +17,7 @@ Two decisions worth knowing about:
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import AsyncIterator, Iterable, Mapping
 from contextlib import asynccontextmanager
@@ -28,7 +29,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -528,6 +529,38 @@ _MIGRATIONS: tuple[str, ...] = (
     ALTER TABLE accounts ADD COLUMN brand TEXT NOT NULL DEFAULT '';
     UPDATE accounts SET brand = lower(ltrim(username, '@')) WHERE username <> '';
     UPDATE accounts SET brand = account_id WHERE brand = '';
+    """,
+    # 21. Everything else a platform answers, and the audience it answers to.
+    #
+    # Nine columns were chosen one metric at a time, each by a migration and an
+    # argument, and every platform reports more than they hold: Instagram's
+    # reposts and Facebook views, YouTube's engaged views, subscribers gained
+    # and retention curve, a Page's replays and follows per Reel. A column each
+    # would be a migration per name on four platforms whose metric lists change
+    # under the service, so `extra` is a JSON object in the platform's own
+    # names, and nothing queries inside it. The same trade `score_breakdown`
+    # made in v14.
+    #
+    # `''` means the reading predates this or never asked, and `'{}'` means it
+    # asked and got nothing, which is what `insights_stale_media` needs to tell
+    # apart so an old row is read again once rather than every sweep.
+    #
+    # `account_insights` is the other half: one row per destination per day,
+    # holding the follower count. No post can say whether the account is
+    # growing, and a follower count read once a day is the only series that
+    # can. Null means the platform would not say, which is different from 0.
+    """
+    ALTER TABLE insights ADD COLUMN extra TEXT NOT NULL DEFAULT '';
+
+    CREATE TABLE account_insights (
+        account_id TEXT NOT NULL,
+        platform   TEXT NOT NULL,
+        fetched_on TEXT NOT NULL,
+        followers  INTEGER,
+        extra      TEXT NOT NULL DEFAULT '',
+        fetched_at TEXT NOT NULL,
+        PRIMARY KEY (account_id, fetched_on)
+    );
     """,
 )
 
@@ -1917,8 +1950,13 @@ async def record_insights(
     on: str | None = None,
     moment: datetime | None = None,
     platform: str = PLATFORM_INSTAGRAM,
+    extra: Mapping[str, Any] | None = None,
 ) -> None:
     """Store today's reading for one post, replacing an earlier one same day.
+
+    `extra` is every other metric the platform answered, in its own names.
+    None leaves what the row already holds, so a write that did not ask cannot
+    erase one that did.
 
     Upsert rather than insert, so a manual refresh an hour after the daily
     sweep updates today's row instead of failing on the primary key or
@@ -1939,8 +1977,8 @@ async def record_insights(
         INSERT INTO insights
             (media_id, account_id, fetched_on, views, reach, likes, comments,
              saved, shares, avg_watch_ms, total_watch_ms, skip_rate,
-             avg_view_pct, fetched_at, platform)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             avg_view_pct, fetched_at, platform, extra)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (media_id, fetched_on) DO UPDATE SET
             views = excluded.views, reach = excluded.reach,
             likes = excluded.likes, comments = excluded.comments,
@@ -1950,7 +1988,8 @@ async def record_insights(
             skip_rate = excluded.skip_rate,
             avg_view_pct = excluded.avg_view_pct,
             fetched_at = excluded.fetched_at,
-            platform = excluded.platform
+            platform = excluded.platform,
+            extra = CASE WHEN excluded.extra = '' THEN insights.extra ELSE excluded.extra END
         """,
         (
             media_id,
@@ -1968,9 +2007,92 @@ async def record_insights(
             float(metrics.get("avg_view_pct", 0.0)),
             moment.isoformat(),
             platform,
+            _as_json(extra),
         ),
     )
     await conn.commit()
+
+
+def _as_json(extra: Mapping[str, Any] | None) -> str:
+    """`''` for "did not ask", `'{}'` for "asked and got nothing"."""
+    if extra is None:
+        return ""
+    return json.dumps(dict(extra), sort_keys=True, separators=(",", ":"))
+
+
+def extra_of(row: Any) -> dict[str, Any]:
+    """The `extra` object on an `insights` or `account_insights` row.
+
+    Empty for a row that predates the column or never asked, and for one whose
+    JSON is somehow not an object. A page that renders with a column missing is
+    better than one that fails on a row nobody can fix from the panel.
+    """
+    try:
+        raw = row["extra"]
+    except (IndexError, KeyError):
+        return {}
+    try:
+        value = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+async def record_account_insights(
+    conn: aiosqlite.Connection,
+    *,
+    account_id: str,
+    platform: str,
+    followers: int | None,
+    extra: Mapping[str, Any] | None = None,
+    on: str | None = None,
+    moment: datetime | None = None,
+) -> None:
+    """Store today's audience reading for one destination.
+
+    Upserted per day like `record_insights`, so four sweeps a day leave one row
+    holding the last of them. A follower count the platform would not give is
+    stored as null rather than as a day on which everybody left.
+    """
+    moment = moment or now()
+    await conn.execute(
+        """
+        INSERT INTO account_insights
+            (account_id, platform, fetched_on, followers, extra, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (account_id, fetched_on) DO UPDATE SET
+            platform = excluded.platform,
+            followers = COALESCE(excluded.followers, account_insights.followers),
+            extra = CASE WHEN excluded.extra IN ('', '{}') THEN account_insights.extra
+                         ELSE excluded.extra END,
+            fetched_at = excluded.fetched_at
+        """,
+        (
+            account_id,
+            platform,
+            on or moment.date().isoformat(),
+            followers,
+            _as_json(extra if extra is not None else {}),
+            moment.isoformat(),
+        ),
+    )
+    await conn.commit()
+
+
+async def account_insights_series(
+    conn: aiosqlite.Connection, account_id: str, *, days: int = 400
+) -> list[Any]:
+    """One destination's audience readings, oldest first."""
+    return await _all(
+        conn,
+        """
+        SELECT * FROM (
+            SELECT * FROM account_insights WHERE account_id = ?
+            ORDER BY fetched_on DESC LIMIT ?
+        ) ORDER BY fetched_on
+        """,
+        (account_id, days),
+    )
 
 
 def _insights_where(account_id: str | None, platform: str | None) -> tuple[str, list[Any]]:
@@ -2421,6 +2543,11 @@ async def insights_stale_media(
     cost of being wrong is one extra Graph call a sweep for a media that is not
     a Reel and never will have the number.
 
+    **A row whose `extra` was never asked for counts as missing too**, for the
+    same reason and exactly once: `'{}'` is what a read that asked and got
+    nothing stores, so a post whose extras are all refused is not asked again
+    until tomorrow.
+
     The direct half bounds on `registered_at` rather than on the post's real
     date on purpose, now that a backfill can register something published long
     before. The window is how long this keeps asking, and it starts when the
@@ -2452,7 +2579,7 @@ async def insights_stale_media(
         ) live
         WHERE live.media_id NOT IN (
             SELECT media_id FROM insights
-            WHERE fetched_on = ? AND skip_rate > 0
+            WHERE fetched_on = ? AND skip_rate > 0 AND extra <> ''
         )
         ORDER BY live.at DESC
         """,

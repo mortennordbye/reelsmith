@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -1055,22 +1056,205 @@ def _median_of(posts: list[dict[str, Any]], key: str) -> float | None:
     return median(values) if values else None
 
 
+@dataclass(frozen=True)
+class Column:
+    """One column of a platform's per post table.
+
+    `key` is an `insights` column or a name in that row's `extra`. **A column is
+    shown only when some post on the page has a value for it**, so a metric a
+    platform refused, or one it has not started sending, is an absent column
+    rather than a row of zeroes. That is the rule every board here keeps, made
+    automatic for the metrics nobody chose one at a time.
+    """
+
+    key: str
+    label: str
+    # count, ms, pct, per_k (per thousand views), curve_half (YouTube's
+    # retention list) or segments_half (a Page's retention graph).
+    kind: str = "count"
+
+
+_CORE_COLUMNS = frozenset({
+    "views", "reach", "likes", "comments", "saved", "shares",
+    "avg_watch_ms", "total_watch_ms", "skip_rate", "avg_view_pct",
+})
+
+# Only the columns each platform measures, for the reason `analysis._MEASURED`
+# gives: a core column a platform never fills would render its absence as 0.
+POST_COLUMNS: dict[str, tuple[Column, ...]] = {
+    db.PLATFORM_INSTAGRAM: (
+        Column("views", "Views"),
+        Column("reach", "Reach"),
+        Column("avg_watch_ms", "Watch", "ms"),
+        Column("skip_rate", "Skip", "pct"),
+        Column("saved", "Saves/1k", "per_k"),
+        Column("shares", "Shares"),
+        Column("reposts", "Reposts"),
+        Column("total_interactions", "Interactions"),
+        Column("facebook_views", "On Facebook"),
+    ),
+    db.PLATFORM_YOUTUBE: (
+        Column("views", "Views"),
+        Column("engagedViews", "Engaged"),
+        Column("avg_view_pct", "Viewed", "pct"),
+        Column("avg_watch_ms", "Watch", "ms"),
+        Column("retention", "At half", "curve_half"),
+        Column("subscribersGained", "Subs gained"),
+        Column("subscribersLost", "Subs lost"),
+        Column("likes", "Likes"),
+        Column("shares", "Shares"),
+    ),
+    db.PLATFORM_FACEBOOK: (
+        Column("views", "Views"),
+        Column("fb_reels_replay_count", "Replays"),
+        Column("reach", "Reach"),
+        Column("avg_watch_ms", "Watch", "ms"),
+        Column("post_video_retention_graph", "At half", "segments_half"),
+        Column("post_video_followers", "Follows"),
+        Column("likes", "Reactions"),
+        Column("comments", "Comments"),
+    ),
+    db.PLATFORM_TIKTOK: (
+        Column("views", "Views"),
+        Column("likes", "Likes"),
+        Column("comments", "Comments"),
+        Column("shares", "Shares"),
+    ),
+}
+
+
+def _curve_half(curve: Any) -> float | None:
+    """YouTube's watch ratio at the point nearest half way through."""
+    if not isinstance(curve, list):
+        return None
+    points = [p for p in curve if isinstance(p, list) and len(p) >= 2]
+    if not points:
+        return None
+    return float(min(points, key=lambda p: abs(float(p[0]) - 0.5))[1])
+
+
+def _segments_half(graph: Any) -> float | None:
+    """A Page's plays still going at the middle segment, as a share of the first.
+
+    Normalised by the first segment rather than read raw, because Meta
+    documents the values as a percentage and has been seen sending fractions,
+    and a ratio of two values in the same unit is right either way.
+    """
+    if not isinstance(graph, dict):
+        return None
+    try:
+        segments = sorted((int(k), float(v)) for k, v in graph.items())
+    except (TypeError, ValueError):
+        return None
+    if not segments or not segments[0][1]:
+        return None
+    return segments[len(segments) // 2][1] / segments[0][1]
+
+
+def cell(column: Column, reading: Any, extra: Mapping[str, Any]) -> str | None:
+    """One post's value for one column, formatted, or None if it has none."""
+    value = reading[column.key] if column.key in _CORE_COLUMNS else extra.get(column.key)
+    if value is None:
+        return None
+    if column.kind == "curve_half":
+        share = _curve_half(value)
+        return None if share is None else f"{100 * share:.0f}%"
+    if column.kind == "segments_half":
+        share = _segments_half(value)
+        return None if share is None else f"{100 * share:.0f}%"
+    if not isinstance(value, (int, float)):
+        return None
+    if column.kind == "per_k":
+        views = float(reading["views"] or 0)
+        return f"{1000 * float(value) / views:.1f}" if views else None
+    if column.kind == "ms":
+        return f"{value / 1000:.0f} s"
+    if column.kind == "pct":
+        return f"{value:.1f}%"
+    return f"{int(value):,}"
+
+
+def post_table(platform: str, posts: list[dict[str, Any]]) -> dict[str, Any]:
+    """The columns some post has a value for, and each post's cells in them."""
+    columns = POST_COLUMNS.get(platform, POST_COLUMNS[db.PLATFORM_INSTAGRAM])
+    cells = [[cell(c, p["reading"], p["extra"]) for c in columns] for p in posts]
+    shown = [i for i in range(len(columns)) if any(row[i] is not None for row in cells)]
+    return {
+        "columns": [columns[i] for i in shown],
+        "rows": [
+            {"post": post, "cells": [row[i] for i in shown]}
+            for post, row in zip(posts, cells, strict=True)
+        ],
+    }
+
+
+# The day totals worth a word each, per platform's own name, in the order shown.
+# Anything else in a reading stays stored and unshown.
+DAY_LABELS = {
+    "views": "views",
+    "reach": "reached",
+    "accounts_engaged": "engaged",
+    "total_interactions": "interactions",
+    "profile_links_taps": "link taps",
+    "page_media_view": "views",
+    "page_total_media_view_unique": "reached",
+    "page_post_engagements": "engagements",
+    "page_daily_follows_unique": "follows",
+    "page_daily_unfollows_unique": "unfollows",
+    "page_views_total": "Page views",
+}
+LIFETIME_LABELS = {"media_count": "posts", "videoCount": "videos", "viewCount": "lifetime views"}
+
+
+async def audience(conn: Any, dest: Destination) -> dict[str, Any] | None:
+    """One destination's followers and their movement, and its last day's totals."""
+    series = await db.account_insights_series(conn, dest.account_id)
+    if not series:
+        return None
+    extra = db.extra_of(series[-1])
+    day = extra.get("day") if isinstance(extra.get("day"), dict) else {}
+    return {
+        **(analysis.audience(series) or {"followers": None}),
+        "day_on": day.get("on"),
+        "totals": [
+            (label, int(day[name]))
+            for name, label in DAY_LABELS.items()
+            if isinstance(day.get(name), (int, float))
+        ],
+        "lifetime": [
+            (label, int(extra[name]))
+            for name, label in LIFETIME_LABELS.items()
+            if isinstance(extra.get(name), (int, float))
+        ],
+    }
+
+
 async def performance(
     conn: Any, cfg: Any, brand: Brand, dests: dict[str, Destination]
 ) -> list[dict[str, Any]]:
     sections = []
     for account in brand.accounts:
         dest = dests[str(account["account_id"])]
-        section: dict[str, Any] = {"platform": dest.platform, "dest": dest}
+        readings = await db.latest_insights(conn, dest.account_id, platform=dest.platform)
+        posts = [
+            {
+                "row": row,
+                "reading": readings[row["media_id"]],
+                "extra": db.extra_of(readings[row["media_id"]]),
+                "subject": subject_of(row),
+            }
+            for row in await db.published_media(conn, dest.account_id, limit=60)
+            if row["media_id"] in readings
+        ][:12]
+        section: dict[str, Any] = {
+            "platform": dest.platform,
+            "dest": dest,
+            "audience": await audience(conn, dest),
+            "table": post_table(dest.platform, posts),
+        }
         if dest.platform == db.PLATFORM_INSTAGRAM:
             section.update(await _instagram_board(conn, dest.account_id))
         else:
-            readings = await db.latest_insights(conn, dest.account_id, platform=dest.platform)
-            posts = [
-                {"row": row, "reading": readings[row["media_id"]], "subject": subject_of(row)}
-                for row in await db.published_media(conn, dest.account_id, limit=60)
-                if row["media_id"] in readings
-            ][:12]
             section.update({
                 "posts": posts,
                 "median_views": _median_of(posts, "views"),

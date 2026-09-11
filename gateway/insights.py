@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict
 from datetime import timedelta
 from typing import Any
@@ -59,6 +59,8 @@ async def refresh_account(
     on = on or moment.date().isoformat()
     account_id = account["account_id"]
 
+    token = account["access_token"]
+
     pending = await db.insights_stale_media(
         conn, account_id=account_id, on=on, within_days=cfg.insights_max_age_days
     )
@@ -66,17 +68,21 @@ async def refresh_account(
     for row in pending:
         media_id = row["media_id"]
         try:
-            reading = await graph.media_insights(
-                media_id=media_id, token=account["access_token"]
+            reading = await graph.media_insights(media_id=media_id, token=token)
+            extra = (
+                await graph.media_extras(media_id=media_id, token=token)
+                if reading is not None
+                else None
             )
         except GraphError as exc:
             # An auth failure will hit every remaining media the same way, so
-            # stop rather than spend the rest of the sweep proving it.
+            # stop rather than spend the rest of the sweep proving it. That
+            # includes the audience read below.
             metrics.graph_errors.inc()
             log.warning("Insights for %s failed: %s", media_id, exc)
             if exc.is_auth:
                 log.error("Stopping the insights sweep for %s, the token is bad", account_id)
-                break
+                return stored
             continue
 
         if reading is None:
@@ -91,11 +97,64 @@ async def refresh_account(
             metrics=values,
             on=on,
             moment=moment,
+            extra=extra,
         )
         metrics.insights_fetched.inc()
         stored += 1
 
+    async def audience() -> tuple[int | None, dict[str, Any]]:
+        reading = await graph.account_reading(
+            ig_user_id=account_id, token=token, day=_yesterday(moment)
+        )
+        return reading.followers, reading.extra
+
+    await _record_audience(
+        conn, metrics, account_id, db.PLATFORM_INSTAGRAM, audience, on=on, moment=moment
+    )
     return stored
+
+
+def _yesterday(moment: Any) -> Any:
+    """The last whole UTC day, which is the one every platform's totals settle on."""
+    return (moment - timedelta(days=1)).date()
+
+
+async def _record_audience(
+    conn: aiosqlite.Connection,
+    metrics: Metrics,
+    account_id: str,
+    platform: str,
+    read: Callable[[], Awaitable[tuple[int | None, dict[str, Any]]]],
+    *,
+    on: str,
+    moment: Any,
+) -> None:
+    """Store one destination's follower count and day totals, if it gave any.
+
+    **Separate from the per post readings and never allowed to fail them.** A
+    post's numbers say how it did and cannot say whether the account is
+    growing; a follower count read once a day is the only series that can, and
+    none of the four platforms offers one retrospectively, so a day not read is
+    a day missing from the chart forever. That is also why it runs on a
+    destination with nothing published.
+    """
+    try:
+        followers, extra = await read()
+    except (GraphError, youtube.AnalyticsError, facebook.InsightsError) as exc:
+        metrics.graph_errors.inc()
+        log.warning("Audience for %s %s failed: %s", platform, account_id, exc)
+        return
+    if followers is None and not extra:
+        return
+    await db.record_account_insights(
+        conn,
+        account_id=account_id,
+        platform=platform,
+        followers=followers,
+        extra=extra,
+        on=on,
+        moment=moment,
+    )
 
 
 async def refresh_tiktok_account(
@@ -250,15 +309,6 @@ async def refresh_youtube_account(
         for row in await db.published_on(conn, channel_id)
         if str(row["media_id"] or "") and when(row) >= cutoff
     ]
-    if not rows:
-        return 0
-
-    # From the oldest post in the batch, so one range covers every video's whole
-    # life. One request for the batch is what makes that the right trade: a
-    # per video range would be a call per video to save nothing, since the
-    # report is cumulative either way.
-    start_date = (min(when(row) for row in rows) - timedelta(days=1)).date().isoformat()
-    end_date = moment.date().isoformat()
 
     try:
         token = await youtube.access_token(
@@ -274,7 +324,29 @@ async def refresh_youtube_account(
         log.warning("YouTube insights for %s failed to mint a token: %s", channel_id, exc)
         return 0
 
+    async def audience() -> tuple[int | None, dict[str, Any]]:
+        counters = await youtube.channel_statistics(graph.http, token=token)
+        return counters.pop("subscriberCount", None), counters
+
+    # Before the reports, so a channel with nothing published yet still gets
+    # its subscriber count, which is exactly when the count is the only number.
+    await _record_audience(
+        conn, metrics, channel_id, db.PLATFORM_YOUTUBE, audience, on=on, moment=moment
+    )
+    if not rows:
+        return 0
+
+    # From the oldest post in the batch, so one range covers every video's whole
+    # life. One request for the batch is what makes that the right trade: a
+    # per video range would be a call per video to save nothing, since the
+    # report is cumulative either way.
+    start_date = (min(when(row) for row in rows) - timedelta(days=1)).date().isoformat()
+    end_date = moment.date().isoformat()
+
     written = 0
+    # Switched off for the rest of the sweep by the first refusal, since a
+    # report the channel cannot have fails the same way for every video.
+    curves = True
     ids = [str(row["media_id"]) for row in rows]
     for offset in range(0, len(ids), youtube.ANALYTICS_BATCH):
         batch = ids[offset : offset + youtube.ANALYTICS_BATCH]
@@ -291,7 +363,40 @@ async def refresh_youtube_account(
             log.warning("YouTube insights for %s failed: %s", channel_id, exc)
             return written
 
+        # The extras and the curves only add to a reading, so a refusal of
+        # either costs its own numbers and never the core ones above.
+        try:
+            extras = await youtube.analytics_extras(
+                graph.http,
+                token=token,
+                video_ids=batch,
+                start_date=start_date,
+                end_date=end_date,
+            )
+        except youtube.AnalyticsError as exc:
+            metrics.graph_errors.inc()
+            log.warning("YouTube extra metrics for %s failed: %s", channel_id, exc)
+            extras = {}
+
         for video_id, reading in stats.items():
+            extra: dict[str, Any] = dict(extras.get(video_id, {}))
+            if curves:
+                try:
+                    curve = await youtube.retention(
+                        graph.http,
+                        token=token,
+                        video_id=video_id,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+                except youtube.AnalyticsError as exc:
+                    metrics.graph_errors.inc()
+                    log.warning("YouTube retention for %s failed: %s", channel_id, exc)
+                    curves = False
+                    curve = []
+                if curve:
+                    extra["retention"] = curve
+
             await db.record_insights(
                 conn,
                 media_id=video_id,
@@ -308,6 +413,7 @@ async def refresh_youtube_account(
                 on=on,
                 moment=moment,
                 platform=db.PLATFORM_YOUTUBE,
+                extra=extra,
             )
             metrics.insights_fetched.inc()
             written += 1
@@ -382,6 +488,15 @@ async def refresh_facebook_account(
             # decision `refresh_account` makes on the Instagram path.
             if exc.is_auth:
                 log.error("Stopping the Facebook sweep for %s, the token is bad", page_id)
+                return written
+            # A missing scope fails every Reel too, and was sixteen identical
+            # warnings a sweep until this. The Page node still reads.
+            if exc.is_permission:
+                log.error(
+                    "Stopping the Facebook Reel sweep for %s, the token lacks a "
+                    "permission; authorise the Page again",
+                    page_id,
+                )
                 break
             continue
 
@@ -409,10 +524,24 @@ async def refresh_facebook_account(
             on=on,
             moment=moment,
             platform=db.PLATFORM_FACEBOOK,
+            extra=reading.extra,
         )
         metrics.insights_fetched.inc()
         written += 1
 
+    async def audience() -> tuple[int | None, dict[str, Any]]:
+        reading = await facebook.read_page(
+            graph.http,
+            page_id=page_id,
+            token=token,
+            api_version=cfg.api_version,
+            day=_yesterday(moment),
+        )
+        return reading.followers, reading.extra
+
+    await _record_audience(
+        conn, metrics, page_id, db.PLATFORM_FACEBOOK, audience, on=on, moment=moment
+    )
     return written
 
 

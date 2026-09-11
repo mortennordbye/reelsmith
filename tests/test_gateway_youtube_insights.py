@@ -133,14 +133,19 @@ async def test_the_id_is_the_one_the_upload_returned(conn, meta, cfg, metrics):
 
 async def test_the_whole_batch_is_one_request(conn, meta, cfg, metrics):
     """The report is dimensioned by video and the quota is per request, so a
-    month of posting is one call rather than thirty."""
+    month of posting is one call rather than thirty.
+
+    The core report, that is. The extra metrics are one more for the batch, and
+    the retention curve is one per video because that report refuses a list of
+    ids, so those are counted separately rather than by this."""
     for index in range(3):
         await publish(conn, video_id=f"yt-{index}", title=f"{TITLE} {index}")
     meta.youtube.stats = {f"yt-{index}": REPORT for index in range(3)}
 
     assert await sweep(conn, meta, cfg, metrics) == 3
 
-    assert len(meta.youtube.reports) == 1
+    core = [r for r in meta.youtube.reports if "averageViewPercentage" in str(r.get("metrics"))]
+    assert len(core) == 1
 
 
 async def test_the_range_covers_the_oldest_post_in_the_batch(conn, meta, cfg, metrics):

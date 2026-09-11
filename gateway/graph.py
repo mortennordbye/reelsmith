@@ -25,11 +25,13 @@ exception for the same reason.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import httpx
 
+from gateway import probe
 from gateway.config import GatewaySettings
 
 log = logging.getLogger(__name__)
@@ -116,6 +118,53 @@ REELS_METRICS = (
     "reels_skip_rate",
 )
 
+# Everything else a Reel reports, stored in `insights.extra` under these names.
+#
+# **A request of its own**, because Meta fails a whole call over one metric it
+# will not give and says only "An unknown error has occurred". Folded into the
+# request above, a retired name here would cost the skip rate the feedback loop
+# turns on. `probe.Refusals` drops whatever is refused and names it.
+#
+# `follows`, `profile_visits` and `profile_activity` are the ones worth having
+# and the documentation lists them for feed posts and stories only. They are
+# left out rather than probed, since a refusal known in advance is only noise.
+MEDIA_EXTRA_METRICS = ("total_interactions", "reposts", "facebook_views", "crossposted_views")
+
+# The account itself, read once a sweep. The follower count is a field on the
+# user node; the day totals come from its insights edge as `total_value` for
+# yesterday, since today's is a number still moving.
+ACCOUNT_FIELDS = "followers_count,follows_count,media_count"
+ACCOUNT_METRICS = (
+    "reach",
+    "views",
+    "accounts_engaged",
+    "total_interactions",
+    "likes",
+    "comments",
+    "shares",
+    "saves",
+    "replies",
+    "reposts",
+    "profile_links_taps",
+)
+
+_MEDIA_EXTRAS = probe.Refusals("Instagram media insights")
+_ACCOUNT_INSIGHTS = probe.Refusals("Instagram account insights")
+
+
+@dataclass(frozen=True)
+class AccountReading:
+    """One account's audience: the follower count and yesterday's totals."""
+
+    followers: int | None
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+def _refused(outcome: Any) -> bool:
+    """A Graph refusal that is about the request rather than the token."""
+    return isinstance(outcome, GraphError) and not outcome.is_auth
+
+
 # Meta's name -> ours. Theirs carry the product and the unit, which is useful
 # in a request and noise in a column heading.
 _RETENTION_FIELDS = {
@@ -165,6 +214,19 @@ def _first_value(item: Any) -> float:
         return float(values[0].get("value") or 0)
     except (AttributeError, TypeError, ValueError):
         return 0.0
+
+
+def _total_value(item: Any) -> float:
+    """The number out of an account metric asked for as `total_value`.
+
+    A different envelope from the media one, `{total_value: {value: n}}`, and
+    falls back to that one because a metric asked for without a breakdown has
+    been seen in both.
+    """
+    total = item.get("total_value") if isinstance(item, dict) else None
+    if isinstance(total, dict) and isinstance(total.get("value"), (int, float)):
+        return float(total["value"])
+    return _first_value(item) if isinstance(item, dict) else 0.0
 
 
 class GraphClient:
@@ -342,6 +404,99 @@ class GraphClient:
                 for theirs, ours in _RETENTION_FIELDS.items()
             },
         )
+
+    async def media_extras(self, *, media_id: str, token: str) -> dict[str, float]:
+        """Every other metric a Reel will answer for, keyed by Meta's name.
+
+        Called only after the core read for the same media worked, so a
+        refusal here is about a metric rather than about a post too young to
+        have numbers. Empty when nothing could be read. An auth failure is
+        re-raised, for the reason `media_insights` gives.
+        """
+
+        async def fetch(metrics: list[str]) -> Any:
+            try:
+                return await self._request(
+                    "GET",
+                    f"{self._cfg.graph_base}/{media_id}/insights",
+                    token=token,
+                    params={"metric": ",".join(metrics)},
+                )
+            except GraphError as exc:
+                return exc
+
+        outcome = await _MEDIA_EXTRAS.read(MEDIA_EXTRA_METRICS, fetch, _refused)
+        if isinstance(outcome, GraphError):
+            if outcome.is_auth:
+                raise outcome
+            log.info("No extra insights for %s (%s)", media_id, outcome)
+            return {}
+        return {
+            str(item.get("name")): _first_value(item)
+            for item in ((outcome or {}).get("data") or [])
+        }
+
+    async def account_reading(
+        self, *, ig_user_id: str, token: str, day: date
+    ) -> AccountReading:
+        """The follower count now, and the account's totals for `day`.
+
+        Two reads, and either may fail without the other: the node answers on
+        the basic scope, the insights edge wants the insights one and has a
+        100 follower floor on some metrics. An auth failure is re-raised.
+        """
+        extra: dict[str, Any] = {}
+        followers: int | None = None
+        try:
+            node = await self._request(
+                "GET",
+                f"{self._cfg.graph_base}/{ig_user_id}",
+                token=token,
+                params={"fields": ACCOUNT_FIELDS},
+            )
+        except GraphError as exc:
+            if exc.is_auth:
+                raise
+            log.warning("Account fields for %s failed: %s", ig_user_id, exc)
+            node = {}
+        if isinstance(node.get("followers_count"), (int, float)):
+            followers = int(node["followers_count"])
+        for name in ("follows_count", "media_count"):
+            if isinstance(node.get(name), (int, float)):
+                extra[name] = int(node[name])
+
+        start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        window = {
+            "period": "day",
+            "metric_type": "total_value",
+            "since": int(start.timestamp()),
+            "until": int((start + timedelta(days=1)).timestamp()),
+        }
+
+        async def fetch(metrics: list[str]) -> Any:
+            try:
+                return await self._request(
+                    "GET",
+                    f"{self._cfg.graph_base}/{ig_user_id}/insights",
+                    token=token,
+                    params={"metric": ",".join(metrics), **window},
+                )
+            except GraphError as exc:
+                return exc
+
+        outcome = await _ACCOUNT_INSIGHTS.read(ACCOUNT_METRICS, fetch, _refused)
+        if isinstance(outcome, GraphError):
+            if outcome.is_auth:
+                raise outcome
+            log.warning("Account insights for %s failed: %s", ig_user_id, outcome)
+        elif outcome:
+            totals = {
+                str(item.get("name")): _total_value(item)
+                for item in (outcome.get("data") or [])
+            }
+            if totals:
+                extra["day"] = {"on": day.isoformat(), **totals}
+        return AccountReading(followers=followers, extra=extra)
 
     async def _insight_values(
         self, *, media_id: str, token: str, metrics: tuple[str, ...]

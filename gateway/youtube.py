@@ -28,8 +28,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import httpx
+
+from gateway import probe
 
 log = logging.getLogger(__name__)
 
@@ -403,38 +406,208 @@ async def analytics(
     if response.status_code != 200:
         raise AnalyticsError(f"Analytics refused ({response.status_code}): {response.text}")
 
+    stats = {}
+    for video_id, row in _by_video(response).items():
+        stats[video_id] = VideoStats(
+            video_id=video_id,
+            views=int(row.get("views", 0)),
+            likes=int(row.get("likes", 0)),
+            comments=int(row.get("comments", 0)),
+            shares=int(row.get("shares", 0)),
+            avg_watch_ms=int(row.get("averageViewDuration", 0) * 1000),
+            total_watch_ms=int(row.get("estimatedMinutesWatched", 0) * 60_000),
+            avg_view_pct=round(row.get("averageViewPercentage", 0.0), 1),
+        )
+    return stats
+
+
+def _table(response: httpx.Response, dimension: str) -> list[tuple[str, dict[str, float]]]:
+    """A report's rows as (dimension value, {metric: number}).
+
+    Read by header name rather than by position. The column order follows the
+    order asked for today, and a report that quietly gained a column would
+    otherwise be stored as the wrong metric rather than as an error.
+    """
     payload = response.json() if response.content else {}
-    # Read by header name rather than by position. The column order follows the
-    # order asked for today, and a report that quietly gained a column would
-    # otherwise be stored as the wrong metric rather than as an error.
     columns = [str(head.get("name") or "") for head in payload.get("columnHeaders") or []]
-    if "video" not in columns:
-        raise AnalyticsError(f"Analytics returned no video dimension: {columns}")
+    if dimension not in columns:
+        raise AnalyticsError(f"Analytics returned no {dimension} dimension: {columns}")
+    at = columns.index(dimension)
 
-    index = {name: position for position, name in enumerate(columns)}
-
-    def number(row: list, name: str) -> float:
-        position = index.get(name)
-        if position is None or position >= len(row):
-            return 0.0
+    def number(value: Any) -> float:
         try:
-            return float(row[position] or 0)
+            return float(value or 0)
         except (TypeError, ValueError):
             return 0.0
 
-    stats = {}
+    out = []
     for row in payload.get("rows") or []:
-        video_id = str(row[index["video"]] or "")
-        if not video_id:
+        key = str(row[at] if at < len(row) else "")
+        if not key:
             continue
-        stats[video_id] = VideoStats(
-            video_id=video_id,
-            views=int(number(row, "views")),
-            likes=int(number(row, "likes")),
-            comments=int(number(row, "comments")),
-            shares=int(number(row, "shares")),
-            avg_watch_ms=int(number(row, "averageViewDuration") * 1000),
-            total_watch_ms=int(number(row, "estimatedMinutesWatched") * 60_000),
-            avg_view_pct=round(number(row, "averageViewPercentage"), 1),
+        out.append((
+            key,
+            {name: number(row[i]) for i, name in enumerate(columns) if i != at and i < len(row)},
+        ))
+    return out
+
+
+def _by_video(response: httpx.Response) -> dict[str, dict[str, float]]:
+    return dict(_table(response, "video"))
+
+
+# Everything else the video report offers, stored in `insights.extra` under
+# these names. **A request of its own**, because the Analytics API fails a whole
+# query over one metric it does not know, and `engagedViews` is new enough that
+# a project's API version may not have it. Folded into the request above, that
+# would cost the watch time.
+EXTRA_METRICS = (
+    "engagedViews",
+    "subscribersGained",
+    "subscribersLost",
+    "dislikes",
+    "videosAddedToPlaylists",
+    "videosRemovedFromPlaylists",
+)
+_EXTRAS = probe.Refusals("YouTube Analytics")
+
+
+async def analytics_extras(
+    http: httpx.AsyncClient,
+    *,
+    token: str,
+    video_ids: list[str],
+    start_date: str,
+    end_date: str,
+) -> dict[str, dict[str, float]]:
+    """`EXTRA_METRICS` for a batch of videos, keyed by id. Omitted videos have none."""
+    if not video_ids:
+        return {}
+
+    async def fetch(metrics: list[str]) -> Any:
+        try:
+            return await http.get(
+                ANALYTICS_URL,
+                params={
+                    "ids": "channel==MINE",
+                    "startDate": start_date,
+                    "endDate": end_date,
+                    "metrics": ",".join(metrics),
+                    "dimensions": "video",
+                    "filters": f"video=={','.join(video_ids)}",
+                    "maxResults": len(video_ids),
+                },
+                headers={"authorization": f"Bearer {token}"},
+                timeout=30,
+            )
+        except httpx.HTTPError as exc:
+            return AnalyticsError(f"Could not reach the YouTube Analytics API: {exc}")
+
+    # 400 is how a query naming a metric it does not know comes back. A 401 or
+    # 403 is the token and is not a refusal of any one name.
+    outcome = await _EXTRAS.read(
+        EXTRA_METRICS,
+        fetch,
+        lambda o: isinstance(o, httpx.Response) and o.status_code == 400,
+    )
+    if outcome is None:
+        return {}
+    if isinstance(outcome, AnalyticsError):
+        raise outcome
+    if outcome.status_code != 200:
+        raise AnalyticsError(f"Analytics refused ({outcome.status_code}): {outcome.text}")
+    return _by_video(outcome)
+
+
+# One point in five of the hundred the retention report returns. Twenty points
+# still place the drop at the opening and the one before the ending, and a
+# hundred would be most of a reading's bytes on a table kept per day forever.
+RETENTION_EVERY = 5
+
+
+async def retention(
+    http: httpx.AsyncClient,
+    *,
+    token: str,
+    video_id: str,
+    start_date: str,
+    end_date: str,
+) -> list[list[float]]:
+    """The audience retention curve for one video, as [share, watch, relative].
+
+    `share` is how far through the video, 0.01 to 1.0. `watch` is
+    `audienceWatchRatio`, the views still watching there as a ratio of all
+    views, which exceeds 1 where a Short loops. `relative` is
+    `relativeRetentionPerformance`, 0 to 1 against Shorts of similar length,
+    and is the one number on this platform that compares an opening with
+    somebody else's.
+
+    **One request per video**, because the report refuses a list of ids. It is
+    the only per video call in the sweep, and the reason the curve is worth it:
+    no other YouTube metric can say where people leave.
+    """
+    try:
+        response = await http.get(
+            ANALYTICS_URL,
+            params={
+                "ids": "channel==MINE",
+                "startDate": start_date,
+                "endDate": end_date,
+                "metrics": "audienceWatchRatio,relativeRetentionPerformance",
+                "dimensions": "elapsedVideoTimeRatio",
+                "filters": f"video=={video_id}",
+            },
+            headers={"authorization": f"Bearer {token}"},
+            timeout=30,
         )
-    return stats
+    except httpx.HTTPError as exc:
+        raise AnalyticsError(f"Could not reach the YouTube Analytics API: {exc}") from exc
+    if response.status_code != 200:
+        raise AnalyticsError(f"Retention refused ({response.status_code}): {response.text}")
+
+    points = []
+    for share, row in _table(response, "elapsedVideoTimeRatio"):
+        try:
+            where = float(share)
+        except ValueError:
+            continue
+        if round(where * 100) % RETENTION_EVERY:
+            continue
+        points.append([
+            round(where, 2),
+            round(row.get("audienceWatchRatio", 0.0), 3),
+            round(row.get("relativeRetentionPerformance", 0.0), 3),
+        ])
+    return sorted(points)
+
+
+CHANNELS_URL = "https://www.googleapis.com/youtube/v3/channels"
+
+
+async def channel_statistics(http: httpx.AsyncClient, *, token: str) -> dict[str, int]:
+    """The channel's lifetime counters: subscribers, views and videos.
+
+    The Data API rather than Analytics, because a subscriber count is a fact
+    about now and the Analytics reports lag by two or three days. One quota
+    unit, against the 1,600 an upload costs. Needs `youtube.readonly`, which
+    the consent trip has asked for since the first channel.
+    """
+    try:
+        response = await http.get(
+            CHANNELS_URL,
+            params={"part": "statistics", "mine": "true"},
+            headers={"authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+    except httpx.HTTPError as exc:
+        raise AnalyticsError(f"Could not reach the YouTube Data API: {exc}") from exc
+    if response.status_code != 200:
+        raise AnalyticsError(
+            f"Channel statistics refused ({response.status_code}): {response.text}"
+        )
+    payload = response.json() if response.content else {}
+    items = payload.get("items") or []
+    stats = (items[0].get("statistics") or {}) if items else {}
+    # `hiddenSubscriberCount` is a boolean and the rest are numbers sent as
+    # strings, so only what reads as a whole number is kept.
+    return {name: int(value) for name, value in stats.items() if str(value).isdigit()}
