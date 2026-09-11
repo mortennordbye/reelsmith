@@ -162,3 +162,40 @@ def test_an_unknown_account_is_refused_before_a_browser_opens(tmp_path, monkeypa
     with pytest.raises(SystemExit) as raised:
         consent.brand_for("nightlybiuld", "")
     assert "nightlybuild" in str(raised.value)
+
+
+# --- Which .env a flow reads a credential out of -----------------------------
+
+
+def test_the_account_env_is_layered_over_the_root_one(tmp_path, monkeypatch):
+    """The bug that stopped the second account's first consent trip.
+
+    `YOUTUBE_CLIENT_ID` and its secret identify the Google Cloud project, and
+    one project authorises every channel, so they are an app credential. They
+    were lumped into `accounts/nightlybuild/.env` alongside that channel's
+    refresh token, which worked for exactly as long as there was one account.
+    Reading the root file alone then found no pair when account 2 asked for
+    one, and said to set a variable that was already set one directory away.
+    """
+    monkeypatch.setattr(consent, "ACCOUNTS_DIR", tmp_path)
+    monkeypatch.setattr(consent, "ROOT", tmp_path)
+    (tmp_path / ".env").write_text("YOUTUBE_CLIENT_ID=shared-app\nGITHUB_TOKEN=root\n")
+    (tmp_path / "acct").mkdir()
+    (tmp_path / "acct" / ".env").write_text("YOUTUBE_CLIENT_SECRET=from-the-account\n")
+
+    cfg = consent.account_settings("acct")
+    assert cfg.youtube_client_id == "shared-app"
+    assert cfg.youtube_client_secret == "from-the-account"
+    assert cfg.github_token == "root"
+
+
+def test_an_account_may_override_the_shared_app(tmp_path, monkeypatch):
+    """An identity with its own Cloud project is a real case, which is why this
+    layers rather than simply reading the root file."""
+    monkeypatch.setattr(consent, "ACCOUNTS_DIR", tmp_path)
+    monkeypatch.setattr(consent, "ROOT", tmp_path)
+    (tmp_path / ".env").write_text("YOUTUBE_CLIENT_ID=shared-app\n")
+    (tmp_path / "acct").mkdir()
+    (tmp_path / "acct" / ".env").write_text("YOUTUBE_CLIENT_ID=its-own-app\n")
+
+    assert consent.account_settings("acct").youtube_client_id == "its-own-app"

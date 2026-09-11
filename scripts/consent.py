@@ -178,10 +178,33 @@ def brand_for(name: str, explicit: str) -> str:
         return explicit.strip()
     home = account_home(name)  # refuse early, before a browser is opened
     # The account's own `.env` alone, not layered over the root one the way
-    # `get_settings()` layers everything else. A brand is a fact about one
+    # `account_settings` layers everything else. A brand is a fact about one
     # identity, so a `BRAND=` in the root file would silently group every
     # account under the first one somebody set up.
     return Settings(_env_file=home / ".env").brand.strip()
+
+
+def account_settings(name: str) -> Settings:
+    """The root `.env` with the account's layered over it, as `get_settings()` does.
+
+    The flows read two different kinds of credential through this and the
+    distinction is worth keeping straight, because getting it wrong is what
+    broke the second account's first consent trip.
+
+    **An app credential is not an account credential.** `YOUTUBE_CLIENT_ID` and
+    its secret identify the Google Cloud project, and one project authorises
+    every channel; a refresh token is the channel. Those three were lumped into
+    `accounts/nightlybuild/.env` together, which worked for exactly as long as
+    there was one account. Reading the root file alone, as this used to, then
+    found no client pair at all when account 2 asked for one, and the error
+    said to set a variable that was already set one directory away.
+
+    Layering rather than moving the read to the root file, because an identity
+    with its own Cloud project is a real case and this is the arrangement every
+    other setting in the repo already has: global unless the account says
+    otherwise.
+    """
+    return Settings(_env_file=(ROOT / ".env", account_home(name) / ".env"))
 
 
 # --- The browser trip that lands on the gateway ----------------------------

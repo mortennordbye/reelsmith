@@ -51,8 +51,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from config import Settings  # noqa: E402  - after the sys.path insert above
-from scripts import consent  # noqa: E402
+from scripts import consent  # noqa: E402  - after the sys.path insert above
 
 
 def _graph(host: str, path: str, params: dict) -> dict:
@@ -110,7 +109,7 @@ def trip(args: argparse.Namespace) -> consent.Trip:
     # Before the prompt, so a misspelt account name is caught before a
     # credential has been typed into a terminal.
     brand = consent.brand_for(args.account, args.brand)
-    cfg = Settings()
+    cfg = consent.account_settings(args.account)
 
     print(
         "\nPaste the long-lived Instagram user token. It is not echoed, and it\n"
