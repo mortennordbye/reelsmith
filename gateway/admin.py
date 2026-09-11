@@ -544,7 +544,12 @@ async def _machine(conn: Any, scope: dict[str, Any]) -> dict[str, Any]:
         for row in await db.covered_repos(conn, account_id, limit=10_000):
             covered.add(str(row["repo_full_name"]))
         for row in await db.rendered_repos_list(conn, account_id, limit=10_000):
-            rendered.add(str(row["repo_full_name"]))
+            # Guarded the way `covered_repos` guards its own, because the second
+            # niche's subjects are not repositories and an empty name counted as
+            # a repo would report an account that has covered none as covering
+            # one.
+            if name := str(row["repo_full_name"] or ""):
+                rendered.add(name)
             if stamp := (row["rendered_at"] or ""):
                 nights.add(stamp[:10])
         published += len(await db.published_media(conn, account_id, limit=10_000))
