@@ -110,48 +110,74 @@ def refresh(host: str, token: str) -> tuple[str, int | None]:
     return data.get("access_token") or token, data.get("expires_in")
 
 
-# The dashboard page holding the Generate token button, and the apps list to
-# fall back to when nobody has said which app this is.
 APPS_URL = "https://developers.facebook.com/apps/"
-SETUP_PATH = "instagram-business/API-setup-with-instagram-login/"
+
+# One entry per step, opened in order as tabs, so the trip sets the operator up
+# rather than naming a documentation file. Recorded here as paths rather than
+# described in prose because a URL somebody has to reconstruct from a
+# description is a URL they will look up instead.
+#
+# `confirmed` says whether the address was read off a real address bar or
+# derived from Meta's documented URL shape. Written down because a wrong deep
+# link is worse than the apps list: it lands on a 404 that reads as the feature
+# being gone. Correct one by visiting it and copying what you land on.
+STEPS = [
+    (
+        "roles/roles/",
+        True,
+        "Add the account as an **Instagram Tester**, via Add People. Not a\n"
+        "     plain Tester, the Instagram one. This is what grants Standard\n"
+        "     Access to an account you own, and it is why none of this needs\n"
+        "     App Review.",
+    ),
+    (
+        "instagram-business/API-setup-with-instagram-login/",
+        False,
+        "Generate access tokens, once step 2 below is done. The account is\n"
+        "     not listed until the invite is accepted. That button returns a\n"
+        "     long-lived token, so there is no short-lived exchange by hand.",
+    ),
+]
+
+# Instagram's own side of the tester invite, which is a different site and so
+# cannot be an app path. The step that does not look like it matters and is the
+# one that makes the other two work.
+INVITES_URL = "https://www.instagram.com/accounts/manage_access/"
 
 
 def open_dashboard(app_id: str) -> None:
-    """Put the operator on the page the token comes from.
+    """Put the operator on the pages the token comes from, in order.
 
     The YouTube trip opens a browser and the operator is where they need to be.
-    This one used to print the name of a documentation file, which is the same
-    answer as "look it up", and the steps below are not ones anybody remembers
-    between accounts because they happen once per identity.
-
-    The app id is public, so a deep link costs nothing. Without one this opens
-    the apps list, which is still one click from the right place rather than a
-    file path.
+    This one printed the name of a documentation file, which is the same answer
+    as "look it up", and these steps happen once per identity so nobody
+    remembers them in between.
     """
-    url = f"{APPS_URL}{app_id}/{SETUP_PATH}" if app_id else APPS_URL
-    print(
-        "\nA browser is opening on the Meta app dashboard. Three steps there,\n"
-        "in this order, and the second is the one that is easy to miss:\n"
-        "\n"
-        "  1. Instagram, then app roles: add the account as an Instagram\n"
-        "     tester. This is what grants Standard Access to an account you\n"
-        "     own, and it is why none of this needs App Review.\n"
-        "  2. Accept the invite from Instagram itself, signed in as that\n"
-        "     account: Settings, Website permissions, Tester invites. Until\n"
-        "     this is accepted the account is not offered in step 3, and the\n"
-        "     error much later names nothing useful.\n"
-        "  3. Instagram, API setup with Instagram business login, Generate\n"
-        "     access tokens. Pick the account and copy what it hands back.\n"
-        "     That button returns a long-lived token, so there is no\n"
-        "     short-lived exchange to do by hand.\n"
-        f"\n  If it does not open: {url}\n"
-    )
     if not app_id:
         print(
-            "  No IG_APP_ID in .env, so this is the apps list rather than the\n"
-            "  page itself. Setting it deep links every trip after this one.\n"
+            f"\nNo IG_APP_ID in .env, so this opens the apps list rather than\n"
+            f"the pages themselves. Setting it, which is a public value, deep\n"
+            f"links every trip after this one.\n  {APPS_URL}\n"
         )
-    webbrowser.open(url)
+        webbrowser.open(APPS_URL)
+        return
+
+    print("\nOpening the pages, in the order to use them:\n")
+    for index, (path, confirmed, what) in enumerate(STEPS, start=1):
+        url = f"{APPS_URL}{app_id}/{path}"
+        note = "" if confirmed else "   [path not yet verified; tell me if it 404s]"
+        print(f"  {index}. {what}\n     {url}{note}\n")
+        webbrowser.open(url)
+
+    print(
+        f"  3. Accept the invite, signed in as that account on Instagram\n"
+        f"     itself: Apps and Websites, then Tester invites. Do this\n"
+        f"     between 1 and 2. Until it is accepted the account is not\n"
+        f"     offered by the Generate button, and the failure much later\n"
+        f"     names nothing useful.\n"
+        f"     {INVITES_URL}\n"
+    )
+    webbrowser.open(INVITES_URL)
 
 
 def account_of(host: str, token: str, api_version: str) -> dict:

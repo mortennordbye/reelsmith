@@ -257,17 +257,46 @@ def test_a_personal_account_is_refused(monkeypatch):
     assert "Personal" in str(raised.value)
 
 
-def test_the_dashboard_link_is_the_setup_page_when_the_app_is_known(monkeypatch):
+def test_a_known_app_opens_every_page_the_setup_needs(monkeypatch):
     """The complaint this answers: the YouTube trip opens a browser and you are
-    where you need to be, and this one used to print a documentation path."""
+    where you need to be, and this one printed a documentation path.
+
+    Three tabs, because the setup is three places and one of them is on a
+    different site: the app's roles page, the Instagram product page, and
+    Instagram itself, where the tester invite is accepted.
+    """
     from scripts import instagram_authorise as ig
 
     opened = []
     monkeypatch.setattr(ig.webbrowser, "open", opened.append)
-
     ig.open_dashboard("1234567890")
-    assert opened == [f"{ig.APPS_URL}1234567890/{ig.SETUP_PATH}"]
 
-    opened.clear()
+    assert opened == [
+        "https://developers.facebook.com/apps/1234567890/roles/roles/",
+        "https://developers.facebook.com/apps/1234567890/"
+        "instagram-business/API-setup-with-instagram-login/",
+        ig.INVITES_URL,
+    ]
+
+
+def test_an_unverified_path_says_so_rather_than_looking_authoritative(monkeypatch, capsys):
+    """A wrong deep link is worse than the apps list: it lands on a 404 that
+    reads as the feature being gone rather than as a stale constant."""
+    from scripts import instagram_authorise as ig
+
+    monkeypatch.setattr(ig.webbrowser, "open", lambda _u: None)
+    ig.open_dashboard("1234567890")
+
+    printed = capsys.readouterr().out
+    assert "not yet verified" in printed
+    # The roles path was read off a real address bar, so it claims nothing.
+    assert printed.count("not yet verified") == sum(1 for _p, ok, _w in ig.STEPS if not ok)
+
+
+def test_no_app_id_falls_back_to_the_apps_list(monkeypatch):
+    from scripts import instagram_authorise as ig
+
+    opened = []
+    monkeypatch.setattr(ig.webbrowser, "open", opened.append)
     ig.open_dashboard("")
     assert opened == [ig.APPS_URL]
