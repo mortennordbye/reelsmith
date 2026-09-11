@@ -127,10 +127,10 @@ async def test_a_metric_meta_refuses_is_dropped_named_and_probed_once(
         assert (await db.latest_insights(conn, PAGE_ID))["fb-video-1"]["views"] == 1614
         assert "post_total_media_view_unique" in caplog.text
         remaining = [m for m in facebook.INSIGHT_METRICS if m != "post_total_media_view_unique"]
-        # Probed once for the whole sweep, not once per Reel: the second post
+        # Walked once for the whole sweep, not once per Reel: the first post
+        # costs the full request plus one per name added back, and the second
         # asks straight for what is left.
-        probes = [asked for asked in meta.facebook.metric_requests if len(asked) == 1]
-        assert len(probes) == len(facebook.INSIGHT_METRICS)
+        assert len(meta.facebook.metric_requests) == 1 + len(facebook.INSIGHT_METRICS) + 1
         assert meta.facebook.metric_requests[-1] == remaining
     finally:
         facebook.forget_refused_metrics()

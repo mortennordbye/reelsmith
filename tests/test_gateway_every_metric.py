@@ -130,6 +130,18 @@ async def test_a_refusal_of_everything_is_not_remembered():
     assert refusals.names == set()
 
 
+async def test_names_refused_only_together_keep_the_earlier_one():
+    """Each reads alone and the pair does not, which is what Meta's generic
+    unknown error is documented to mean. The list order is the priority."""
+    refusals = probe.Refusals("Somewhere")
+
+    async def fetch(names):
+        return "no" if {"x", "y"} <= set(names) else "ok"
+
+    assert await refusals.read(["a", "x", "y"], fetch, lambda o: o == "no") == "ok"
+    assert refusals.names == {"y"}
+
+
 # --- Instagram ------------------------------------------------------------------
 
 
@@ -380,6 +392,45 @@ async def test_a_pages_day_totals_are_stored(conn, cfg, metrics):
 
     [row] = await db.account_insights_series(conn, PAGE_ID)
     assert db.extra_of(row)["day"]["page_media_view"] == 880
+
+
+async def test_a_reel_metric_meta_answers_with_an_unknown_error_is_dropped(
+    conn, cfg, metrics, caplog
+):
+    """What production answered for every Reel on 2026-09-11, the moment the
+    Pages had `read_insights`: `(#1) An unknown error has occurred`. Read as a
+    token problem it stored nothing at all."""
+    account = await facebook_page(conn)
+    await publish(conn, account_id=PAGE_ID, media_id="fb-1")
+    meta = FakeMeta()
+    meta.facebook.insights = {"fb-1": {"blue_reels_play_count": 900, "fb_reels_replay_count": 140}}
+    meta.facebook.unknown_error_metrics = {"post_video_social_actions"}
+
+    with caplog.at_level("WARNING"):
+        assert await fb_sweep(conn, meta, cfg, metrics, account) == 1
+
+    reading = (await db.latest_insights(conn, PAGE_ID))["fb-1"]
+    assert reading["views"] == 900
+    assert db.extra_of(reading)["fb_reels_replay_count"] == 140
+    assert "post_video_social_actions" in caplog.text
+
+
+async def test_two_reel_metrics_meta_will_not_serve_together_keep_the_first(conn, cfg, metrics):
+    account = await facebook_page(conn)
+    await publish(conn, account_id=PAGE_ID, media_id="fb-1")
+    meta = FakeMeta()
+    meta.facebook.insights = {"fb-1": {
+        "blue_reels_play_count": 900,
+        "post_video_followers": 3,
+        "post_video_retention_graph": {"0": 1.0, "1": 0.5},
+    }}
+    meta.facebook.conflicting_metrics = {"post_video_followers", "post_video_retention_graph"}
+
+    assert await fb_sweep(conn, meta, cfg, metrics, account) == 1
+
+    extra = db.extra_of((await db.latest_insights(conn, PAGE_ID))["fb-1"])
+    assert extra["post_video_followers"] == 3
+    assert "post_video_retention_graph" not in extra
 
 
 # --- What the page makes of it --------------------------------------------------

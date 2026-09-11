@@ -351,6 +351,12 @@ class FakeFacebook:
     # Metric names Meta refuses as invalid. A request naming any of them fails
     # whole with code 100, which is how a retired metric arrives.
     rejected_metrics: set[str] = field(default_factory=set)
+    # Names Meta answers with its generic `(#1) An unknown error has occurred`:
+    # any request naming one of the first set, and any naming two or more of
+    # the second, which is a combination that is refused where each name alone
+    # reads.
+    unknown_error_metrics: set[str] = field(default_factory=set)
+    conflicting_metrics: set[str] = field(default_factory=set)
     # Every metric list the insights reads asked for, in order.
     metric_requests: list[list[str]] = field(default_factory=list)
     # The Page node's own fields, and its day insights by metric name. An error
@@ -439,6 +445,14 @@ class FakeFacebook:
                     json={"error": {"code": 100, "message": (
                         "(#100) The value must be a valid insights metric"
                     )}},
+                )
+            if (
+                any(name in self.unknown_error_metrics for name in asked)
+                or len(self.conflicting_metrics & set(asked)) > 1
+            ):
+                return httpx.Response(
+                    400,
+                    json={"error": {"code": 1, "message": "An unknown error has occurred."}},
                 )
             payload: dict[str, Any] = {"permalink_url": self.permalink}
             if node in self.comment_counts:

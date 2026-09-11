@@ -8,15 +8,24 @@ about the query. So a list written from the documentation is a list that stops
 returning anything the day one entry retires, which is what happened to every
 Facebook read on 2026-09-11.
 
-A read asks for everything. On a refusal it asks for each metric alone,
-remembers the ones refused for the life of the process, names them in one
-warning and reads again with the rest. A restart asks again, which is how a
-metric a platform starts offering later arrives without a deploy.
+A read asks for everything. On a refusal it adds the names back one at a time,
+in the order they are listed, keeping each one the endpoint still answers with.
+The ones that broke the request are remembered for the life of the process,
+named in one warning, and left out of every read after. A restart asks again,
+which is how a metric a platform starts offering later arrives without a deploy.
 
-**A refusal of every metric is not a refusal of any one.** When each metric
-also fails alone, the likelier story is an endpoint having a bad minute or a
-post with no numbers yet, and remembering that would switch the read off until
-the next rollout. Nothing is remembered and the caller sees the refusal.
+**One at a time rather than each alone**, because a name can be fine by itself
+and refused beside another. Meta's generic `(#1) An unknown error has occurred`
+is documented as exactly that on the Instagram edge. Adding names back finds
+both cases with one request per name, and **the order is the priority**: of two
+names that will not be served together the earlier one is kept, so a list puts
+the metrics that fill a column first.
+
+**A refusal of every metric is not a refusal of any one.** When not even the
+first name reads on its own, the likelier story is an endpoint having a bad
+minute or a post with no numbers yet, and remembering that would switch the
+read off until the next rollout. Nothing is remembered and the caller sees the
+refusal.
 """
 
 from __future__ import annotations
@@ -65,15 +74,27 @@ class Refusals:
         if not refused(outcome) or len(wanted) == 1:
             return outcome
 
-        bad = [metric for metric in wanted if refused(await fetch([metric]))]
-        if not bad or len(bad) == len(wanted):
+        kept: list[str] = []
+        bad: list[str] = []
+        last: T | None = None
+        for metric in wanted:
+            attempt = await fetch([*kept, metric])
+            if refused(attempt):
+                bad.append(metric)
+            else:
+                kept.append(metric)
+                last = attempt
+        if not kept:
             return outcome
-        self.names.update(bad)
-        log.warning(
-            "%s refused the metric(s) %s; reading without them",
-            self.endpoint, ", ".join(bad),
-        )
-        return await fetch([metric for metric in wanted if metric not in bad])
+        if bad:
+            self.names.update(bad)
+            log.warning(
+                "%s refused the metric(s) %s; reading without them",
+                self.endpoint, ", ".join(bad),
+            )
+        # The last accepted attempt asked for exactly `kept`, so it is already
+        # the reading and there is nothing to fetch again.
+        return last
 
 
 def forget_all() -> None:

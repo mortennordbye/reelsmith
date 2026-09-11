@@ -501,11 +501,21 @@ attempted*:
 - **Each platform's extras are a request of their own, and `gateway/probe.py`
   reads them.** Every platform fails a whole metrics call over one name and
   none says which, so folded into the core request a retired extra would cost
-  the skip rate. `probe.Refusals` asks for everything, probes each name alone
-  on a refusal, remembers what was refused for the process and names it in one
-  warning. **A refusal of every name is not remembered**, since that is a bad
-  minute or a post with no numbers yet, and remembering it would switch the
-  read off until the next rollout. Facebook's Reel read was the first copy of
+  the skip rate. `probe.Refusals` asks for everything and on a refusal adds the
+  names back one at a time, in the order listed, keeping what the endpoint
+  still answers. What broke the request is remembered for the process and
+  named in one warning. One at a time rather than each alone, because a name
+  can read by itself and be refused beside another, so **the tuple order is
+  the priority** and the metrics that fill a column go first. **A refusal of
+  every name is not remembered**, since that is a bad minute or a post with no
+  numbers yet, and remembering it would switch the read off until the next
+  rollout. Meta's generic `(#1) An unknown error has occurred` counts as a
+  refusal on the Facebook reads: it was what every Reel returned on
+  2026-09-11 the moment the Pages had `read_insights`, and before that
+  counted it read as a failure and stored nothing. First deploy also showed
+  Instagram refusing `reposts`, `facebook_views` and `crossposted_views` on
+  `v23.0` with Instagram Login, so only `total_interactions` of the extras
+  arrives there today. Facebook's Reel read was the first copy of
   this and uses it now. A metric worth adding is a name in a tuple, and the
   first sweep after the deploy is the test of whether the platform gives it.
 - **`account_insights` is the audience, one row per destination per day**:
