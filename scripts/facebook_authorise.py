@@ -103,19 +103,24 @@ def setup_pages(app_id: str) -> list[tuple[str, bool, str]]:
         ),
         (
             f"{APPS_URL}{app_id}/settings/basic/",
-            False,
-            "App settings, Basic: the App ID and App Secret. Put them in the\n"
-            "     root .env as FACEBOOK_APP_ID and FACEBOOK_APP_SECRET, which\n"
-            "     is where an app credential belongs since one app serves every\n"
-            "     Page. Skip if they are already there.",
+            True,
+            "App settings, Basic: the App ID and App Secret, the second behind\n"
+            "     a Show button. Put them in the root .env as FACEBOOK_APP_ID\n"
+            "     and FACEBOOK_APP_SECRET, which is where an app credential\n"
+            "     belongs since one app serves every Page. Skip if already set.",
         ),
         (
-            f"{APPS_URL}{app_id}/fb-login/settings/",
-            False,
+            # Not `fb-login/settings/`, which is this app's other login product
+            # and silently redirects to the dashboard. Read off the address bar
+            # on 2026-09-11 after the guess landed on the wrong page, which is
+            # the failure the `confirmed` flag exists to make visible.
+            f"{APPS_URL}{app_id}/business-login/settings/",
+            True,
             "Facebook Login for Business, Settings: the redirect URI below has\n"
             "     to be listed under Valid OAuth Redirect URIs, character for\n"
-            "     character. A mismatch is refused with an error naming neither\n"
-            "     side.",
+            "     character, and Strict Mode means exactly that. A mismatch is\n"
+            "     refused with an error naming neither side. Usually already\n"
+            "     there, since one app serves every Page.",
         ),
     ]
 
