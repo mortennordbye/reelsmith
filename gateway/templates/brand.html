@@ -41,8 +41,9 @@
     <p class="kicker">Runway</p>
     {% if state.runway is not none %}
       <div class="big {{ 'warn' if state.runway <= 1 }}">{{ '%.1f' | format(state.runway) }} <span class="unit">days</span></div>
+      {% set live = state.destinations | selectattr('active') | list %}
       <p class="cap">
-        Thinnest on {{ platform_list(state.thinnest) }}, with {{ state.armed }} armed across
+        {% if live | length > 1 and state.thinnest | length == live | length %}The same on every destination{% else %}Thinnest on {{ platform_list(state.thinnest) }}{% endif %}, with {{ state.armed }} armed across
         {{ state.destinations | length }} destination{{ '' if state.destinations | length == 1 else 's' }}.
       </p>
     {% else %}
@@ -58,7 +59,7 @@
       <p class="cap">{{ state.last_render | fmt(cfg.default_timezone) }}. The only trace the render host leaves on this side.</p>
     {% else %}
       <div class="big faint">none</div>
-      <p class="cap">No render recorded for this brand.</p>
+      <p class="cap">No render recorded for this brand. A video added with <span class="mono">--adopt</span> records none, so an adopted format stays empty here.</p>
     {% endif %}
   </section>
 </div>
@@ -66,7 +67,7 @@
 {% if state.issues %}
   <section class="box">
     <header><h2>Needs a decision</h2><span class="hint">{{ state.issues | length }}</span></header>
-    <table class="t">
+    <table class="t inbox">
       <tbody>
         {% for issue in state.issues %}
           <tr>

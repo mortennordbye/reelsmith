@@ -12,6 +12,7 @@
 {% block style %}
     table.lib tr.video td { border-bottom: 0; padding-bottom: 4px; }
     table.lib tr.detail td { padding-top: 0; }
+    table.lib td.r { white-space: nowrap; }
     .posts { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin: 10px 0; }
     .posts .box { margin: 0; background: var(--bg); }
     .pager { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--line); flex-wrap: wrap; }
@@ -44,7 +45,12 @@
       <div><span class="n">{{ lib.total }}</span><span class="l">videos</span></div>
       {% for p in lib.platforms %}
         {% set s = lib.summary[p] %}
-        <div><span class="n">{{ s.views }}</span><span class="l">{{ platform_name(p) }} views</span></div>
+        {% if s.read %}
+          <div><span class="n">{{ s.views }}</span><span class="l">{{ platform_name(p) }} views</span></div>
+        {% elif s.posted %}
+          {# Never a zero for a platform that has not reported: "0 views" is a claim. #}
+          <div><span class="n faint">none</span><span class="l">{{ platform_name(p) }} readings stored</span></div>
+        {% endif %}
         {% if s.skip is not none %}<div><span class="n">{{ '%.0f' | format(s.skip) }}%</span><span class="l">avg skip</span></div>{% endif %}
         {% if s.viewed is not none %}<div><span class="n">{{ '%.0f' | format(s.viewed) }}%</span><span class="l">avg viewed</span></div>{% endif %}
         {% if s.watch_ms is not none %}<div><span class="n">{{ '%.1f' | format(s.watch_ms / 1000) }}s</span><span class="l">{{ platform_name(p) }} avg watch</span></div>{% endif %}
@@ -96,7 +102,7 @@
                     {%- elif p == 'youtube' and post.reading['avg_view_pct'] %} · {{ '%.1f' | format(post.reading['avg_view_pct']) }}%
                     {%- elif p == 'facebook' %} · {{ post.reading['reach'] }}{% endif %}
                   {% else %}
-                    <span class="faint">{{ absent_word[post.absent] }}</span>
+                    <span class="absent faint" title="{{ {'pending': 'Published recently. The platform has not reported yet.', 'none': 'This destination has never stored a reading.', 'missing': 'No reading was stored for this post.'}[post.absent] }}">{{ absent_word[post.absent] }}</span>
                   {% endif %}
                 </td>
               {% endfor %}

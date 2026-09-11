@@ -64,18 +64,18 @@ REDIRECT_URI = os.environ.get("FACEBOOK_REDIRECT_URI", "https://gate.nordbye.it/
 # going back through the browser and re-consenting.
 #
 # `pages_show_list` is what makes /me/accounts return anything at all.
-# `pages_manage_posts` is the publish. `pages_read_engagement` is the insights
-# sweep, including the comment count on a video node.
+# `pages_manage_posts` is the publish. `pages_read_engagement` is the comment
+# count on a video node, and `read_insights` is the Reel's own numbers.
 #
-# **`read_insights` is deliberately absent.** It covers Page level insights,
-# which nothing here reads: the sweep asks a video node for its own numbers,
-# and that is post level. A scope the app does not use is a named rejection
-# reason at review time, so this list should not grow speculatively.
+# **`read_insights` was left out until 2026-09-11 on a wrong belief**, that it
+# covers Page level insights only. Production refused every Reel's
+# `video_insights` with `(#200) read_insights permission missing`, so a Page
+# authorised before then has to walk this trip again to store any reading.
 #
 # An admin of both the app and the Page is granted all three without App
 # Review. Review is what publishing to somebody else's Page would need, which
 # this account will never do.
-SCOPES = "pages_show_list,pages_manage_posts,pages_read_engagement"
+SCOPES = "pages_show_list,pages_manage_posts,pages_read_engagement,read_insights"
 
 APPS_URL = "https://developers.facebook.com/apps/"
 # A Page is created on Facebook itself rather than in the app dashboard, and it

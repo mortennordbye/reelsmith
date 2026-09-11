@@ -97,6 +97,10 @@ NO_READINGS_AFTER = 3
 # How long a post may go without a reading before its absence is a gap rather
 # than something still arriving.
 PENDING_FOR = timedelta(hours=48)
+# YouTube Analytics reports a day or two behind, so a Short can be three days
+# old and still have nothing to report. Calling that a gap sends someone to
+# debug a sweep that is fine.
+PENDING_BY_PLATFORM = {db.PLATFORM_YOUTUBE: timedelta(hours=96)}
 # A render host that has not rendered for this long, on a brand whose queue is
 # not stocked, has probably stopped. Only with a thin queue, because the
 # `--max-queue` ceiling stopping a batch is the normal outcome and a full queue
@@ -325,8 +329,8 @@ def no_readings_reason(platform: str, cfg: Any) -> str:
         return "Check that GATEWAY_TIKTOK_ENABLED is on and read the gateway log."
     if platform == db.PLATFORM_FACEBOOK:
         return (
-            "Check that GATEWAY_FACEBOOK_INSIGHTS_ENABLED is on and read the gateway log "
-            "for refused requests."
+            "The Page token needs the read_insights permission, which the consent trip did "
+            "not ask for before 2026-09-11. Authorise the Page again with scripts/authorise.py."
         )
     if platform == db.PLATFORM_YOUTUBE:
         return (
@@ -348,7 +352,9 @@ def _issues(dest: Destination, cfg: Any) -> list[Issue]:
     if dest.failed:
         plural = "es" if dest.failed != 1 else ""
         found.append(Issue("bad", "Failed", f"{dest.failed} failed publish{plural} on {{where}}",
-                           "Each needs a retry or a give up.", brand, "schedule", where))
+                           "It needs a retry or a give up." if dest.failed == 1
+                           else "Each needs a retry or a give up.",
+                           brand, "schedule", where))
     if dest.stale:
         plural = "s" if dest.stale != 1 else ""
         found.append(Issue("bad", "Stuck",
@@ -768,10 +774,14 @@ async def library(
             reading = readings.get(row["media_id"])
             absent = ""
             if reading is None:
-                if dest.readings == 0:
-                    absent = "none"
-                elif published and moment - published < PENDING_FOR:
+                # Too new first, whatever the destination has stored. A post
+                # published an hour ago on a brand-new destination is waiting,
+                # not a sweep that has never worked.
+                window = PENDING_BY_PLATFORM.get(dest.platform, PENDING_FOR)
+                if published and moment - published < window:
                     absent = "pending"
+                elif dest.readings == 0:
+                    absent = "none"
                 else:
                     absent = "missing"
             prior = video.posts.get(dest.platform)
@@ -816,6 +826,7 @@ async def library(
         summary[p] = {
             "views": sum(int(r["views"] or 0) for r in read(p)),
             "read": len(read(p)),
+            "posted": sum(1 for v in ordered if p in v.posts),
             "skip": mean(p, "skip_rate") if found.headline == "skip_rate" else None,
             "viewed": mean(p, "avg_view_pct") if found.headline == "avg_view_pct" else None,
             "watch_ms": mean(p, "avg_watch_ms") if found.watch else None,
@@ -928,7 +939,9 @@ async def performance(
                 "median_watch_ms": _median_of(posts, "avg_watch_ms"),
                 "median_reach": _median_of(posts, "reach"),
                 "reason": (
-                    no_readings_reason(dest.platform, cfg) if not posts and dest.published else ""
+                    no_readings_reason(dest.platform, cfg)
+                    if not posts and dest.published >= NO_READINGS_AFTER
+                    else ""
                 ),
             })
         sections.append(section)

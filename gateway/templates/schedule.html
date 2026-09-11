@@ -38,7 +38,7 @@
   </header>
   {% if rules %}
     <div class="scroll-x">
-      <table class="t">
+      <table class="t rules">
         <tbody>
           {% for rule in rules %}
             <tr>
@@ -94,6 +94,11 @@
           <span class="meta mono muted">
             {% if d.stale %}Claimed {{ (row['claimed_at'] or row['created_at'] or '')[:16] | replace('T', ' ') }} and never finished. Check the account before retrying, the post may be live.{% else %}{{ row['failure'] }}{% endif %}
           </span>
+          {% if not d.stale and row['container_id'] %}
+            <span class="meta small warn">
+              {% if d.platform == 'tiktok' %}The upload may already be waiting in the TikTok inbox. Look there before retrying, or the retry makes a second copy.{% else %}{{ platform_name(d.platform) }} accepted an upload for this one. Check the account before retrying.{% endif %}
+            </span>
+          {% endif %}
         </div>
         <div class="acts">
           {% if not d.stale %}

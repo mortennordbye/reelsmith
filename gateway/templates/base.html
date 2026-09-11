@@ -73,6 +73,11 @@
       border-right: 1px solid var(--line); background: color-mix(in srgb, var(--panel) 94%, transparent);
     }
     main { padding: 22px 28px 64px; min-width: 0; max-width: 1320px; width: 100%; }
+    /* The sidebar's ground runs the full height of the page, not the first screen. */
+    .app:not(.solo)::before {
+      content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 236px; z-index: -1;
+      background: color-mix(in srgb, var(--panel) 94%, transparent); border-right: 1px solid var(--line);
+    }
     .app.solo main { max-width: 420px; margin: 12vh auto 0; }
 
     .wm { display: flex; flex-direction: column; align-self: flex-start; color: var(--ink); padding: 2px 6px; }
@@ -306,6 +311,13 @@
       .vrow, .vrow.with-brand { grid-template-columns: 1fr; }
       .acts { justify-content: flex-start; }
       details.chipmenu .menu { max-width: calc(100vw - 32px); }
+      .app:not(.solo)::before { display: none; }
+      .snav { scrollbar-width: none; }
+      .snav::-webkit-scrollbar { display: none; }
+      table.inbox, table.inbox tbody, table.inbox tr, table.inbox td,
+      table.rules, table.rules tbody, table.rules tr, table.rules td { display: block; width: auto !important; }
+      table.inbox tr, table.rules tr { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+      table.inbox td, table.rules td { border: 0; padding: 3px 0; text-align: left; }
       .brow { grid-template-columns: 1fr; }
       .brow .bl { text-align: left; }
       .boss { display: none; }
