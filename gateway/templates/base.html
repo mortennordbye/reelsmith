@@ -17,7 +17,7 @@
    `CLAUDE.md` keeps the Reels GitHub-dark-adjacent because the audience there
    stares at that scheme all day. `public_base.html` stays sober because four
    platforms have those URLs on file. This page has an audience of one. #}
-{% from "_icons.html" import platform_icon, platform_name %}
+{% from "_icons.html" import platform_icon, platform_name, nav_icon %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -116,7 +116,12 @@
     .tile.all { color: var(--accent-soft); font-size: 13px; }
     .tile.lg { width: 44px; height: 44px; font-size: 14px; border-radius: 10px; }
 
-    form.find input { width: 100%; }
+    form.find { position: relative; }
+    form.find input { width: 100%; padding-left: 32px; }
+    form.find .nicon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; }
+    .snav .lbl, .sidefoot .lbl { display: inline-flex; align-items: center; gap: 10px; }
+    .nicon { width: 16px; height: 16px; flex: none; color: var(--faint); }
+    .snav a:hover .nicon, .snav a.on .nicon, .sidefoot a:hover .nicon { color: var(--accent-soft); }
     .snav { display: flex; flex-direction: column; gap: 1px; }
     .snav .grp { font: 600 9.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--faint); margin: 12px 8px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .snav a { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 9px; border-radius: 7px; color: var(--dim); }
@@ -375,6 +380,7 @@
         </details>
 
         <form class="find" method="get" action="{{ url_for('search_page') }}" role="search">
+          {{ nav_icon('search') }}
           <input id="find" name="q" placeholder="Search hooks and subjects" aria-label="Search hooks and subjects" value="{{ query if query is defined else '' }}">
         </form>
 
@@ -382,22 +388,22 @@
           {% if brand %}
             {% set st = shell.states[brand.name] %}
             <p class="grp">{{ brand.name }}</p>
-            <a href="{{ url_for('brand_page', brand=brand.path) }}" class="{{ 'on' if page == 'overview' }}">Overview {% if st.open %}<b class="ct {{ st.level }}">{{ st.open }}</b>{% endif %}</a>
-            <a href="{{ url_for('schedule_page', brand=brand.path) }}" class="{{ 'on' if page == 'schedule' }}">Schedule {% if st.schedule_badge %}<b class="ct bad">{{ st.schedule_badge }}</b>{% endif %}</a>
-            <a href="{{ url_for('library_page', brand=brand.path) }}" class="{{ 'on' if page == 'library' }}">Library <b class="ct">{{ st.published }}</b></a>
-            <a href="{{ url_for('performance_page', brand=brand.path) }}" class="{{ 'on' if page == 'performance' }}">Performance</a>
-            <a href="{{ url_for('subjects_page', brand=brand.path) }}" class="{{ 'on' if page == 'subjects' }}">Subjects</a>
-            <a href="{{ url_for('setup_page', brand=brand.path) }}" class="{{ 'on' if page == 'setup' }}">Setup</a>
+            <a href="{{ url_for('brand_page', brand=brand.path) }}" class="{{ 'on' if page == 'overview' }}"><span class="lbl">{{ nav_icon('overview') }}Overview</span> {% if st.open %}<b class="ct {{ st.level }}">{{ st.open }}</b>{% endif %}</a>
+            <a href="{{ url_for('schedule_page', brand=brand.path) }}" class="{{ 'on' if page == 'schedule' }}"><span class="lbl">{{ nav_icon('schedule') }}Schedule</span> {% if st.schedule_badge %}<b class="ct bad">{{ st.schedule_badge }}</b>{% endif %}</a>
+            <a href="{{ url_for('library_page', brand=brand.path) }}" class="{{ 'on' if page == 'library' }}"><span class="lbl">{{ nav_icon('library') }}Library</span> <b class="ct">{{ st.published }}</b></a>
+            <a href="{{ url_for('performance_page', brand=brand.path) }}" class="{{ 'on' if page == 'performance' }}"><span class="lbl">{{ nav_icon('performance') }}Performance</span></a>
+            <a href="{{ url_for('subjects_page', brand=brand.path) }}" class="{{ 'on' if page == 'subjects' }}"><span class="lbl">{{ nav_icon('subjects') }}Subjects</span></a>
+            <a href="{{ url_for('setup_page', brand=brand.path) }}" class="{{ 'on' if page == 'setup' }}"><span class="lbl">{{ nav_icon('setup') }}Setup</span></a>
           {% endif %}
           <p class="grp">Portfolio</p>
-          <a href="{{ url_for('dashboard_page') }}" class="{{ 'on' if page == 'today' }}">Today {% if shell.open %}<b class="ct bad">{{ shell.open }}</b>{% endif %}</a>
-          <a href="{{ url_for('calendar_page') }}" class="{{ 'on' if page == 'calendar' }}">Calendar</a>
-          <a href="{{ url_for('destinations_page') }}" class="{{ 'on' if page == 'destinations' }}">Destinations {% if shell.destinations_open %}<b class="ct warn">{{ shell.destinations_open }}</b>{% endif %}</a>
-          <a href="{{ url_for('system_page') }}" class="{{ 'on' if page == 'system' }}">System</a>
+          <a href="{{ url_for('dashboard_page') }}" class="{{ 'on' if page == 'today' }}"><span class="lbl">{{ nav_icon('today') }}Today</span> {% if shell.open %}<b class="ct bad">{{ shell.open }}</b>{% endif %}</a>
+          <a href="{{ url_for('calendar_page') }}" class="{{ 'on' if page == 'calendar' }}"><span class="lbl">{{ nav_icon('calendar') }}Calendar</span></a>
+          <a href="{{ url_for('destinations_page') }}" class="{{ 'on' if page == 'destinations' }}"><span class="lbl">{{ nav_icon('destinations') }}Destinations</span> {% if shell.destinations_open %}<b class="ct warn">{{ shell.destinations_open }}</b>{% endif %}</a>
+          <a href="{{ url_for('system_page') }}" class="{{ 'on' if page == 'system' }}"><span class="lbl">{{ nav_icon('system') }}System</span></a>
         </nav>
 
         <div class="sidefoot">
-          <a href="{{ url_for('settings_page') }}">Settings</a>
+          <a href="{{ url_for('settings_page') }}" class="{{ 'on' if page == 'settings' }}"><span class="lbl">{{ nav_icon('settings') }}Settings</span></a>
           {% if not cfg.admin_trust_proxy_auth %}
             <form method="post" action="{{ url_for('logout') }}"><button class="link">Sign out</button></form>
           {% endif %}
