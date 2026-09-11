@@ -174,6 +174,13 @@ class Settings(BaseSettings):
     # Without it the fan-out skips TikTok silently and only the Reel and the
     # Short are queued, which is the behaviour every render had before this.
     tiktok_open_id: str = ""
+    # The app credentials behind the trip that produces that open id, here for
+    # the reason the Facebook pair above is. **These are the sandbox's**, whose
+    # client key starts `sb`, and that is permanent rather than a stage: see
+    # CLAUDE.md. Read by `scripts/authorise.py tiktok` and by nothing else;
+    # the gateway holds its own copy and does the refreshing.
+    tiktok_client_key: str = ""
+    tiktok_client_secret: str = ""
 
     # --- Facebook (optional) ------------------------------------------------
     # The numeric Page id only, and nothing else. The Page access token lives
@@ -190,6 +197,18 @@ class Settings(BaseSettings):
     # Without it the fan-out skips Facebook silently and queues the rest, which
     # is the behaviour every render had before this.
     facebook_page_id: str = ""
+    # The Meta app that the Page consent trip authorises through. An app
+    # credential rather than an account one, the same as the Google client
+    # pair, so the root `.env` is where it belongs and one app serves every
+    # Page. Read by `scripts/authorise.py facebook` and by nothing on the
+    # render path, which never publishes to Meta itself.
+    #
+    # They were read from `os.environ` alone until 2026-09-11, which meant
+    # typing both on the command line that invoked the trip. A secret typed
+    # there is one prefixed assignment away from shell history, and the whole
+    # reason neither is an argparse argument is that argv is visible in `ps`.
+    facebook_app_id: str = ""
+    facebook_app_secret: str = ""
 
     # --- DM gateway (optional) ---------------------------------------------
     # The self-hosted service that answers comments and DMs, and hosts the

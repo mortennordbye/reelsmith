@@ -317,7 +317,39 @@ def test_no_app_id_falls_back_to_the_apps_list(monkeypatch):
     assert opened == [ig.APPS_URL]
 
 
-def test_a_hidden_prompt_without_a_terminal_refuses_before_opening_anything(monkeypatch):
+def test_every_flow_refuses_before_opening_anything_without_a_terminal(monkeypatch):
+    """All four, because the check only helps where it is actually called.
+
+    Every trip prompts: three for a paste and all four for a yes or no at the
+    end. The worst case is the YouTube one, which prompts only to confirm and
+    so would discover the missing terminal after the consent had been granted,
+    and Google hands out a refresh token once per authorisation.
+    """
+    import argparse
+
+    from scripts import authorise
+
+    monkeypatch.setattr(consent.sys.stdin, "isatty", lambda: False)
+    opened = []
+    monkeypatch.setattr(consent.webbrowser, "open", opened.append)
+
+    for name, module in authorise.FLOWS.items():
+        # Only the flows that open tabs import webbrowser; YouTube's browser is
+        # opened by google-auth-oauthlib inside the flow library.
+        if hasattr(module, "webbrowser"):
+            monkeypatch.setattr(module.webbrowser, "open", opened.append)
+        args = argparse.Namespace(
+            account="x", brand="", no_browser=False, no_subscribe=False,
+            username="", secrets_file=None,
+        )
+        with pytest.raises(SystemExit) as raised:
+            module.trip(args)
+        assert "real terminal" in str(raised.value), f"{name} refused for another reason"
+
+    assert opened == [], "a browser was opened before the refusal"
+
+
+def test_the_terminal_refusal_says_nothing_was_done(monkeypatch):
     """Three tabs opening and then the prompt dying on EOF is worse than not
     starting.
 
@@ -326,20 +358,7 @@ def test_a_hidden_prompt_without_a_terminal_refuses_before_opening_anything(monk
     controlled, falls back to a plain read, and raises EOFError on the empty
     stdin behind it, after the browser has already been opened.
     """
-    import argparse
-
-    from scripts import instagram_authorise as ig
-
-    opened = []
-    monkeypatch.setattr(ig.webbrowser, "open", opened.append)
-    monkeypatch.setattr(ig.sys.stdin, "isatty", lambda: False)
-    monkeypatch.setattr(ig.consent, "brand_for", lambda *_a: "")
-    bare = ig.consent.Settings(_env_file=None)
-    monkeypatch.setattr(ig.consent, "account_settings", lambda _n: bare)
-
-    args = argparse.Namespace(account="x", brand="", no_browser=False, no_subscribe=False)
+    monkeypatch.setattr(consent.sys.stdin, "isatty", lambda: False)
     with pytest.raises(SystemExit) as raised:
-        ig.trip(args)
-
-    assert "real\nterminal" in str(raised.value)
-    assert opened == [], "the browser was opened before the refusal"
+        consent.require_terminal()
+    assert "Nothing was opened and nothing was registered" in str(raised.value)

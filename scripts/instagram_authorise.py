@@ -170,12 +170,10 @@ def open_dashboard(app_id: str) -> None:
         webbrowser.open(APPS_URL)
         return
 
-    print("\nOpening three tabs, which are the three steps in order:\n")
-    for index, (where, confirmed, what) in enumerate(STEPS, start=1):
-        url = where if where.startswith("http") else f"{APPS_URL}{app_id}/{where}"
-        note = "" if confirmed else "   [path not yet verified; say so if it 404s]"
-        print(f"  {index}. {what}\n     {url}{note}\n")
-        webbrowser.open(url)
+    consent.open_pages([
+        (where if where.startswith("http") else f"{APPS_URL}{app_id}/{where}", ok, what)
+        for where, ok, what in STEPS
+    ])
 
 
 def account_of(host: str, token: str, api_version: str) -> dict:
@@ -229,25 +227,11 @@ def account_of(host: str, token: str, api_version: str) -> dict:
 
 def trip(args: argparse.Namespace) -> consent.Trip:
     """The paste, and what it produced. Called by `authorise.py`."""
-    # Before the prompt, so a misspelt account name is caught before a
-    # credential has been typed into a terminal.
+    # Both first, so neither a shell that cannot prompt nor a misspelt account
+    # name is discovered after a credential has been typed into a terminal.
+    consent.require_terminal()
     brand = consent.brand_for(args.account, args.brand)
     cfg = consent.account_settings(args.account)
-
-    # Before the tabs, because three of them opening and then the prompt dying
-    # on EOF is worse than not starting. `getpass` needs a terminal it can turn
-    # echo off on, and neither a pipe nor Claude Code's `!` prefix is one: it
-    # warns that echo cannot be controlled, falls back to a plain read, and
-    # raises EOFError on the empty stdin behind it.
-    if not sys.stdin.isatty():
-        raise consent.ConsentError(
-            "This asks for a token on a hidden prompt, which needs a real\n"
-            "terminal. Run it in a terminal window rather than through a pipe\n"
-            "or an editor's shell, and rather than through Claude Code's `!`\n"
-            "prefix, which is not a tty.\n"
-            "\n"
-            "Nothing was opened and nothing was registered."
-        )
 
     if not args.no_browser:
         open_dashboard(cfg.ig_app_id)

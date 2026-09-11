@@ -141,17 +141,23 @@ def exchange(code: str, client_key: str, client_secret: str) -> dict:
 
 def trip(args: argparse.Namespace) -> consent.Trip:
     """The browser half, and what it produced. Called by `authorise.py`."""
-    # Before the browser, so a misspelt account name costs nothing rather than
-    # a spent consent screen.
+    # Both before the browser, so neither a misspelt account name nor a shell
+    # that cannot prompt costs a spent consent screen.
+    consent.require_terminal()
     brand = consent.brand_for(args.account, args.brand)
 
-    client_key = os.environ.get("TIKTOK_CLIENT_KEY", "")
-    client_secret = os.environ.get("TIKTOK_CLIENT_SECRET", "")
+    # The environment first for a one-off, then `.env` layered by account, the
+    # same as the other two trips. These are the sandbox's credentials and that
+    # is permanent rather than a stage; the client key starts `sb`.
+    cfg = consent.account_settings(args.account)
+    client_key = os.environ.get("TIKTOK_CLIENT_KEY", "") or cfg.tiktok_client_key
+    client_secret = os.environ.get("TIKTOK_CLIENT_SECRET", "") or cfg.tiktok_client_secret
     if not client_key or not client_secret:
         raise consent.ConsentError(
-            "Set TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET in the environment.\n"
-            "Neither is taken on the command line: argv is visible in `ps` and\n"
-            "lands in shell history."
+            f"No TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET, in the environment\n"
+            f"or in .env or accounts/{args.account}/.env. They identify the app\n"
+            f"rather than the account, so one pair serves every account and the\n"
+            f"root .env is where the pair belongs."
         )
 
     tokens = exchange(authorise(client_key), client_key, client_secret)
