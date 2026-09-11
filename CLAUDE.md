@@ -1246,6 +1246,19 @@ off the eighth brand. The shape now:
 - **System labels its counters as the process's.** They reset at a restart,
   and Health led with "4 published" on a service holding 150 posts.
   `app.state.started_at` is what the page says they count from.
+- **Every problem says what it means and how to fix it.** An issue's `rest` is
+  the fix, and a destination's own health (`Destination.connection`) is shown
+  apart from its posts' problems, because "Failed" as the state of a whole
+  destination read as a broken account when one post from nine days earlier
+  had failed. The Instagram token warning only fires once the gateway's own
+  refresh at `token_refresh_margin_days` has evidently failed.
+- **An Instagram container Meta reports ERROR or EXPIRED is provably not
+  live.** Meta never publishes one and `media_publish` is only called after
+  FINISHED. The scheduler still stops on it rather than re-arming, because a
+  file Meta could not process usually fails again, but the panel reads
+  `panel.upload_is_dead` from the failure text, clears the dead id and offers
+  Retry now without the duplicate warning. Every other failure with a
+  container keeps that warning.
 
 The loud look is SLOPENGINE in a gold frame, the room photograph behind it, the
 manager on Today and one quip per page. **The plain look is what the panel is

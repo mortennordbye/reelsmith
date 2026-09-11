@@ -1600,6 +1600,41 @@ async def set_container(conn: aiosqlite.Connection, queued_id: int, container_id
     await conn.commit()
 
 
+async def clear_container(conn: aiosqlite.Connection, queued_id: int) -> None:
+    """Forget a container the platform itself reported as dead.
+
+    Only for one Meta reported ERROR or EXPIRED, which it never publishes. Kept
+    as its own call rather than a `None` through `set_container`, so clearing
+    the one field that guards against duplicates is never an accident.
+    """
+    await conn.execute("UPDATE queued_posts SET container_id = NULL WHERE id = ?", (queued_id,))
+    await conn.commit()
+
+
+async def rows_for_video(conn: aiosqlite.Connection, video_name: str) -> list[Any]:
+    """Every queue row one render became, on every destination."""
+    return await _all(
+        conn,
+        "SELECT id, account_id, state, published_at FROM queued_posts WHERE video_name = ?",
+        (video_name,),
+    )
+
+
+async def failed_since_by_account(conn: aiosqlite.Connection) -> dict[str, str]:
+    """When each destination's oldest failed post failed, as far as is recorded.
+
+    `claimed_at` is the last attempt, which is when the failure happened;
+    `created_at` stands in before schema 18, the same fallback as stale claims.
+    """
+    rows = await _all(
+        conn,
+        "SELECT account_id, MIN(COALESCE(claimed_at, created_at)) FROM queued_posts "
+        "WHERE state = ? GROUP BY account_id",
+        (QUEUE_FAILED,),
+    )
+    return {str(row[0]): str(row[1]) for row in rows if row[1]}
+
+
 async def update_queued(
     conn: aiosqlite.Connection,
     queued_id: int,

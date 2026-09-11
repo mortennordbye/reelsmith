@@ -123,10 +123,15 @@ async def await_container(
         if status and status != _STATUS_WAIT:
             # ERROR and EXPIRED both land here; `status` carries the prose
             # reason, which is the only thing that says which one it was.
-            raise PublishError(
-                f"Container {container_id} is {status}: {data.get('status', '')}",
-                container_created=True,
-            )
+            detail = f"Container {container_id} is {status}: {data.get('status', '')}"
+            if status in ("ERROR", "EXPIRED"):
+                # Terminal at Meta: a container in either state is never
+                # published, and `media_publish` was never called for it. The
+                # sentence is what the panel reads to offer a clean retry.
+                detail += (
+                    ". Meta rejected the upload while processing it, so nothing was published."
+                )
+            raise PublishError(detail, container_created=True)
         await asyncio.sleep(cfg.publish_poll_interval_s)
 
     raise PublishError(

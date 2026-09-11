@@ -779,7 +779,15 @@ async def _approve_row(conn: Any, row: Any, *, bulk: bool = False) -> None:
         return
     queued_id = int(row["id"])
     retrying = row["state"] == db.QUEUE_FAILED
-    if retrying and row["container_id"]:
+    if retrying and row["container_id"] and panel.upload_is_dead(row):
+        # Meta reported this upload ERROR or EXPIRED, states it never publishes,
+        # so nothing is live and the dead id only stands in the way of a clean
+        # retry. Allowed in bulk too, since there is no duplicate to fear.
+        await db.clear_container(conn, queued_id)
+        log.info(
+            "Queue %d: cleared rejected upload %s before retrying", queued_id, row["container_id"]
+        )
+    elif retrying and row["container_id"]:
         if bulk:
             # One click arming a whole video must not also make the decision a
             # person makes only after reading a failure with a container behind
@@ -859,7 +867,15 @@ async def publish_now(request: Request, queued_id: int) -> Any:
         # decisions this button must not make. `cancel` is where a stale claim
         # is resolved, by a person who has read it.
         return _back(request)
-    if row["container_id"]:
+    if row["container_id"] and panel.upload_is_dead(row):
+        # The one container that is provably not live: Meta reported it ERROR
+        # or EXPIRED. Cleared so the publish below makes a fresh one.
+        await db.clear_container(request.app.state.db, queued_id)
+        log.info(
+            "Queue %d: cleared rejected upload %s to send it now", queued_id, row["container_id"]
+        )
+        row = await _require_row(request, queued_id)
+    elif row["container_id"]:
         # The same line the scheduler draws. Something exists at the platform
         # and may already be live, so re-sending risks a duplicate that nothing
         # here could detect afterwards.

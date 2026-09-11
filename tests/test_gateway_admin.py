@@ -1950,8 +1950,8 @@ async def test_one_failed_publish_reads_in_the_singular(client):
 
     body = (await http.get("/admin/")).text
 
-    assert "1 failed publish on Instagram" in body
-    assert "It needs a retry or a give up." in body
+    assert "1 post failed to publish on Instagram" in body
+    assert "retry it or give up on it" in body
 
 
 async def test_search_finds_a_video_by_its_hook(client):
@@ -1962,3 +1962,97 @@ async def test_search_finds_a_video_by_its_hook(client):
 
     assert "It reads 40 pages of a PDF in a single pass" in body
     assert "/admin/b/nightly/library" in body
+
+# --- A failure says what it means and how to fix it ------------------------
+
+
+REJECTED = "Container 18085605605389891 is ERROR: ERROR"
+
+
+async def _failed_with(app, http, *, failure: str, container: str | None) -> int:
+    queued_id = (await queue(http))["id"]
+    if container:
+        await db.set_container(app.state.db, queued_id, container)
+    await db.set_queue_state(app.state.db, queued_id, db.QUEUE_FAILED, failure=failure)
+    return queued_id
+
+
+async def test_a_rejected_upload_is_retried_without_the_duplicate_warning(client):
+    """Meta never publishes a container it reported ERROR, so the dead id is
+    cleared and the retry is an ordinary one rather than a leap of faith."""
+    http, app = client
+    queued_id = await _failed_with(app, http, failure=REJECTED, container="18085605605389891")
+
+    await http.post(f"/admin/queue/{queued_id}/approve")
+
+    row = await db.get_queued(app.state.db, queued_id)
+    assert row["state"] == db.QUEUE_APPROVED
+    assert row["container_id"] is None
+
+
+async def test_a_rejected_upload_can_be_sent_now(client):
+    http, app = client
+    queued_id = await _failed_with(app, http, failure=REJECTED, container="18085605605389891")
+
+    await http.post(f"/admin/queue/{queued_id}/publish")
+
+    row = await db.get_queued(app.state.db, queued_id)
+    assert row["attempts"] >= 1, "claimed for a publish rather than refused"
+    assert row["container_id"] != "18085605605389891"
+
+
+async def test_a_failure_that_may_be_live_keeps_its_container(client):
+    """The line the scheduler draws is unchanged for everything else."""
+    http, app = client
+    queued_id = await _failed_with(
+        app, http, failure="media_publish failed: HTTP 500", container="c-1"
+    )
+
+    await http.post(f"/admin/queue/{queued_id}/publish")
+
+    row = await db.get_queued(app.state.db, queued_id)
+    assert (row["state"], row["container_id"]) == (db.QUEUE_FAILED, "c-1")
+
+
+async def test_the_schedule_says_what_a_rejected_upload_means(client):
+    http, app = client
+    await _failed_with(app, http, failure=REJECTED, container="18085605605389891")
+
+    body = " ".join((await http.get(SCHEDULE)).text.split())
+
+    assert "rejected the upload while processing it" in body
+    assert "Retry now" in body
+    assert "Retry ⚠" not in body
+
+
+async def test_destinations_says_a_post_failed_rather_than_the_account(client):
+    """"Failed" as a destination's state read as a broken connection when one
+    post from nine days earlier had failed."""
+    http, app = client
+    await db.upsert_account(
+        app.state.db, account_id=ACCOUNT, access_token="tok", username="nightly",
+        expires_at=db.now() + timedelta(days=40),
+    )
+    await _failed_with(app, http, failure=REJECTED, container="1")
+
+    body = " ".join((await http.get("/admin/destinations")).text.split())
+
+    assert "Connected" in body
+    assert "1 post failed to publish" in body
+
+
+async def test_a_token_the_gateway_will_refresh_is_not_a_problem(client):
+    """The gateway refreshes an Instagram token inside its margin, so 18 days
+    left is ordinary and warning about it sent people to fix nothing."""
+    http, app = client
+    await db.upsert_account(
+        app.state.db, account_id=ACCOUNT, access_token="tok", username="nightly",
+        expires_at=db.now() + timedelta(days=18),
+    )
+    assert "token was not refreshed" not in (await http.get("/admin/")).text
+
+    await db.upsert_account(
+        app.state.db, account_id=ACCOUNT, access_token="tok", username="nightly",
+        expires_at=db.now() + timedelta(days=9),
+    )
+    assert "Instagram token was not refreshed, 8 days left" in (await http.get("/admin/")).text
