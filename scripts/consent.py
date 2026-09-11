@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import os
+import re
 import secrets
 import sys
 import urllib.parse
@@ -280,7 +281,7 @@ def paste_code(url: str, state: str, *, platform: str, watch_for: list[str]) -> 
     if not pasted:
         raise ConsentError("Nothing pasted. Nothing was exchanged.")
 
-    returned = urllib.parse.parse_qs(urllib.parse.urlparse(pasted).query)
+    returned = _query_carrying_the_code(pasted)
     if not returned:
         raise ConsentError(
             "No query string in that. Paste the whole address, including "
@@ -296,6 +297,33 @@ def paste_code(url: str, state: str, *, platform: str, watch_for: list[str]) -> 
     if not returned.get("code"):
         raise ConsentError("That address carries no code. Nothing was exchanged.")
     return returned["code"][0]
+
+
+def _query_carrying_the_code(pasted: str) -> dict[str, list[str]]:
+    """The query of the address that actually came back, out of whatever was pasted.
+
+    It used to parse the whole paste as one URL, which broke on the obvious
+    thing: this prompt is printed directly under a fallback URL the trip prints
+    in case the browser does not open, so a paste that picks up both is a
+    normal accident rather than a careless one. The first of the two is the
+    authorisation dialog, whose query contains `response_type=code` and no
+    `code`, so the refusal read "that address carries no code" while the code
+    was sitting in the same paste.
+
+    Every URL in the text is considered and the last one carrying a `code` wins.
+    The last, because the address bar is what a person copies second, and the
+    dialog URL cannot carry one. Falling back to the first URL when none has a
+    code keeps the old error messages meaningful for a genuinely wrong paste.
+    """
+    candidates = re.findall(r"https?://\S+", pasted) or [pasted]
+    queries = [urllib.parse.parse_qs(urllib.parse.urlparse(c).query) for c in candidates]
+    for key in ("code", "error"):
+        for query in reversed(queries):
+            if query.get(key):
+                return query
+    # Neither, so hand back the first for the errors below to describe: a
+    # mismatched state, or no query at all.
+    return queries[0]
 
 
 def new_state() -> str:

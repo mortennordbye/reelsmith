@@ -407,3 +407,52 @@ def test_pasting_nothing_stops_rather_than_going_on_with_an_empty_secret(tmp_pat
     with pytest.raises(SystemExit) as raised:
         consent.ask_secret("X", what="w", where="https://x")
     assert "Nothing pasted" in str(raised.value)
+
+
+# --- Reading the code out of whatever was pasted -----------------------------
+
+
+DIALOG = (
+    "https://www.facebook.com/v23.0/dialog/oauth?client_id=325&"
+    "redirect_uri=https%3A%2F%2Fgate.example.test%2Ffacebook%2Fcallback&"
+    "state=STATE&scope=pages_show_list&response_type=code"
+)
+LANDED = "https://gate.example.test/facebook/callback?code=AQJcX2iw&state=STATE#_=_"
+
+
+def test_both_urls_pasted_together_still_finds_the_code():
+    """The paste that failed on a live trip, and it was not carelessness.
+
+    This prompt is printed directly under a fallback URL the trip prints in
+    case the browser does not open, so picking up both is the normal accident.
+    The first is the authorisation dialog, whose query carries
+    `response_type=code` and no `code`, so the refusal read "that address
+    carries no code" while the code sat in the same paste.
+    """
+    query = consent._query_carrying_the_code(f"{DIALOG} {LANDED}")
+
+    assert query["code"] == ["AQJcX2iw"]
+    assert query["state"] == ["STATE"]
+
+
+def test_the_landed_address_alone_still_works():
+    assert consent._query_carrying_the_code(LANDED)["code"] == ["AQJcX2iw"]
+
+
+def test_the_dialog_alone_carries_no_code_and_says_so():
+    """`response_type=code` is not a code. Falling back to the first URL is
+    what keeps that error describing the real problem."""
+    assert not consent._query_carrying_the_code(DIALOG).get("code")
+
+
+def test_an_error_redirect_is_found_rather_than_buried_by_the_dialog():
+    """A refusal comes back on the callback with no code at all, and its
+    message is the only useful thing in the paste.
+
+    Looking for a code and then falling back to the first URL would hand back
+    the dialog's query here and report a mismatched state, which describes
+    nothing. So `error` is looked for too, before that fallback.
+    """
+    denied = "https://gate.example.test/facebook/callback?error=access_denied&state=STATE"
+
+    assert consent._query_carrying_the_code(f"{DIALOG} {denied}")["error"] == ["access_denied"]
