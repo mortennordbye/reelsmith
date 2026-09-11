@@ -225,6 +225,17 @@ class SlotSpec:
     # it per line is what lets one config hold several channels, which the UI
     # cannot do because slots clicked there do not survive a redeploy.
     account: str = ""
+    # Or which identity, which is every destination sharing an `accounts.brand`.
+    # One line instead of one per platform, and written in a name somebody
+    # chose rather than in four opaque ids from four consent screens. The point
+    # is what happens afterwards: registering a fifth destination for an
+    # identity that already has a line gives it that identity's schedule at the
+    # next boot, with no edit in this repo or in the one holding the config.
+    #
+    # Mutually exclusive with `account`, checked at parse time. A line naming
+    # both is a contradiction rather than a narrowing, and guessing which half
+    # was meant is how a post lands somewhere nobody asked for.
+    brand: str = ""
 
 
 class SlotSpecError(ValueError):
@@ -241,16 +252,25 @@ def parse_slots(raw: str, *, default_tz: str = "UTC", default_jitter: int = 15) 
         08:30 Europe/Oslo jitter=20 days=6,7
         12:00
         19:30 Europe/Oslo account=UCq0Ff3lJ7dK2sWnEv8mXtLp
+        08:10 Europe/Oslo brand=thenightlybuild
 
     Only the time is required. `days` is ISO weekdays, 1 for Monday, and
     leaving it out means every day. A `#` starts a comment, because a schedule
     is exactly the kind of config someone wants to leave a note on.
 
-    `account` names the destination and is how one config holds more than one.
+    `account` names one destination and is how one config holds more than one.
     Without it a line belongs to `GATEWAY_SLOTS_ACCOUNT`, or to the single
     registered Instagram account when that is unambiguous. The admin UI is not
     an answer for a second permanent channel, because slots clicked there are a
     separate set that the next rollout does not rewrite.
+
+    **`brand` names an identity, which is every destination it holds.** One
+    line where `account` needs four, and written in a name somebody chose
+    rather than in ids pasted out of four consent screens. What it buys is not
+    brevity: a destination registered later joins that identity's schedule at
+    the next boot, so adding a platform to an existing account stops being an
+    edit in the repo that holds this config. A line naming both is refused;
+    see `SlotSpec.brand`.
 
     Raises rather than skipping a bad line. A schedule that silently drops the
     slot with the typo is a schedule that quietly stops posting.
@@ -273,7 +293,7 @@ def parse_slots(raw: str, *, default_tz: str = "UTC", default_jitter: int = 15) 
         if not (0 <= hour <= 23 and 0 <= minute <= 59):
             raise SlotSpecError(f"{line!r}: {clock!r} is out of range")
 
-        tz, jitter, days, account = default_tz, default_jitter, "", ""
+        tz, jitter, days, account, brand = default_tz, default_jitter, "", "", ""
         for token in parts[1:]:
             key, sep, value = token.partition("=")
             if not sep:
@@ -282,6 +302,10 @@ def parse_slots(raw: str, *, default_tz: str = "UTC", default_jitter: int = 15) 
                 account = value.strip()
                 if not account:
                     raise SlotSpecError(f"{line!r}: account= named nothing")
+            elif key == "brand":
+                brand = value.strip()
+                if not brand:
+                    raise SlotSpecError(f"{line!r}: brand= named nothing")
             elif key == "jitter":
                 try:
                     jitter = max(0, int(value))
@@ -300,6 +324,16 @@ def parse_slots(raw: str, *, default_tz: str = "UTC", default_jitter: int = 15) 
         if str(zone_or_utc(tz)) != tz and tz != "UTC":
             raise SlotSpecError(f"{line!r}: {tz!r} is not a known timezone")
 
+        # Refused rather than resolved in some order. One of these names a
+        # destination and the other names every destination an identity has, so
+        # a line carrying both is not a narrower instruction, it is two
+        # instructions, and the wrong guess publishes somewhere nobody asked
+        # for.
+        if account and brand:
+            raise SlotSpecError(
+                f"{line!r}: names both account= and brand=. One line means one of them."
+            )
+
         specs.append(
             SlotSpec(
                 hour=hour,
@@ -308,6 +342,7 @@ def parse_slots(raw: str, *, default_tz: str = "UTC", default_jitter: int = 15) 
                 jitter_minutes=jitter,
                 days=days,
                 account=account,
+                brand=brand,
             )
         )
     return specs

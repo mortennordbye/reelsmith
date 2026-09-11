@@ -942,3 +942,45 @@ def test_the_queue_ceiling_counts_only_the_feed(cfg):
 
     assert asked["account_id"] == cfg.ig_user_id
     assert count == 2
+
+
+# --- The registered destinations ---------------------------------------------
+
+
+def test_registered_destinations_come_back_as_rows(cfg):
+    def handler(request):
+        assert request.url.path == "/api/accounts"
+        # The one unscoped read in this file. It answers "what is set up",
+        # which has no account to be scoped to.
+        assert not request.url.params
+        row = {"account_id": "UC1", "platform": "youtube"}
+        return httpx.Response(200, json={"accounts": [row]})
+
+    rows = gateway.fetch_accounts(cfg, client=_client(handler))
+    assert rows == [{"account_id": "UC1", "platform": "youtube"}]
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(500),
+        httpx.Response(404),  # a gateway older than this endpoint
+        httpx.Response(200, text="not json"),
+        httpx.Response(200, json={"accounts": "nonsense"}),
+    ],
+)
+def test_a_gateway_that_cannot_answer_is_unknown_rather_than_empty(cfg, response):
+    """The one reader here that returns None rather than an empty list.
+
+    Every other one degrades to empty because the run continues either way. The
+    only caller of this one is `--destinations`, whose entire output is a
+    comparison between what is configured locally and what is registered
+    remotely, and an empty list renders as "none of this is registered". That
+    is the alarming answer rather than the true one, and it would be printed
+    most often on exactly the deployment that has not been updated yet.
+    """
+    assert gateway.fetch_accounts(cfg, client=_client(lambda _r: response)) is None
+
+
+def test_no_gateway_configured_reports_unknown_rather_than_none_registered(off):
+    assert gateway.fetch_accounts(off) is None

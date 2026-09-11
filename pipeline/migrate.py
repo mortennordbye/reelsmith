@@ -159,15 +159,40 @@ _ENV_TEMPLATE = """\
 # Select this account with --account {name}, or REELSMITH_ACCOUNT={name} in the
 # root .env on a host that only ever runs one.
 
-# --- Instagram ---
+# --- Identity ---
+# Which identity this account's destinations are grouped under in the panel.
+# Set it before the first consent trip: every trip reads it, and a destination
+# registered without one is grouped by its handle instead, which splits one
+# identity across two headings the day a handle differs between platforms.
+#
+# It is deliberately not defaulted to {name}. Account 1's directory is
+# `nightlybuild` and all of its gateway rows are grouped under
+# `thenightlybuild`, so a default would have regrouped them on the next
+# re-authorisation. Match what the gateway already holds, which
+# `--destinations` prints.
+# BRAND={name}
+
+# --- Destinations ---
+# Written for you by `scripts/authorise.py <platform> --account {name}`, which
+# is the consent trip. Left here commented out because a run that finds none of
+# them fans out to nothing and says so, where a blank one looks configured.
+#
+# The ids only, apart from Instagram. The gateway holds every credential and
+# does the publishing, so no Google, TikTok or Page secret belongs on the
+# machine that renders. IG_ACCESS_TOKEN is the exception because this machine
+# can publish to Instagram directly.
 # IG_USER_ID=
 # IG_ACCESS_TOKEN=
-
-# --- The other two destinations ---
-# The ids only. The gateway holds the credentials and does the publishing, so
-# no Google or TikTok secret belongs on the machine that renders.
 # YOUTUBE_CHANNEL_ID=
 # TIKTOK_OPEN_ID=
+# FACEBOOK_PAGE_ID=
+
+# --- End card ---
+# What the second niche's episodes sign off with. Public machinery with no
+# identity in it, so these are empty in a fresh checkout.
+# ENDCARD_NAME=
+# ENDCARD_HANDLE=
+# ENDCARD_TAGLINE=
 
 # --- Voice ---
 # Left unset this resolves to accounts/{name}/ref/voice.wav. PROFILE.md is

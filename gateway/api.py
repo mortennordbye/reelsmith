@@ -169,6 +169,24 @@ async def register_post(request: Request, body: PostRegistration) -> Registered:
     return Registered(detail=f"watching {body.media_id}")
 
 
+@router.get("/api/accounts", dependencies=[Depends(require_token)])
+async def list_accounts(request: Request) -> dict:
+    """Every destination registered here, so a consent trip can be checked.
+
+    The read that was missing. Four registration routes write and nothing read
+    back, so "did that consent trip actually happen" could only be answered by
+    opening the panel on a machine holding a session cookie, or by publishing
+    and seeing. With one account and four platforms that was a mild annoyance;
+    it is the question asked most often per account added.
+
+    Deliberately unscoped, unlike every other reader on this router. Those take
+    an account id because they answer for one account's queue or history, and
+    this one answers "what is set up", which has no account to be scoped to.
+    Nothing it returns is a secret: see `db.registered_destinations`.
+    """
+    return {"accounts": await db.registered_destinations(request.app.state.db)}
+
+
 @router.post("/api/accounts", response_model=Registered, dependencies=[Depends(require_token)])
 async def register_account(request: Request, body: AccountRegistration) -> Registered:
     app = request.app

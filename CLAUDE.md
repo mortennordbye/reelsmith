@@ -289,7 +289,10 @@ The order in both runbooks is forced rather than preferred. The consent trip is
 what produces the account key, and that key is what the `GATEWAY_SLOTS` line and
 the render host's `TIKTOK_OPEN_ID` or `FACEBOOK_PAGE_ID` are keyed on, so
 neither can be written ahead of it. Re-authorising an account means walking it
-again.
+again. **Since 2026-09-11 the trip writes those keys itself**, and a
+`GATEWAY_SLOTS` line reading `brand=` covers an identity's destinations rather
+than one each, so the forced order is unchanged and what follows it is one
+command. See *One consent trip, four platforms* below.
 
 **TikTok runs on the app's sandbox credentials, and that is permanent rather
 than a stage.** The production configuration cannot be saved at all: its Save
@@ -701,18 +704,96 @@ TikTok and Facebook runbooks are:
 
 1. `python main.py --new-account <name>`, then fill `accounts/<name>/.env`.
    Every line starts commented out on purpose; a blank `IG_USER_ID` looks
-   configured and fails at the first publish.
+   configured and fails at the first publish. **Set `BRAND=` now**, before any
+   consent trip: every trip reads it, and it is what groups this identity's
+   boards in the panel.
 2. Claim the handles on every platform on the same day, since free handles are
    snipeable and the decision is what makes them worth taking.
-3. One consent trip per destination. `scripts/youtube_authorise.py`,
-   `scripts/tiktok_authorise.py`, `scripts/facebook_authorise.py`, and
-   Instagram by hand through `docs/instagram-api-setup.md`. The trip is what
-   produces the account key, so nothing keyed on it can be written first.
-4. Register with an explicit `--brand`, or the panel puts the account in a
-   group of its own. Registering Facebook without one already did this once.
-5. One `GATEWAY_SLOTS` line per destination, each with an explicit `account=`.
-   Never rely on the single account fallback; that is F0.
-6. Put the ids in the render host's `.env` and in `ENV_PROJECTED_KEYS`.
+3. One consent trip per destination, all four through one command:
+   `uv run python scripts/authorise.py <platform> --account <name>`, for
+   `youtube`, `tiktok`, `facebook` and `instagram`. The trip is what produces
+   the account key, so nothing keyed on it can be written first. It registers
+   with the gateway and writes the key into `accounts/<name>/.env` itself.
+4. One `GATEWAY_SLOTS` line for the identity, reading `brand=<brand>`. That
+   covers every platform it holds, now and later. Never rely on the single
+   account fallback; that is F0.
+5. Put `BRAND` and the ids on the render host, which is `sync-private.sh` and
+   `ENV_PROJECTED_KEYS`.
+6. `python main.py --account <name> --destinations` to check it, which reads
+   both ends and is the only thing that can.
+
+**Steps 3 to 6 were six manual copies before 2026-09-11 and the work was in
+the copying rather than in the OAuth.** Three scripts with three argument
+surfaces, none of which knew which `accounts/<name>/` a result belonged to, so
+each one ended by printing an id to paste into two files and a ConfigMap. Two
+of the three had no `--brand` at all. What that cost is written up under *One
+identity, four destinations* above: a Page registered into a group of its own,
+corrected by re-registering.
+
+#### One consent trip, four platforms, and one line for the schedule
+
+Built 2026-09-11, in `scripts/consent.py`, `scripts/authorise.py` and a
+`brand=` token on a slot line. The four flows stay in their own files and are
+deliberately not merged: Google's is the authorisation code flow with PKCE
+behind a library, TikTok's and Facebook's are a browser trip landing on a page
+the gateway serves, Instagram's is a paste. Those differ down to the error
+messages, and one `authorise()` covering all four would be a switch statement
+wearing an abstraction's clothes. What is shared is everything after the
+credential.
+
+- **`--account` is required on every trip**, which is the change the rest
+  depends on. It is what lets a trip write the account key into
+  `accounts/<name>/.env` rather than printing a line to copy. That paste is
+  worth automating because forgetting it is silent: the fan-out skips a
+  destination whose id is missing and queues the rest, so a key that never
+  landed looks exactly like a night that meant to publish to three platforms.
+- **The brand comes from `BRAND=` in the account's own `.env`, and is
+  deliberately not defaulted from `--account`.** Those look interchangeable and
+  are not. Account 1's directory is `nightlybuild` and every one of its gateway
+  rows is grouped under `thenightlybuild`, so a default would have regrouped
+  all of them on the next re-authorisation, which is the failure this file
+  already records. Empty stays a real answer: nothing is sent, the gateway
+  derives from the handle, and `upsert_account` leaves a stored brand alone.
+- **`brand=` on a `GATEWAY_SLOTS` line covers every destination an identity
+  holds.** One line where `account=` needs one per platform, written in a name
+  somebody chose rather than four ids pasted out of four consent screens. The
+  point is not brevity: a destination registered later joins that identity's
+  schedule at the next boot, so adding a platform stops being an edit to a
+  ConfigMap in the homelab repo. That is the coupling this file warns nothing
+  checks, removed for every case except the first line per identity.
+- **A brand naming no account freezes the slot sweep**, exactly as an
+  unresolved unnamed line does, and for the F0 reason rather than out of
+  caution. The sweep reads an account's absence from the config as an
+  instruction to delete its slots, so a misspelt brand would otherwise delete
+  every schedule in the database at boot, on a pod that comes up healthy. A
+  line naming both `account=` and `brand=` is refused at parse time: that is
+  two instructions rather than a narrowing.
+- **A brand resolves to inactive rows too.** `active` is the per-destination
+  kill switch and `publish_queued` already reads `active_accounts`, so a paused
+  destination never fires whatever slots it holds. Filtering here instead would
+  mean pausing something in the panel deleted its schedule at the next boot and
+  un-pausing gave it none until the next rollout.
+- **`GET /api/accounts` is the read that was missing.** Four registration
+  routes wrote and nothing read back, and every other reader is scoped to one
+  account id, so "did that consent trip happen" could only be answered by
+  opening the panel on a machine holding a session cookie, or by publishing and
+  seeing. It carries no token, secret or refresh token in any branch, because
+  the pipeline's bearer token is a wider audience than the admin cookie.
+- **`--destinations` is the only thing that reads both ends.** Setting up a
+  destination is an id here and a registration there, either one alone does
+  nothing, and the two failures are both silent: an id with no registration is
+  a queued row nothing can publish, since the queue route checks that the media
+  exists and never that the account does; a registration with no id is a
+  destination the fan-out skips without a word. It also compares the account's
+  `BRAND=` against what the gateway stored, which is the one check that catches
+  a board in the wrong group before somebody opens the panel.
+- **Instagram is a script now and is still a paste rather than a browser
+  trip.** The full flow needs an `/instagram/callback` route, and that route is
+  half the change: the other half is an `Exact` match in the homelab
+  `httproute.yaml`. So the browser half is costed rather than absent, and
+  everything after the token is already shared. The paste is still checked:
+  `ig_refresh_token` refuses a short-lived token, which turns "you copied the
+  wrong one" from a failure at the first publish into a refusal at the trip.
 
 **Three things stopped being account 1 shaped**, and each was a place where one
 account's arrangement had been mistaken for the design:
@@ -1563,6 +1644,13 @@ and for every security update, and holds routine majors back for a human.
   has a retention reading and would report this afternoon's Reel as never
   posted. Made and Posted are separate columns because the gap between them is
   the queue depth.
+- **`--destinations` is the view across both ends of a destination.** An id in
+  the account's `.env` is what makes the fan-out queue a row for a platform,
+  and a registration on the gateway is what publishes it; either alone does
+  nothing and both failures are silent. It is also what answers "did that
+  consent trip happen", which had no answer at all before `GET /api/accounts`
+  existed: registration was four write routes and every reader was scoped to
+  one account id, so the only ways to ask were the panel and publishing.
 - **`--cohorts recipe|slot` compares groups instead of listing posts.** It is
   the payoff of the recipe: rows are comparable when their recipes match. The
   `slot` dimension buckets by the hour, because the scheduler jitters each slot

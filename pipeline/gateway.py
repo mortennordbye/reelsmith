@@ -651,6 +651,34 @@ def fetch_pending_count(cfg: Settings, *, client: httpx.Client | None = None) ->
     return sum(1 for row in rows if row.get("state") in {"draft", "approved"})
 
 
+def fetch_accounts(cfg: Settings, *, client: httpx.Client | None = None) -> list[dict] | None:
+    """Every destination the gateway has registered, or None if it could not say.
+
+    **None rather than an empty list, unlike every other reader here.** Those
+    return empty on failure because the run continues either way: a missing
+    covered list costs a duplicate, a missing results list costs a run its
+    hindsight. This one is read only by `--destinations`, whose whole output is
+    a comparison between what is configured locally and what is registered
+    there, and an empty list would render as "nothing is registered", which is
+    the alarming answer rather than the true one.
+
+    The only unscoped read in this file. It answers "what is set up", which has
+    no account to be scoped to.
+    """
+    if not _configured(cfg):
+        return None
+    url = f"{cfg.gateway_url.rstrip('/')}/api/accounts"
+    try:
+        with client or httpx.Client(timeout=_TIMEOUT) as http:
+            response = http.get(url, headers=_headers(cfg))
+            response.raise_for_status()
+            rows = response.json().get("accounts")
+    except (httpx.HTTPError, ValueError) as exc:
+        log.debug("Could not read the gateway's accounts: %s", exc)
+        return None
+    return rows if isinstance(rows, list) else None
+
+
 def fetch_rendered(cfg: Settings, *, client: httpx.Client | None = None) -> dict[str, str]:
     """Repos a Reel has already been built for, as `owner/repo` to an ISO date.
 

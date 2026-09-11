@@ -235,6 +235,12 @@ def test_parse_slots_is_empty_for_an_empty_value():
         "18:00 UTC jitter=soon", # not a number
         "18:00 UTC days=banana", # names no weekday
         "18:00 UTC wat=1",       # unknown setting
+        "18:00 UTC account=",     # names nothing
+        "18:00 UTC brand=",       # names nothing
+        # Two instructions rather than a narrowing. One names a destination and
+        # the other names every destination an identity has, and guessing which
+        # half was meant publishes somewhere nobody asked for.
+        "18:00 UTC account=UC123 brand=thenightlybuild",
     ],
 )
 def test_a_bad_slot_line_raises_rather_than_being_skipped(bad):
@@ -242,6 +248,18 @@ def test_a_bad_slot_line_raises_rather_than_being_skipped(bad):
     that quietly stops posting."""
     with pytest.raises(schedule.SlotSpecError):
         schedule.parse_slots(bad)
+
+
+def test_a_line_may_name_an_identity_instead_of_a_destination():
+    """`brand=` is one line per identity where `account=` is one per platform.
+
+    Parsed to a spec rather than resolved here: which destinations a brand
+    covers is a question for the database, and `_apply_config_slots` is where
+    a brand matching nothing has to freeze the sweep rather than empty it.
+    """
+    specs = schedule.parse_slots("08:10 Europe/Oslo brand=thenightlybuild\n12:10 UTC account=UC1")
+    assert (specs[0].brand, specs[0].account) == ("thenightlybuild", "")
+    assert (specs[1].brand, specs[1].account) == ("", "UC1")
 
 
 def test_day_names_lists_every_day_the_slot_runs():

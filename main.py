@@ -147,6 +147,13 @@ def run(
         bool,
         typer.Option("--history", help="Every repo we have touched, and when it last went out"),
     ] = False,
+    destinations: Annotated[
+        bool,
+        typer.Option(
+            "--destinations",
+            help="Which platforms this account is set up to publish to, here and on the gateway",
+        ),
+    ] = False,
     cohorts: Annotated[
         str | None,
         typer.Option("--cohorts", help="Compare the published Reels by 'recipe' or 'slot'"),
@@ -329,6 +336,10 @@ def run(
 
     if history:
         _show_history(cfg)
+        return
+
+    if destinations:
+        _show_destinations(cfg)
         return
 
     if cohorts:
@@ -960,6 +971,121 @@ def _show_covered(cfg: Settings) -> None:
         f"recovery is {cfg.repo_cooldown_recovery_days} more "
         f"(REPO_COOLDOWN_RECOVERY_DAYS).[/]"
     )
+
+
+def _show_destinations(cfg: Settings) -> None:
+    """What this account can publish to, read from both ends at once.
+
+    Setting up a destination is two facts in two places: an id in this
+    account's `.env`, which is what the fan-out reads to decide whether to
+    queue a row at all, and a registration on the gateway, which is what holds
+    the credential and does the publishing. Either one alone is a destination
+    that does nothing, and until this existed neither could be checked without
+    a session cookie or a publish.
+
+    The two failures it is built to name are both silent:
+
+    - **An id here and no registration there** is a queued row nothing can
+      publish. `--enqueue` does not check, because the queue route validates
+      that the media exists and never that the account does, so the row sits
+      until its slot fires days later and fails.
+    - **A registration there and no id here** is a destination the fan-out
+      skips without a word. That is deliberate, so a render still queues the
+      platforms it can, and it means a forgotten line reads exactly like a
+      night that meant to publish to three.
+
+    Slots are counted rather than listed. The question here is whether a
+    destination has a schedule at all, since one with none is registered,
+    configured, and will never publish; which times it holds is the panel's
+    question.
+    """
+    from rich.table import Table
+
+    rows = gateway.fetch_accounts(cfg)
+
+    # The four ids this account holds, in the order a new identity fills them:
+    # a channel is one OAuth trip and an Instagram token is a Meta app.
+    local = {
+        "youtube": cfg.youtube_channel_id,
+        "tiktok": cfg.tiktok_open_id,
+        "facebook": cfg.facebook_page_id,
+        "instagram": cfg.ig_user_id,
+    }
+    registered = {str(row.get("account_id", "")): row for row in (rows or [])}
+
+    table = Table(title=f"Destinations for {cfg.account}", title_justify="left")
+    table.add_column("Platform")
+    table.add_column("Id in .env")
+    table.add_column("Gateway")
+    table.add_column("Brand")
+    table.add_column("Slots", justify="right")
+
+    for platform, account_id in local.items():
+        if not account_id:
+            table.add_row(platform, "[dim]not set[/]", "", "", "")
+            continue
+        row = registered.get(account_id)
+        if rows is None:
+            state, brand, slots = "[dim]unreachable[/]", "", ""
+        elif row is None:
+            state, brand, slots = "[bold red]not registered[/]", "", ""
+        else:
+            # A row whose second write never landed is the shape a half
+            # finished registration leaves, and it is the one the scheduler
+            # picks up and fails on. The routes write credentials first so this
+            # cannot happen, which makes it worth showing rather than hiding.
+            ok = "registered" if row.get("credentials") else "[bold red]no credentials[/]"
+            if not row.get("active"):
+                ok += " [yellow](paused)[/]"
+            state = ok
+            brand = str(row.get("brand") or "")
+            slots = str(row.get("slots") or 0)
+            if not row.get("slots"):
+                slots = "[bold red]0[/]"
+        table.add_row(platform, account_id, state, brand, slots)
+
+    console.print(table)
+
+    if rows is None:
+        # Three causes and they are worth naming together, because the third is
+        # the likely one and reads as the first. The gateway image deploys
+        # itself and this checkout is pulled by hand, so the side that lags is
+        # usually the one being asked, and a 404 from a deployment older than
+        # this endpoint is indistinguishable here from a service that is down.
+        console.print(
+            "[yellow]The gateway did not answer, so only the left half is real.[/] "
+            "[dim]It is down, GATEWAY_URL and GATEWAY_TOKEN are unset, or it is "
+            "older than /api/accounts and needs a deploy.[/]"
+        )
+        return
+
+    # The brand is what groups an identity's boards in the panel and what a
+    # `brand=` slot line resolves against, and it is a label rather than a
+    # foreign key: nothing checks it, a typo puts a board in a group of its own,
+    # and it is invisible until somebody opens the panel. So the one comparison
+    # worth making automatically is between what this account declares and what
+    # the gateway stored.
+    declared = cfg.brand.strip()
+    stored = {str(registered[i].get("brand") or "") for i in local.values() if i in registered}
+    if declared and stored - {declared}:
+        console.print(
+            f"[yellow]This account declares BRAND={declared} and the gateway has "
+            f"{', '.join(sorted(repr(b) for b in stored))}.[/] "
+            f"[dim]Re-run the consent trip for the odd one out, or correct BRAND=.[/]"
+        )
+    elif not declared and stored:
+        console.print(
+            f"[dim]No BRAND= set here; the gateway derived "
+            f"{', '.join(sorted(repr(b) for b in stored))} from the handles. "
+            f"Setting it is what lets one GATEWAY_SLOTS line cover every platform.[/]"
+        )
+
+    missing = [p for p, i in local.items() if not i]
+    if missing:
+        console.print(
+            f"[dim]Not set up: {', '.join(missing)}. "
+            f"`uv run python scripts/authorise.py <platform> --account {cfg.account}`[/]"
+        )
 
 
 def _show_history(cfg: Settings) -> None:
