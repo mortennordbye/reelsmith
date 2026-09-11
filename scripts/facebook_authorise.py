@@ -85,29 +85,21 @@ CREATE_PAGE_URL = "https://www.facebook.com/pages/create/"
 
 
 def setup_pages(app_id: str) -> list[tuple[str, bool, str]]:
-    """The three places this trip needs, in the order to use them.
+    """What has to be true before this trip can work. Printed, never opened.
 
-    Unlike the Instagram trip, the first of these is not configuration. A Page
-    has to exist and be named before anything here can authorise one, and the
-    consent dialog offers only Pages the person already administers.
+    Neither has a prompt behind it and both are usually already done, which is
+    what makes them prerequisites rather than steps. The two things this trip
+    actually asks for, the app secret and the consent, open their own page at
+    the moment they are asked, and nothing else opens at all.
     """
     return [
         (
             CREATE_PAGE_URL,
             True,
-            "The Page itself, if this identity has none. A Page is a public\n"
-            "     surface with a name rather than a form to fill in, and it is\n"
-            "     not eligible for a username until it has followers and a\n"
-            "     post, so it lives on a numeric URL for a while. Skip if the\n"
-            "     Page already exists.",
-        ),
-        (
-            f"{APPS_URL}{app_id}/settings/basic/",
-            True,
-            "App settings, Basic: the App ID and App Secret, the second behind\n"
-            "     a Show button. Put them in the root .env as FACEBOOK_APP_ID\n"
-            "     and FACEBOOK_APP_SECRET, which is where an app credential\n"
-            "     belongs since one app serves every Page. Skip if already set.",
+            "A Page exists for this identity. A Page is a public surface with a\n"
+            "     name rather than a form to fill in, the consent dialog offers\n"
+            "     only Pages you already administer, and it is not eligible for\n"
+            "     a username until it has followers and a post.",
         ),
         (
             # Not `fb-login/settings/`, which is this app's other login product
@@ -116,11 +108,9 @@ def setup_pages(app_id: str) -> list[tuple[str, bool, str]]:
             # the failure the `confirmed` flag exists to make visible.
             f"{APPS_URL}{app_id}/business-login/settings/",
             True,
-            "Facebook Login for Business, Settings: the redirect URI below has\n"
-            "     to be listed under Valid OAuth Redirect URIs, character for\n"
-            "     character, and Strict Mode means exactly that. A mismatch is\n"
-            "     refused with an error naming neither side. Usually already\n"
-            "     there, since one app serves every Page.",
+            "The redirect URI below is listed under Valid OAuth Redirect URIs,\n"
+            "     character for character, and Strict Mode means exactly that.\n"
+            "     Usually already there, since one app serves every Page.",
         ),
     ]
 
@@ -262,7 +252,7 @@ def trip(args: argparse.Namespace) -> consent.Trip:
     app_secret = os.environ.get("FACEBOOK_APP_SECRET", "") or cfg.facebook_app_secret
 
     if not args.no_browser:
-        consent.open_pages(setup_pages(app_id or "<app-id>"))
+        consent.list_prerequisites(setup_pages(app_id or "<app-id>"))
         print(f"  The redirect URI this trip uses: {REDIRECT_URI}\n")
 
     # The app id is public and printed on the page, so a missing one is a

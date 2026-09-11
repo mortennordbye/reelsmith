@@ -258,28 +258,30 @@ def require_terminal() -> None:
         )
 
 
-def open_pages(steps: list[tuple[str, bool, str]]) -> None:
-    """Open the setup pages as tabs, in the order they are used.
+def list_prerequisites(steps: list[tuple[str, bool, str]]) -> None:
+    """Print what has to be true first. Deliberately opens nothing.
 
-    The YouTube trip opens a browser and the operator is where they need to be.
-    The others named a documentation file, which is the same answer as "look it
-    up", and these steps happen once per identity so nobody remembers them in
-    between.
+    This used to open every one of them as a tab, on the reasoning that a trip
+    should put the operator where they need to be rather than name a
+    documentation file. That half was right and the execution was not: four
+    tabs arriving at once, none of them tied to anything being asked, is a
+    worse instruction than a list, because nothing on screen says which one is
+    current.
 
-    Each step is a URL, whether that URL has been confirmed, and what to do
-    there. The URLs are constants in the flow rather than prose, because one
-    somebody has to reconstruct from a description is one they look up instead.
+    **A page is opened at the moment its value is asked for**, by the prompt
+    that needs it, and nowhere else. That is the whole rule. These are the
+    steps with no prompt behind them, usually because they are already done, so
+    they are printed for reference and left closed.
 
     `confirmed` says whether the address was read off a real address bar or
-    derived from a documented URL shape, and an underived one says so when it
-    prints. A wrong deep link is worse than no link: it lands on a 404 that
-    reads as the feature being gone rather than as a stale constant.
+    derived from a documented URL shape, and an underived one says so. A wrong
+    link is worse than no link: it lands on a 404 that reads as the feature
+    being gone rather than as a stale constant.
     """
-    print(f"\nOpening {len(steps)} tabs, which are the steps in order:\n")
+    print("\nThis assumes the following, which are once per identity:\n")
     for index, (url, confirmed, what) in enumerate(steps, start=1):
         note = "" if confirmed else "   [path not yet verified; say so if it 404s]"
         print(f"  {index}. {what}\n     {url}{note}\n")
-        webbrowser.open(url)
 
 
 # --- The browser trip that lands on the gateway ----------------------------
@@ -376,10 +378,11 @@ def ask_secret(key: str, *, what: str, where: str) -> str:
     """
     print(
         f"\n{key} is not set, in the environment or in either .env.\n"
-        f"{what}\n"
+        f"Opening the page it is on. {what}\n"
         f"  {where}\n"
         f"It is not echoed, so nothing will appear as you paste."
     )
+    webbrowser.open(where)
     value = getpass.getpass(f"{key}: ").strip()
     if not value:
         raise ConsentError(f"Nothing pasted. {key} is needed to go on.")

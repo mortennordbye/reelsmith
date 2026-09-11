@@ -117,63 +117,45 @@ APPS_URL = "https://developers.facebook.com/apps/"
 # one that makes the other two work.
 INVITES_URL = "https://www.instagram.com/accounts/manage_access/"
 
-# The three places the setup happens, in the order to use them, opened as tabs
-# so the trip sets the operator up rather than naming a documentation file.
-#
-# Recorded as constants rather than described in prose, because a URL somebody
-# has to reconstruct from a description is a URL they look up instead.
-#
-# `confirmed` says whether the address was read off a real address bar or
-# derived from Meta's documented URL shape, and an underived one says so when
-# it prints. A wrong deep link is worse than the apps list: it lands on a 404
-# that reads as the feature being gone rather than as a stale constant.
-STEPS = [
-    (
-        "roles/roles/",
-        True,
-        "Add the account as an Instagram Tester, via Add People. Not a plain\n"
-        "     Tester, the Instagram one. This is what grants Standard Access to\n"
-        "     an account you own, and it is why none of this needs App Review.",
-    ),
-    (
-        INVITES_URL,
-        True,
-        "Accept the invite, signed in as that account on Instagram itself:\n"
-        "     Apps and Websites, then Tester invites. Until this is accepted the\n"
-        "     account is not offered in step 3, and the failure much later names\n"
-        "     nothing useful.",
-    ),
-    (
-        "instagram-business/API-setup-with-instagram-login/",
-        True,
-        "Generate access tokens, and pick that account. The button returns a\n"
-        "     long-lived token, so there is no short-lived exchange by hand.\n"
-        "     Copy it and come back here.",
-    ),
-]
+# Where the token itself comes from, which is the one thing this trip asks
+# for and so the one page it opens.
+SETUP_PATH = "instagram-business/API-setup-with-instagram-login/"
 
 
-def open_dashboard(app_id: str) -> None:
-    """Put the operator on the pages the token comes from, in order.
+def prerequisites(app_id: str) -> list[tuple[str, bool, str]]:
+    """What has to be true before the Generate button lists the account.
 
-    The YouTube trip opens a browser and the operator is where they need to be.
-    This one printed the name of a documentation file, which is the same answer
-    as "look it up", and these steps happen once per identity so nobody
-    remembers them in between.
+    Printed, never opened. Both are once per identity and neither has a prompt
+    behind it, which is what makes them prerequisites rather than steps.
+
+    This opened all three as tabs, along with the token page, on the reasoning
+    that a trip should put the operator where they need to be rather than name
+    a documentation file. That half was right and the execution was not: tabs
+    arriving at once, none tied to anything being asked, is a worse instruction
+    than a list, because nothing on screen says which one is current.
+
+    Recorded as constants rather than prose, because a URL somebody has to
+    reconstruct from a description is one they look up instead.
     """
-    if not app_id:
-        print(
-            f"\nNo IG_APP_ID in .env, so this opens the apps list rather than\n"
-            f"the pages themselves. Setting it, which is a public value, deep\n"
-            f"links every trip after this one.\n  {APPS_URL}\n"
-        )
-        webbrowser.open(APPS_URL)
-        return
-
-    consent.open_pages([
-        (where if where.startswith("http") else f"{APPS_URL}{app_id}/{where}", ok, what)
-        for where, ok, what in STEPS
-    ])
+    where = f"{APPS_URL}{app_id}/roles/roles/" if app_id else APPS_URL
+    return [
+        (
+            where,
+            True,
+            "The account is an Instagram Tester on the app, added via Add\n"
+            "     People. Not a plain Tester, the Instagram one. This is what\n"
+            "     grants Standard Access to an account you own, and it is why\n"
+            "     none of this needs App Review.",
+        ),
+        (
+            INVITES_URL,
+            True,
+            "That invite is accepted, signed in as that account on Instagram\n"
+            "     itself: Apps and Websites, then Tester invites. Until it is,\n"
+            "     the account is not listed by the Generate button and the\n"
+            "     failure much later names nothing useful.",
+        ),
+    ]
 
 
 def account_of(host: str, token: str, api_version: str) -> dict:
@@ -234,13 +216,24 @@ def trip(args: argparse.Namespace) -> consent.Trip:
     cfg = consent.account_settings(args.account)
 
     if not args.no_browser:
-        open_dashboard(cfg.ig_app_id)
+        consent.list_prerequisites(prerequisites(cfg.ig_app_id))
 
-    print(
-        "\nPaste the long-lived Instagram user token. It is not echoed, so\n"
-        "nothing will appear. It is not taken on the command line either:\n"
-        "argv is visible in `ps` and lands in shell history."
+    # The one thing asked for, and the one page opened, at the moment of
+    # asking. `ask_secret` is not used because this is not saved to `.env`:
+    # the gateway holds it and refreshes its own copy.
+    token_page = (
+        f"{APPS_URL}{cfg.ig_app_id}/{SETUP_PATH}" if cfg.ig_app_id else APPS_URL
     )
+    print(
+        f"\nOpening the page the token comes from. Generate access tokens,\n"
+        f"pick the account, copy what it hands back.\n"
+        f"  {token_page}\n"
+        f"It is not echoed, so nothing will appear as you paste. It is not\n"
+        f"taken on the command line either: argv is visible in `ps`."
+    )
+    if not args.no_browser:
+        webbrowser.open(token_page)
+
     pasted = getpass.getpass("Token: ").strip()
     if not pasted:
         raise consent.ConsentError("Nothing pasted. Nothing was registered.")
