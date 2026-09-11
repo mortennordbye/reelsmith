@@ -9,6 +9,33 @@
 </p>
 {% if quip_for(page) %}<p class="quip">{{ quip_for(page) }}</p>{% endif %}
 
+{# Only inside an identity. Unscoped, `visible` is every account, and a button
+   that publishes must not be one misread click away from firing all of them.
+   The endpoint refuses it too; this is so the refusal is never reached. #}
+{% if brand or selected %}
+  <div class="card">
+    <div class="row" style="align-items:center;gap:12px">
+      <div class="grow">
+        <strong>Publish now, on every destination</strong>
+        <div class="muted small">
+          Takes the post each destination's next slot would take, and sends it
+          immediately. The slots are left alone, so today's fire is still due
+          and the schedule still proves itself on its own timetable. A
+          destination with nothing armed is skipped. Meant for the first post
+          of a new identity, where waiting until morning to find out a token
+          was minted wrong costs a day per attempt.
+        </div>
+      </div>
+      <form class="inline" method="post"
+            action="{{ url_for('publish_all_now') }}{{ query }}">
+        <button title="Send the next armed post on every destination of this identity">
+          Publish all now
+        </button>
+      </form>
+    </div>
+  </div>
+{% endif %}
+
 {% for board in boards %}
   {% set account = board.account %}
   {# The board knows its identity; only the loop knows whether the board above
