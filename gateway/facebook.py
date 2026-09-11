@@ -384,11 +384,11 @@ INSIGHT_METRICS = (
     # Plays after an impression is already counted, excluding replays. The
     # nearest thing to a view, and the number the Page's own UI shows.
     "blue_reels_play_count",
-    # People who saw it at least once, whether or not they played it. Meta is
-    # the only platform of the four that reports this, on both its surfaces.
-    # `post_impressions_unique` until Meta retired it: production refused it as
-    # an invalid metric on 2026-09-11, and this is the name Meta gives instead.
-    "post_total_media_view_unique",
+    # No reach here. Meta retired Reels reach from the API on 2026-06-15, and
+    # the video node refused both `post_impressions_unique` and
+    # `post_total_media_view_unique` on production on 2026-09-11. It is read
+    # from the Reel's Page post instead, by `read_post_reach` below.
+    #
     # Milliseconds, and it includes replays, so it can exceed the video length
     # exactly as a looping Short does on YouTube.
     "post_video_avg_time_watched",
@@ -414,7 +414,6 @@ INSIGHT_METRICS = (
 # The metrics that have a column, and therefore stay out of `extra`.
 _COLUMNS = frozenset({
     "blue_reels_play_count",
-    "post_total_media_view_unique",
     "post_video_avg_time_watched",
     "post_video_view_time",
 })
@@ -493,7 +492,6 @@ def parse_reading(video_id: str, payload: dict) -> Reading:
     return Reading(
         video_id=video_id,
         views=count("blue_reels_play_count"),
-        reach=count("post_total_media_view_unique"),
         likes=likes,
         comments=int(comments) if isinstance(comments, (int, float)) else 0,
         avg_watch_ms=count("post_video_avg_time_watched"),
@@ -540,6 +538,8 @@ REFUSED = probe.Refusals("Facebook Reel insights")
 def forget_refused_metrics() -> None:
     """For tests, which share one process and must not share what Meta refused."""
     REFUSED.clear()
+    PAGE_REFUSED.clear()
+    _POST_REACH.update(on=True, field=True)
 
 
 def _error(what: str, code: str, message: str) -> InsightsError:
@@ -632,6 +632,94 @@ async def read_insights(
         return parse_reading(video_id, _json(response))
     except PublishError as exc:
         raise InsightsError(str(exc)) from exc
+
+
+# --- Reach, from the Page post a Reel lives in -------------------------------
+#
+# **Meta retired Reels reach from the API on 2026-06-15.** The published
+# changelogs say Reels play count is the only Reels level number left, and the
+# video node refused both reach names this service had used. What replaced
+# reach is unique views on the Page *post*, and a Reel is also a Page post, so
+# that is where it is asked. Meta documents no answer either way for a Reel's
+# post; the first sweep on production is what says.
+#
+# The caller stores it in `reach` and in `extra` under this name, and the page
+# builds its Reach column from `extra`, so a Page Meta will not answer for
+# shows no column rather than a row of zeroes.
+
+POST_REACH_METRIC = "post_total_media_view_unique"
+
+# `on` is switched off for the process by the first refusal, since a metric
+# Meta will not serve for one Reel's post it will not serve for the next, and
+# asking sixteen times a sweep proves nothing new. `field` records that the
+# video node has no `post_id` field, so the fallback id is used without asking.
+# A restart asks again, which is how either is picked up if Meta changes.
+_POST_REACH = {"on": True, "field": True}
+
+
+async def read_post_reach(
+    http: httpx.AsyncClient,
+    *,
+    page_id: str,
+    video_id: str,
+    token: str,
+    api_version: str,
+) -> int | None:
+    """Unique viewers of the Page post a Reel lives in, or None if Meta will not say.
+
+    Raises only for a dead token. The post id is the video's own `post_id`
+    field where the node has one, and `{page_id}_{video_id}` otherwise, which
+    is the shape a Page video post id has had. None for a Reel too young to
+    have the number, without switching anything off.
+    """
+    if not _POST_REACH["on"]:
+        return None
+
+    post_id = f"{page_id}_{video_id}"
+    try:
+        if _POST_REACH["field"]:
+            node = await http.get(
+                f"{GRAPH}/{api_version}/{video_id}",
+                params={"fields": "post_id"},
+                headers=_auth(token),
+                timeout=30,
+            )
+            code, message = _api_error(node)
+            if code:
+                error = _error(f"Post id for {video_id}", code, message)
+                if error.is_auth:
+                    raise error
+                _POST_REACH["field"] = False
+                log.info("%s; using %s", error, post_id)
+            elif str(_json(node).get("post_id") or ""):
+                found = str(_json(node)["post_id"])
+                post_id = found if "_" in found else f"{page_id}_{found}"
+
+        response = await http.get(
+            f"{GRAPH}/{api_version}/{post_id}/insights",
+            params={"metric": POST_REACH_METRIC},
+            headers=_auth(token),
+            timeout=30,
+        )
+    except httpx.HTTPError as exc:
+        log.info("Could not read post reach for %s: %s", video_id, exc)
+        return None
+
+    code, message = _api_error(response)
+    if code:
+        error = _error(f"Post reach for {video_id}", code, message)
+        if error.is_auth:
+            raise error
+        _POST_REACH["on"] = False
+        log.warning("%s; Facebook reach stays unmeasured until the next restart", error)
+        return None
+
+    for item in _json(response).get("data") or []:
+        if item.get("name") == POST_REACH_METRIC:
+            value = _metric_value(item)
+            if isinstance(value, (int, float)):
+                return int(value)
+    return None
 
 
 # --- The Page itself ---------------------------------------------------------

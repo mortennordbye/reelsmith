@@ -20,7 +20,7 @@
 
 {% block body %}
 {% set absent_word = {'pending': 'No reading yet', 'none': 'None stored', 'missing': 'No reading'} %}
-{% set units = {'instagram': 'views · skip', 'youtube': 'views · viewed', 'facebook': 'views · reach', 'tiktok': 'views'} %}
+{% set units = {'instagram': 'views · skip', 'youtube': 'views · viewed', 'facebook': 'views', 'tiktok': 'views'} %}
 {% set base = url_for('library_page', brand=brand.path) %}
 {% set platform_qs = 'platform=' ~ platform ~ '&' if platform else '' %}
 <header class="ph">
@@ -100,7 +100,7 @@
                     {{ post.reading['views'] }}
                     {%- if p == 'instagram' and post.reading['skip_rate'] %} · <span class="{{ 'good' if post.reading['skip_rate'] < 60 }}">{{ '%.1f' | format(post.reading['skip_rate']) }}%</span>
                     {%- elif p == 'youtube' and post.reading['avg_view_pct'] %} · {{ '%.1f' | format(post.reading['avg_view_pct']) }}%
-                    {%- elif p == 'facebook' %} · {{ post.reading['reach'] }}{% endif %}
+                    {% endif %}
                   {% else %}
                     <span class="absent faint" title="{{ {'pending': 'Published recently. The platform has not reported yet.', 'none': 'This destination has never stored a reading.', 'missing': 'No reading was stored for this post.'}[post.absent] }}">{{ absent_word[post.absent] }}</span>
                   {% endif %}

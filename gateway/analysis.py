@@ -48,17 +48,22 @@ from typing import Any
 # saves. What it does have, and TikTok has not, is watch time, which is why the
 # retention tiles below are keyed on the reading rather than on the platform.
 #
-# Facebook is the one that is nearly Instagram and is not. It reports reach,
-# which no other platform here does, and it reports no share count at all:
-# `post_video_social_actions` is comments and shares fused into one number, and
-# splitting it by subtracting a separately fetched comment count would be
-# arithmetic on two different definitions. So shares is absent rather than
-# zero, which is the whole reason this table exists.
+# Facebook is the one that is nearly Instagram and is not. It reports no share
+# count at all: `post_video_social_actions` is comments and shares fused into
+# one number, and splitting it by subtracting a separately fetched comment
+# count would be arithmetic on two different definitions. So shares is absent
+# rather than zero, which is the whole reason this table exists.
+#
+# Reach left this set on 2026-09-11. Meta retired Reels reach from the API on
+# 2026-06-15, and what the gateway can still get comes from the Reel's Page
+# post only where Meta answers for it, so a fixed column would show zeroes on
+# a Page where it does not. The Performance page shows it from `extra` where
+# it arrived.
 _MEASURED = {
     "instagram": ("views", "reach", "likes", "comments", "saved", "shares"),
     "youtube": ("views", "likes", "comments", "shares"),
     "tiktok": ("views", "likes", "comments", "shares"),
-    "facebook": ("views", "reach", "likes", "comments"),
+    "facebook": ("views", "likes", "comments"),
 }
 
 

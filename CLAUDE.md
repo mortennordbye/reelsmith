@@ -377,8 +377,8 @@ attempted*:
   column, which is a rule that holds by accident. Feeding anything else to
   `_results_block` would corrupt the single measurement everything else is
   argued from. **Facebook is the one to guard against here**, because it reports
-  reach and watch time and therefore produces a board that looks like
-  Instagram's.
+  watch time, and reach where a Reel's Page post still gives it, and therefore
+  produces a board that looks like Instagram's.
 - **YouTube's numbers arrive in one Analytics call per sweep, since
   2026-08-27.** `insights.refresh_youtube_account` mints a token and asks the
   Analytics API for a report dimensioned by video and filtered to the ids the
@@ -464,13 +464,20 @@ attempted*:
   Facebook thing that runs without a slot, which is exactly the test that earned
   TikTok its flag and YouTube its narrower one. On by default, because it only
   reads and a deployment with no Page calls Meta nothing.
-- **On a Facebook row `shares` is an absence and `reach` is a real number.** Meta
-  reports comments and shares fused together in `post_video_social_actions`, so
-  splitting that by subtracting a separately fetched comment count would be
-  arithmetic on two different definitions; `shares` stays 0 and the platform
-  column says so. `reach` is genuine, which makes this the only board besides
-  Instagram's to carry it, and the reason the Library page spends a sentence
-  saying that its watch time is not Instagram's watch time.
+- **On a Facebook row `shares` is an absence, and `reach` is one unless the
+  Reel's Page post gave it.** Meta reports comments and shares fused together
+  in `post_video_social_actions`, so splitting that by subtracting a separately
+  fetched comment count would be arithmetic on two different definitions;
+  `shares` stays 0 and the platform column says so. **Meta retired Reels reach
+  from the API on 2026-06-15**, and on 2026-09-11 the video node refused both
+  `post_impressions_unique` and `post_total_media_view_unique`. What replaced
+  reach is unique views on the Page *post*, so `facebook.read_post_reach` asks
+  the Reel's post for it and the value lands in `reach` and in `extra` under
+  its Meta name. The first refusal switches that read off for the process.
+  Reach is therefore not in `analysis._MEASURED` or `CAPS` for Facebook, the
+  Library page does not show it, and the Performance page builds its Facebook
+  Reach column from `extra`, so a Page Meta gives nothing for has no column
+  rather than a row of zeroes.
 - **On the inbox path TikTok stores no readings at all, and that is still
   open.** The sweep matches a TikTok video to its queue row by the title this
   service wrote, and the inbox upload sends no `post_info`, so there is no
@@ -483,8 +490,9 @@ attempted*:
   valid insights metric`, so no Page had a reading, and the error does not say
   which name. `facebook.read_insights` probes each metric once per process,
   remembers the refused ones, names them in a warning and reads with the rest.
-  Its first production run named `post_impressions_unique`, which is now
-  `post_total_media_view_unique`. **The reads then failed on `(#200)
+  Its first production run named `post_impressions_unique`; the replacement
+  `post_total_media_view_unique` was refused too once the reads got that far,
+  and reach now comes from the Page post (see above). **The reads then failed on `(#200)
   read_insights permission missing`.** The consent trip had left that scope out
   on the belief that it covers Page level insights only; a Reel's own numbers
   need it too, so a Page authorised before 2026-09-11 has to walk the trip
@@ -590,8 +598,9 @@ identity would have made it six chips reading nearly the same word.
 **What each board shows is the platform's own answer, never a zero standing in
 for an absence.** Instagram gets skip and watch time, YouTube gets watch time
 and average viewed, TikTok gets four counts and a line saying that is everything
-it reports, Facebook gets reach and watch time and a line saying its watch time
-is not Instagram's and its shares are missing rather than zero. The DM funnel is
+it reports, Facebook gets watch time, reach only where a Reel's Page post gives
+it, and a line saying its watch time is not Instagram's and its shares are
+missing rather than zero. The DM funnel is
 on the Instagram board alone, because the keyword mechanic is comments and
 private replies: a YouTube card carrying "0 asked, 0 links sent, keyword send"
 reported a mechanic that never existed there as one that converted nobody.

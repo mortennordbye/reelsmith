@@ -1968,7 +1968,8 @@ async def record_insights(
     `avg_view_pct` are all 0 because that platform exposes none of them. On a
     YouTube row it is `reach`, `saved` and `skip_rate`. On a Facebook row it is
     `saved`, `shares`, `skip_rate` and `avg_view_pct`; `shares` is an absence
-    rather than a zero because Meta reports it fused to the comment count.
+    rather than a zero because Meta reports it fused to the comment count, and
+    `reach` is one too unless `extra` carries `post_total_media_view_unique`.
     Nothing downstream may read any of those as a result.
     """
     moment = moment or now()

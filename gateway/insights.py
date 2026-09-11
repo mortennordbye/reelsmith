@@ -442,9 +442,15 @@ async def refresh_facebook_account(
     at once. Splitting them would double a sweep's calls to answer one
     question.
 
-    **Four columns, and the two absences are deliberate.** Meta reports reach
-    here as it does on Instagram, and watch time as YouTube does, so this board
-    has more than TikTok's. What it has not got is a three second skip, and
+    **Reach is a second request, to the Reel's Page post.** Meta retired Reels
+    reach from the video node on 2026-06-15, so `facebook.read_post_reach` asks
+    the post for unique views. Where that is refused, `reach` stays 0 and
+    `extra` carries no reach, which is what the page reads to leave the column
+    out.
+
+    **The absences are deliberate.** Meta reports watch time here as YouTube
+    does, so this board has more than TikTok's. What it has not got is a three
+    second skip, and
     `post_video_avg_time_watched` scores the whole Reel including replays, so
     writing it into `skip_rate` inverted would put two different measurements
     in the one column the feedback loop reads. `saved` and `shares` stay 0 and
@@ -480,6 +486,13 @@ async def refresh_facebook_account(
             reading = await facebook.read_insights(
                 graph.http, video_id=video_id, token=token, api_version=cfg.api_version
             )
+            reach = await facebook.read_post_reach(
+                graph.http,
+                page_id=page_id,
+                video_id=video_id,
+                token=token,
+                api_version=cfg.api_version,
+            )
         except facebook.InsightsError as exc:
             metrics.graph_errors.inc()
             log.warning("Facebook insights for %s failed: %s", video_id, exc)
@@ -509,13 +522,16 @@ async def refresh_facebook_account(
                 conn, int(row["id"]), media_id=video_id, permalink=reading.permalink
             )
 
+        extra = dict(reading.extra)
+        if reach is not None:
+            extra[facebook.POST_REACH_METRIC] = reach
         await db.record_insights(
             conn,
             media_id=video_id,
             account_id=page_id,
             metrics={
                 "views": reading.views,
-                "reach": reading.reach,
+                "reach": reach or 0,
                 "likes": reading.likes,
                 "comments": reading.comments,
                 "avg_watch_ms": reading.avg_watch_ms,
@@ -524,7 +540,7 @@ async def refresh_facebook_account(
             on=on,
             moment=moment,
             platform=db.PLATFORM_FACEBOOK,
-            extra=reading.extra,
+            extra=extra,
         )
         metrics.insights_fetched.inc()
         written += 1

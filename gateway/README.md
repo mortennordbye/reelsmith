@@ -482,8 +482,10 @@ Three decisions worth knowing:
   whole batch, Facebook one request per Reel. What each of them does not report
   stays 0, and nothing downstream may read those zeroes as a result: a TikTok
   row has no watch time of any kind, a YouTube row has no `skip_rate` and no
-  reach, and a Facebook row has reach and watch time but no share count, since
-  Meta reports shares fused to the comment count. `GATEWAY_TIKTOK_ENABLED`,
+  reach, and a Facebook row has watch time but no share count, since Meta
+  reports shares fused to the comment count. Its reach is read from the Reel's
+  Page post, because Meta retired Reels reach on 2026-06-15, and stays 0 where
+  that post does not give it. `GATEWAY_TIKTOK_ENABLED`,
   `GATEWAY_YOUTUBE_INSIGHTS_ENABLED` and `GATEWAY_FACEBOOK_INSIGHTS_ENABLED`
   are the three switches, and only the first is off by default.
 - **Only Instagram reaches the scriptwriter.** `/api/results` filters to it

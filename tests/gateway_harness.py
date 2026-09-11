@@ -366,6 +366,12 @@ class FakeFacebook:
     page_insights: dict[str, Any] = field(default_factory=dict)
     page_insights_error: dict[str, Any] | None = None
     page_metric_requests: list[list[str]] = field(default_factory=list)
+    # Unique views per Page post id, which is where reach went when Meta
+    # retired it for Reels. An error envelope is a post Meta will not answer
+    # for. The video node's `post_id` field answers `{PAGE_ID}_{video id}`.
+    post_reach: dict[str, int] = field(default_factory=dict)
+    post_reach_error: dict[str, Any] | None = None
+    post_reach_requests: list[str] = field(default_factory=list)
     # Every phase, in order, so a test can assert the sequence rather than only
     # the outcome.
     phases: list[str] = field(default_factory=list)
@@ -413,6 +419,20 @@ class FakeFacebook:
         # or the insights, told apart by what was asked for.
         fields = str(request.url.params.get("fields") or "")
         node = request.url.path.rstrip("/").split("/")[-1]
+
+        parent = request.url.path.rstrip("/").split("/")[-2]
+        if node == "insights" and "_" in parent:
+            self.post_reach_requests.append(parent)
+            if self.post_reach_error:
+                return httpx.Response(400, json={"error": self.post_reach_error})
+            value = self.post_reach.get(parent)
+            return httpx.Response(200, json={"data": [] if value is None else [
+                {"name": "post_total_media_view_unique", "period": "lifetime",
+                 "values": [{"value": value}]}
+            ]})
+
+        if fields == "post_id":
+            return httpx.Response(200, json={"id": node, "post_id": f"{PAGE_ID}_{node}"})
 
         if node == "insights":
             asked = str(request.url.params.get("metric") or "").split(",")
