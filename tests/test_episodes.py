@@ -172,3 +172,43 @@ def test_the_schema_comes_from_the_model():
 
     assert set(schema["required"]) >= {"hook", "quote", "did", "back", "steps", "source"}
     assert json.dumps(schema)
+
+
+# --- The account's claim, which is not the prompt's -------------------------
+
+
+def test_the_claim_comes_from_the_account_rather_than_the_prompt():
+    """It read one account's end card line verbatim, which was wrong twice.
+
+    This repo is public, so a line naming an identity puts that identity in it,
+    which is what `PROFILE.md` is gitignored to prevent, and the handle sat
+    alongside account 1's throughout the tests. Separately, a claim is a fact
+    about one account, so a hardcoded one is a prompt that cannot serve a
+    second niche.
+    """
+    from config import Settings
+    from pipeline import episodes
+
+    cfg = Settings(endcard_tagline="A claim this account makes", _env_file=None)
+    assert 'The end card reads "A claim this account makes".' in episodes.episode_system(cfg)
+
+
+def test_no_tagline_drops_the_sentence_rather_than_printing_an_empty_one():
+    """The same rule `youtube_description` follows for a missing repo line: a
+    label with nothing after it is worse than no label."""
+    from config import Settings
+    from pipeline import episodes
+
+    built = episodes.episode_system(Settings(endcard_tagline="", _env_file=None))
+    assert "The end card reads" not in built
+    assert "every piece of advice arrives with a source" in built
+
+
+def test_the_public_prompt_names_no_account():
+    """Asserted on the constant rather than on the built string, because the
+    constant is what is committed to a public repository."""
+    from pipeline import episodes
+
+    lowered = episodes.EPISODE_SYSTEM.lower()
+    for word in ("the whole quote", "thewholequote", "self help with a citation"):
+        assert word not in lowered

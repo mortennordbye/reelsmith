@@ -190,3 +190,60 @@ async def test_the_callback_never_calls_the_platform(tmp_path, path):
             await http.get(f"{path}?code=abc123&state=xyz789")
 
     assert meta.calls == []
+
+
+# --- Naming no identity, which is what makes one URL cover all of them -------
+
+
+@pytest.mark.parametrize("path", PAGES)
+async def test_the_public_pages_name_no_account(tmp_path, path):
+    """The reason these were rewritten on 2026-09-11.
+
+    Every platform holds one privacy policy URL per *app*, and one app now
+    publishes for more than one identity. A policy naming the first identity
+    covered neither the second nor any identity after it.
+
+    The obvious fix was the wrong one: listing every registered destination
+    would name both identities on a public URL, which is the link `PROFILE.md`
+    is gitignored to prevent. Naming none of them covers all of them, and adds
+    nothing to cover the next.
+    """
+    cfg = settings(tmp_path)
+    body = (await fetch(cfg, path)).text.lower()
+
+    # The prose, with mailto links taken out. The contact address is the one
+    # identifying string left and it is deliberately not covered here: it
+    # defaults to an address carrying the first identity's handle, because a
+    # privacy policy pointing at a mailbox nobody reads is worse than one
+    # naming an account. `GATEWAY_CONTACT_EMAIL` is how that is finished, and
+    # the test below pins that it is settable.
+    #
+    # It is also the weaker link of the two. An address ties the service to
+    # the identity that has always been openly tied to it, and this repository
+    # is named on these pages. What must never appear is a *second* identity,
+    # because that is what ties two accounts to each other.
+    prose = body.replace(cfg.contact_email.lower(), "")
+
+    for handle in ("thewholequote", "the whole quote"):
+        assert handle not in body, f"{path} names the second identity: {handle}"
+    for handle in ("thenightlybuild", "the nightly build"):
+        assert handle not in prose, f"{path} names {handle} outside its contact address"
+
+
+async def test_the_public_pages_still_say_which_platforms(tmp_path):
+    """Neutral is not vague. A reviewer arriving from an app listing has to be
+    able to tell that the policy covers the surface they are reviewing."""
+    body = (await fetch(settings(tmp_path), "/privacy")).text
+
+    for platform in ("Instagram", "YouTube", "TikTok", "Facebook"):
+        assert platform in body
+
+
+@pytest.mark.parametrize("path", PAGES)
+async def test_the_contact_address_comes_from_configuration(tmp_path, path):
+    """The last identifying string on the pages, so it is a setting rather than
+    a name baked into three templates. An address carrying one account's handle
+    would put that account back on a page that names none."""
+    neutral = settings(tmp_path, contact_email="hello@example.test")
+
+    assert "hello@example.test" in (await fetch(neutral, path)).text

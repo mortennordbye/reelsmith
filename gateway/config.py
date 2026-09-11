@@ -183,6 +183,18 @@ class GatewaySettings(BaseSettings):
     # normal case; with several, declare slots in the UI instead.
     slots_account: str = ""
 
+    # Where the three public pages tell people to write. A setting because it
+    # is the last identifying string on pages that are otherwise deliberately
+    # identity-neutral: naming no account is what lets one policy URL cover
+    # every identity this service publishes for, which is the whole point of
+    # the rewrite on 2026-09-11, and an address carrying one account's handle
+    # would put that account back on the page.
+    #
+    # It defaults to the address that was hardcoded there, because a privacy
+    # policy pointing at a mailbox nobody reads is worse than one naming an
+    # identity. Set a neutral alias and this is finished.
+    contact_email: str = "thenightlybuild@nordbye.it"
+
     # --- Admin UI ----------------------------------------------------------
     # Off by default, and that default is deliberate. This service is publicly
     # reachable by necessity: Meta fetches `/media/*` and posts to `/webhook`

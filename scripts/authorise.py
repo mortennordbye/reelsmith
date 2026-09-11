@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 """authorise.py - one consent trip, for any destination, for one account.
 
-    uv run python scripts/authorise.py youtube   --account thewholequote
-    uv run python scripts/authorise.py tiktok    --account thewholequote
-    uv run python scripts/authorise.py facebook  --account thewholequote
-    uv run python scripts/authorise.py instagram --account thewholequote
+    uv run python scripts/authorise.py youtube   --account <name>
+    uv run python scripts/authorise.py tiktok    --account <name>
+    uv run python scripts/authorise.py facebook  --account <name>
+    uv run python scripts/authorise.py instagram --account <name>
 
 Four platforms behind one command, because the thing that does not scale about
 adding an account is not any one OAuth flow. It is that each of them had its

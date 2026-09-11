@@ -10,7 +10,7 @@ file, a shell history or a terminal scrollback on the way.
 
 Run it once per channel:
 
-    uv run python scripts/authorise.py youtube --account thewholequote
+    uv run python scripts/authorise.py youtube --account <name>
 
 It reads `YOUTUBE_CLIENT_ID` and `YOUTUBE_CLIENT_SECRET` from `.env`, the same
 way every other secret in this repo is read. The console's downloaded JSON
