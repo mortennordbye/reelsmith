@@ -281,16 +281,31 @@ def test_a_known_app_opens_every_page_the_setup_needs(monkeypatch):
 
 def test_an_unverified_path_says_so_rather_than_looking_authoritative(monkeypatch, capsys):
     """A wrong deep link is worse than the apps list: it lands on a 404 that
-    reads as the feature being gone rather than as a stale constant."""
+    reads as the feature being gone rather than as a stale constant.
+
+    Every path in `STEPS` is confirmed today, all three having been walked on
+    2026-09-11, so this drives the flag rather than a live entry. Deleting the
+    test along with the last unconfirmed path would delete the mechanism the
+    next platform needs.
+    """
+    from scripts import instagram_authorise as ig
+
+    monkeypatch.setattr(ig.webbrowser, "open", lambda _u: None)
+    monkeypatch.setattr(ig, "STEPS", [("guessed/path/", False, "Something.")])
+    ig.open_dashboard("1234567890")
+
+    assert "not yet verified" in capsys.readouterr().out
+
+
+def test_a_confirmed_path_claims_nothing(monkeypatch, capsys):
+    """The other half, so the note cannot become decoration printed on every
+    line regardless."""
     from scripts import instagram_authorise as ig
 
     monkeypatch.setattr(ig.webbrowser, "open", lambda _u: None)
     ig.open_dashboard("1234567890")
 
-    printed = capsys.readouterr().out
-    assert "not yet verified" in printed
-    # The roles path was read off a real address bar, so it claims nothing.
-    assert printed.count("not yet verified") == sum(1 for _p, ok, _w in ig.STEPS if not ok)
+    assert "not yet verified" not in capsys.readouterr().out
 
 
 def test_no_app_id_falls_back_to_the_apps_list(monkeypatch):

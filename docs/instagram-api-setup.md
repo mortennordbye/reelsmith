@@ -9,7 +9,7 @@ they are the reasons people give up on this:
 - **App Review is not needed.** Review gates *Advanced Access*, which means
   acting on accounts you do not own. *Standard Access* is granted automatically
   and covers any account holding a role on your app. Your own account holds a
-  role on your own app, so an app in development mode publishes fine.
+  role on your own app, so your own app publishes fine, in either mode.
 - **The MP4 does not need a public URL.** Creating the container with
   `upload_type=resumable` returns an upload URI on `rupload.facebook.com` that
   takes the file as raw bytes. The public URL requirement belongs to the older
@@ -28,7 +28,15 @@ they are the reasons people give up on this:
    API publishing path expects it. Create a bare Page and link it.
 
 3. **A Meta app** at <https://developers.facebook.com/apps>, type Business, with
-   the Instagram product added. Leave it in **development** mode.
+   the Instagram product added.
+
+   **The mode does not matter for publishing and this used to say otherwise.**
+   What grants access to an account you own is the tester role below, not
+   Development. It said to leave the app in Development while the gotchas
+   further down said Live is required for webhooks, which is a document
+   contradicting itself; this app has been Live since August and publishing
+   throughout. Corrected 2026-09-11, when the second account was registered
+   against it.
 
 4. **Your account added as an Instagram tester** on the app, with the invite
    accepted from the Instagram side (Settings, Website permissions, Tester
@@ -123,6 +131,17 @@ Learned the hard way, and none of them are obvious from the dashboard.
 4. **The tester invite has two halves.** Adding the Instagram Tester role in
    the app leaves it `Pending`. It has to be accepted from the Instagram side
    under Apps and websites → Tester invites, signed in as *that* account.
+5. **The Instagram app id is not the app id either**, which is the same split
+   as the secret in item 1 and lives beside it on the same panel. The Meta App
+   ID is `3259676274234377` and the Instagram app ID is `1591725419289044`.
+   `IG_APP_ID` in the root `.env` holds the **Meta** one, because the only
+   thing reading it is the consent trip opening the dashboard. An Instagram
+   Business Login OAuth flow, which this repo does not have and has costed out
+   in `scripts/instagram_authorise.py`, would need the other one.
+
+**Everything on this platform comes in pairs and the obvious one is usually
+wrong.** Two app ids, two app secrets, two user ids on `/me`, and two ids on a
+Facebook Page. None of the wrong ones fail loudly.
 
 ## Verify it by API, not by the green ticks
 
