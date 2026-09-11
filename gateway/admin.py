@@ -492,23 +492,46 @@ async def _machine(conn: Any, scope: dict[str, Any]) -> dict[str, Any]:
     at the first step the gateway has a record of. Inventing the rest would put
     a number on this page that nothing could check.
     """
-    ids = [account["account_id"] for account in scope["visible"]]
-    single = ids[0] if len(ids) == 1 else None
+    # Summed across the scope's destinations rather than read once.
+    #
+    # This used to pass a single account id when the scope held exactly one and
+    # `None` otherwise, and `None` means every account. That was right while the
+    # only scopes were one destination or the whole service. An identity is
+    # neither: it holds several destinations, so scoping to a brand fell through
+    # to the `None` branch and counted the other identity's work as this one's.
+    # Invisible until there were two identities to leak between, which there
+    # were from 2026-09-11.
+    ids = [str(account["account_id"]) for account in scope["visible"]]
 
-    covered = await db.covered_repos(conn, single, limit=10_000)
-    rendered = await db.rendered_repos_list(conn, single, limit=10_000)
-    published = await db.published_media(conn, single, limit=10_000)
-    depth = await db.queue_depth(conn, single)
+    # Repos are unioned and posts are summed, which is the difference between
+    # the two kinds of number on this strip. One video committed to an identity
+    # is one repo on each of its destinations, so summing would report a single
+    # night's work as three or four; the same video published to them is
+    # genuinely that many posts.
+    covered: set[str] = set()
+    rendered: set[str] = set()
+    nights: set[str] = set()
+    published = 0
+    queued = 0
+    for account_id in ids:
+        for row in await db.covered_repos(conn, account_id, limit=10_000):
+            covered.add(str(row["repo_full_name"]))
+        for row in await db.rendered_repos_list(conn, account_id, limit=10_000):
+            rendered.add(str(row["repo_full_name"]))
+            if stamp := (row["rendered_at"] or ""):
+                nights.add(stamp[:10])
+        published += len(await db.published_media(conn, account_id, limit=10_000))
+        depth = await db.queue_depth(conn, account_id)
+        queued += sum(depth.get(state, 0) for state in db.QUEUE_LIVE_STATES)
 
-    # Nights that produced something, which is the closest honest reading of
-    # "how long has this run on its own". One night can render several.
-    nights = {stamp[:10] for row in rendered if (stamp := row["rendered_at"] or "")}
     return {
         "covered": len(covered),
         "rendered": len(rendered),
-        "queued": sum(depth.get(state, 0) for state in db.QUEUE_LIVE_STATES),
-        "published": len(published),
-        "destinations": len(scope["visible"]),
+        "queued": queued,
+        "published": published,
+        "destinations": len(ids),
+        # Nights that produced something, which is the closest honest reading of
+        # "how long has this run on its own". One night can render several.
         "nights": len(nights),
     }
 

@@ -19,7 +19,14 @@ import pytest
 from gateway import db, schedule
 from gateway.app import create_app
 from gateway.config import GatewayConfigError
-from tests.gateway_harness import ACCOUNT, API_TOKEN, CHANNEL, FakeMeta, settings
+from tests.gateway_harness import (
+    ACCOUNT,
+    API_TOKEN,
+    CHANNEL,
+    PAGE_ID,
+    FakeMeta,
+    settings,
+)
 
 AUTH = {"authorization": f"Bearer {API_TOKEN}"}
 LINK = "https://github.com/astral-sh/uv"
@@ -1577,3 +1584,62 @@ async def test_publish_all_does_not_consume_the_slot(client):
     await http.post("/admin/queue/publish-all?brand=one")
 
     assert [dict(r) for r in await db.all_slots(app.state.db, ACCOUNT)] == before
+
+
+# --- The dashboard counting one identity rather than all of them -------------
+
+
+async def _two_identities(app) -> None:
+    await db.upsert_account(
+        app.state.db, account_id=ACCOUNT, access_token="t", username="one", brand="one"
+    )
+    await db.upsert_account(
+        app.state.db, account_id=CHANNEL, access_token="", username="@one",
+        platform=db.PLATFORM_YOUTUBE, brand="one",
+    )
+    await db.upsert_account(
+        app.state.db, account_id=PAGE_ID, access_token="t", username="two",
+        platform=db.PLATFORM_FACEBOOK, brand="two",
+    )
+
+
+async def test_the_dashboard_counts_only_the_scoped_identity(client):
+    """Invisible until there were two identities to leak between.
+
+    `_machine` passed a single account id when the scope held exactly one and
+    `None` otherwise, and `None` means every account. That was right while the
+    only scopes were one destination or the whole service. An identity is
+    neither: it holds several destinations, so scoping to a brand fell through
+    to the `None` branch and reported the other identity's work as this one's.
+
+    Asserted through the page rather than the helper, because what the page
+    shows is the thing that was wrong.
+    """
+    http, app = client
+    await _two_identities(app)
+    await queue(http, approved=True)
+    await queue(http, approved=True, account_id=CHANNEL)
+    await queue(http, approved=True, account_id=PAGE_ID)
+
+    scoped = (await http.get("/admin/?brand=one")).text
+    everything = (await http.get("/admin/")).text
+
+    assert "Waiting in the queue</td><td class=\"num\">2<" in scoped
+    assert "Waiting in the queue</td><td class=\"num\">3<" in everything
+
+
+async def test_a_repo_rendered_for_one_identity_counts_once_not_per_destination(client):
+    """Repos are unioned and posts are summed, which is the difference between
+    the two kinds of number on that strip. One video rendered for an identity
+    is one row on each of its destinations, so summing would report a single
+    night's work as two or four."""
+    http, app = client
+    await _two_identities(app)
+    for account_id in (ACCOUNT, CHANNEL):
+        await db.record_rendered(
+            app.state.db, account_id=account_id, repo_full_name="astral-sh/uv"
+        )
+
+    scoped = (await http.get("/admin/?brand=one")).text
+
+    assert ">1</span><span class=\"sl\">Rendered<" in scoped.replace("\n", "")
