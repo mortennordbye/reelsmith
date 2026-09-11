@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% from "_icons.html" import platform_icon, platform_name %}
+{% block title %}reelsmith system{% endblock %}
+{# Refreshes itself, because "is it still running" goes stale while you look. #}
+{% block head %}<meta http-equiv="refresh" content="60">{% endblock %}
+
+{% block body %}
+<header class="ph">
+  <div>
+    <p class="crumb">Portfolio</p>
+    <h1>System</h1>
+    <p class="quip">{{ quip_for(page) }}</p>
+  </div>
+  <span class="pill"><i class="idle"></i>Process up since <b>{{ started_at | fmt(cfg.default_timezone) if started_at else 'unknown' }}</b></span>
+</header>
+
+<div class="grid2">
+  <section class="box">
+    <header><h2>Loops</h2><span class="hint">Also at /metrics for Prometheus</span></header>
+    <table class="t">
+      <tbody>
+        <tr><td>Scheduler tick</td><td class="mono">{{ scheduler_last | ago }}</td><td class="r">{{ 'armed' if cfg.scheduler_enabled else 'off' }}</td></tr>
+        <tr><td>Comment poller</td><td class="mono">{{ poller_last | ago }}</td><td></td></tr>
+        <tr><td>Insights sweep</td><td class="mono">{{ insights_last | ago }}</td><td class="r">{{ 'on' if cfg.insights_enabled else 'off' }}</td></tr>
+        <tr><td>State backup</td><td class="mono">{{ backup_last | ago }}</td><td></td></tr>
+        <tr><td>Stuck claims</td><td class="mono {{ 'bad' if stale }}">{{ stale | length }}</td><td></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="box">
+    <header><h2>Since restart</h2><span class="hint">Counters start again when the process does</span></header>
+    <table class="t">
+      <thead>
+        <tr><th></th>{% for p in platforms %}<th class="r" title="{{ platform_name(p) }}">{{ platform_icon(p) }}</th>{% endfor %}<th class="r">All</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Published</td>{% for p in platforms %}<td class="r">{{ published.get(p, 0) }}</td>{% endfor %}<td class="r">{{ counters.published }}</td></tr>
+        <tr><td>Publish failures</td>{% for p in platforms %}<td class="r {{ 'bad' if failures.get(p, 0) }}">{{ failures.get(p, 0) }}</td>{% endfor %}<td class="r">{{ counters.publish_failures }}</td></tr>
+      </tbody>
+    </table>
+    <table class="t">
+      <tbody>
+        <tr><td>Slots with nothing to post</td><td class="r {{ 'warn' if counters.slots_starved }}">{{ counters.slots_starved }}</td></tr>
+        <tr><td>Meta API errors</td><td class="r">{{ counters.graph_errors }}</td></tr>
+        <tr><td>Bad webhook signatures</td><td class="r {{ 'bad' if counters.signature_failures }}">{{ counters.signature_failures }}</td></tr>
+        <tr><td>Insight readings stored</td><td class="r">{{ counters.insights_fetched }}</td></tr>
+      </tbody>
+    </table>
+  </section>
+</div>
+
+{% if stale %}
+  <section class="box">
+    <header><h2>Claims nothing finished</h2></header>
+    <table class="t">
+      {% for row in stale %}
+        <tr><td class="mono">queue {{ row['id'] }}</td><td>{{ row['repo_full_name'] or row['video_name'] }}</td><td class="mono">{{ row['claimed_at'] or row['created_at'] }}</td></tr>
+      {% endfor %}
+    </table>
+  </section>
+{% endif %}
+
+<details class="box">
+  <summary class="pad">The comment reply funnel, all time. Dormant: nothing advertises the word.</summary>
+  <div class="pad">
+    <div class="stat">
+      {% for label, key in [('comments seen', 'comments_seen'), ('private replies', 'private_replies'), ('replied in DM', 'replied_in_dm'), ('links sent', 'links_sent')] %}
+        <div><span class="n">{{ funnel.get(key, 0) }}</span><span class="l">{{ label }}</span></div>
+      {% endfor %}
+    </div>
+  </div>
+</details>
+{% endblock %}

@@ -210,6 +210,9 @@ def create_app(
         app.state.http = client
         app.state.graph = GraphClient(client, cfg)
         app.state.metrics = app.state.metrics or Metrics()
+        # Every counter the panel shows starts here, and a page leading with
+        # "4 published" on a service holding 150 posts has to say since when.
+        app.state.started_at = db.now()
         await _apply_config_slots(conn, cfg)
 
         tasks: list[asyncio.Task[None]] = []

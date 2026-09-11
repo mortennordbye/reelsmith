@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% from "_icons.html" import platform_name %}
+{% block title %}reelsmith search{% endblock %}
+
+{% block body %}
+<header class="ph">
+  <div>
+    <p class="crumb">Portfolio</p>
+    <h1>Search</h1>
+  </div>
+</header>
+
+<form class="box pad" method="get" action="{{ url_for('search_page') }}" role="search" style="display:flex;gap:8px">
+  <input id="q" name="q" value="{{ query }}" placeholder="A hook, a subject or a file name" style="flex:1" aria-label="Search">
+  <button class="primary">Search</button>
+</form>
+
+{% if query and query | length < 2 %}
+  <section class="box"><p class="empty">Type at least two characters.</p></section>
+{% elif query %}
+  <section class="box">
+    <header><h2>{{ results | length }} video{{ '' if results | length == 1 else 's' }}</h2><span class="hint">Every video ever queued, sent or not</span></header>
+    {% for hit in results %}
+      <div class="vrow with-brand">
+        <a class="brandcell" href="{{ url_for('library_page', brand=hit.brand.path) }}">
+          <span class="tile">{{ hit.brand.monogram }}</span><span class="nm">{{ hit.brand.name }}</span>
+        </a>
+        <div>
+          {% if hit.hook %}<p class="hook">{{ hit.hook }}</p>{% endif %}
+          <span class="meta mono faint">{{ hit.subject }}</span>
+        </div>
+        <div class="chips">
+          {% for item in hit.rows %}
+            <span class="chip {{ item.platform }} st-{{ item.row['state'] }}">
+              <span class="st">{{ {'approved': 'armed', 'published': 'sent'}.get(item.row['state'], item.row['state']) }}</span>
+              {{ platform_name(item.platform) }}
+            </span>
+          {% endfor %}
+        </div>
+      </div>
+    {% else %}
+      <p class="empty">Nothing matches "{{ query }}".</p>
+    {% endfor %}
+  </section>
+{% endif %}
+{% endblock %}

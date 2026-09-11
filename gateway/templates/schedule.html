@@ -1,0 +1,205 @@
+{# Queue and Slots in one page, one row per video.
+
+   A video is one render and a row per platform, so the Queue page used to show
+   the same hook four times and ask for the same decision four times. Here the
+   video is the row and each destination is a chip with its own time and state.
+   The row's buttons act on every destination; a chip opens that destination's
+   own controls.
+
+   Cancelling before the slot fires is the only review this account has, so the
+   hook stays the most prominent thing on the row. #}
+{% extends "base.html" %}
+{% from "_icons.html" import platform_name %}
+{% from "_parts.html" import chip %}
+{% block title %}{{ brand.name }} schedule{% endblock %}
+
+{% block body %}
+<header class="ph">
+  <div>
+    <p class="crumb">{{ brand.name }}</p>
+    <h1>Schedule</h1>
+    <p class="quip">{{ quip_for(page) }}</p>
+  </div>
+  <nav class="filters" aria-label="Destination">
+    <a href="{{ url_for('schedule_page', brand=brand.path) }}" class="{{ 'on' if not platform }}">All destinations</a>
+    {% for p in brand.platforms %}
+      <a href="{{ url_for('schedule_page', brand=brand.path) }}?platform={{ p }}" class="{{ 'on' if platform == p }}">{{ platform_name(p) }}</a>
+    {% endfor %}
+  </nav>
+</header>
+
+<section class="box">
+  <header>
+    <h2>Slot rule</h2>
+    {# Inside a brand by construction, so this can never fire every identity. #}
+    <form class="inline" method="post" action="{{ url_for('publish_all_now') }}?brand={{ brand.path }}">
+      <button title="Send the next armed post on every destination of this brand now. The slots are left alone, so today's fire is still due.">Publish all now</button>
+    </form>
+  </header>
+  {% if rules %}
+    <div class="scroll-x">
+      <table class="t">
+        <tbody>
+          {% for rule in rules %}
+            <tr>
+              <td>
+                <strong class="mono">{{ '%02d:%02d' | format(rule.slot.hour, rule.slot.minute) }}</strong>
+                <span class="muted">{{ rule.slot.tz }}{% if rule.slot.jitter_minutes %} ±{{ rule.slot.jitter_minutes }} min{% endif %} · {{ rule.slot.day_names }}</span>
+              </td>
+              <td>
+                {% if rule.source == 'config' %}
+                  <span class="tag" title="Declared in GATEWAY_SLOTS and rewritten at every boot. Change it in the ConfigMap.">config</span>
+                {% else %}
+                  <span class="tag">added here</span>
+                {% endif %}
+              </td>
+              <td>
+                <div class="chips">
+                  {% for m in rule.members %}
+                    <form class="inline" method="post" action="{{ url_for('toggle_slot', slot_id=m.row['id']) }}">
+                      <input type="hidden" name="active" value="{{ '0' if m.row['active'] else '1' }}">
+                      <button class="{{ '' if m.row['active'] else 'danger' }}" title="{{ 'Pause' if m.row['active'] else 'Resume' }} this slot on {{ platform_name(m.platform) }}">
+                        {{ platform_name(m.platform) }} · {{ 'on' if m.row['active'] else 'paused' }}
+                      </button>
+                    </form>
+                  {% endfor %}
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="hint" style="margin:0;padding:0 14px 12px">
+      A paused config slot comes back at the next rollout. Slots are added and deleted on
+      <a href="{{ url_for('setup_page', brand=brand.path) }}">Setup</a>.
+    </p>
+  {% else %}
+    <p class="empty">No slots, so nothing here publishes on its own. <a href="{{ url_for('setup_page', brand=brand.path) }}">Add one on Setup</a>.</p>
+  {% endif %}
+</section>
+
+{% if decisions %}
+  <section class="box">
+    <header><h2>Needs a decision</h2><span class="hint">{{ decisions | length }}</span></header>
+    {% for d in decisions %}
+      {% set row = d.row %}
+      <div class="vrow" style="grid-template-columns:minmax(0,1fr) auto">
+        <div>
+          <span class="chip {{ d.platform }} {{ 'stuck' if d.stale else 'st-failed' }}">
+            <span class="st">{{ 'claimed, never finished' if d.stale else 'failed' }}</span> {{ platform_name(d.platform) }}
+          </span>
+          <strong style="margin-left:6px">{{ d.subject }}</strong>
+          {% if row['hook'] %}<p class="hook" style="margin-top:6px">{{ row['hook'] }}</p>{% endif %}
+          <span class="meta mono muted">
+            {% if d.stale %}Claimed {{ (row['claimed_at'] or row['created_at'] or '')[:16] | replace('T', ' ') }} and never finished. Check the account before retrying, the post may be live.{% else %}{{ row['failure'] }}{% endif %}
+          </span>
+        </div>
+        <div class="acts">
+          {% if not d.stale %}
+            <form class="inline" method="post" action="{{ url_for('approve', queued_id=row['id']) }}">
+              <button {% if row['container_id'] %}title="The platform already accepted an upload for this one, so check the account for a duplicate before retrying"{% endif %}>Retry{% if row['container_id'] %} ⚠{% endif %}</button>
+            </form>
+            {% if not row['container_id'] %}
+              <form class="inline" method="post" action="{{ url_for('publish_now', queued_id=row['id']) }}">
+                <button title="Send it now instead of waiting for the next slot">Retry now</button>
+              </form>
+            {% endif %}
+          {% endif %}
+          <form class="inline" method="post" action="{{ url_for('cancel', queued_id=row['id']) }}">
+            <button class="link">Give up</button>
+          </form>
+        </div>
+      </div>
+    {% endfor %}
+  </section>
+{% endif %}
+
+<section class="box">
+  <header>
+    <h2>Upcoming</h2>
+    <span class="hint">{{ plan_count }} video{{ '' if plan_count == 1 else 's' }} · {{ row_count }} destination post{{ '' if row_count == 1 else 's' }}</span>
+  </header>
+  {% for label, group in days %}
+    <p class="day">{{ label }}</p>
+    {% for plan in group %}
+      <div class="vrow">
+        <div>
+          {% if plan.hook %}<p class="hook">{{ plan.hook }}</p>{% endif %}
+          <span class="meta mono faint">
+            {{ plan.subject }} ·
+            {% if plan.made %}made {{ plan.made | fmt(plan.tz) }}{% else %}queued {{ (plan.chips[0].row['created_at'] or '')[:16] | replace('T', ' ') }}{% endif %}
+          </span>
+        </div>
+
+        <div class="chips">
+          {% for c in plan.chips %}
+            {% set row = c.row %}
+            <details class="chipmenu">
+              <summary>{{ chip(c) }}</summary>
+              <div class="menu">
+                <strong class="small">{{ platform_name(c.platform) }}{% if c.when %} · {{ c.when | fmt(c.tz) }}{% endif %}</strong>
+                {% if row['failure'] %}<span class="small bad">{{ row['failure'] }}</span>{% endif %}
+                {% if c.state in ('draft', 'failed') %}
+                  <form method="post" action="{{ url_for('approve', queued_id=row['id']) }}"><button class="primary">Approve</button></form>
+                {% elif c.state == 'approved' %}
+                  <form method="post" action="{{ url_for('hold', queued_id=row['id']) }}"><button>Hold</button></form>
+                {% endif %}
+                {% if c.state in ('draft', 'approved', 'failed') and not row['container_id'] %}
+                  <form method="post" action="{{ url_for('publish_now', queued_id=row['id']) }}"><button title="Send it now instead of waiting for the slot">Publish now</button></form>
+                {% endif %}
+                {% if c.state in ('draft', 'approved') %}
+                  <form method="post" action="{{ url_for('move', queued_id=row['id']) }}"><input type="hidden" name="direction" value="up"><button>Earlier in the line</button></form>
+                  <form method="post" action="{{ url_for('move', queued_id=row['id']) }}"><input type="hidden" name="direction" value="down"><button>Later in the line</button></form>
+                {% endif %}
+                {% if c.state != 'published' %}
+                  <form method="post" action="{{ url_for('cancel', queued_id=row['id']) }}"><button class="danger">Cancel on {{ platform_name(c.platform) }}</button></form>
+                {% endif %}
+                {% if c.state in ('draft', 'approved', 'failed') %}
+                  <details>
+                    <summary class="small muted">Caption, link and pin</summary>
+                    <form method="post" action="{{ url_for('edit', queued_id=row['id']) }}">
+                      <textarea name="caption" rows="5" aria-label="Caption">{{ row['caption'] }}</textarea>
+                      {% if c.platform == 'instagram' %}<input type="hidden" name="keyword" value="{{ row['keyword'] or '' }}">{% endif %}
+                      <label class="small muted">Link <input name="link" value="{{ row['link'] or '' }}"></label>
+                      <label class="small muted">Pin to <input name="pin" placeholder="2026-09-12T18:00" value="{{ row['slot_override'] or '' }}"></label>
+                      <button class="primary">Save</button>
+                    </form>
+                  </details>
+                {% endif %}
+                {% if row['permalink'] %}<a href="{{ row['permalink'] }}" rel="noreferrer">Open the post</a>{% endif %}
+              </div>
+            </details>
+          {% endfor %}
+        </div>
+
+        <div class="acts">
+          {% set held = plan.ids('draft') %}
+          {% set armed = plan.ids('approved') %}
+          {% set live = plan.ids('draft', 'approved') %}
+          {% if held %}
+            <form class="inline" method="post" action="{{ url_for('video_action', brand=brand.path, action='approve') }}">
+              {% for i in held %}<input type="hidden" name="ids" value="{{ i }}">{% endfor %}
+              <button class="primary" title="Arm this video on every destination it is waiting on">Approve</button>
+            </form>
+          {% endif %}
+          {% if armed %}
+            <form class="inline" method="post" action="{{ url_for('video_action', brand=brand.path, action='hold') }}">
+              {% for i in armed %}<input type="hidden" name="ids" value="{{ i }}">{% endfor %}
+              <button title="Hold this video on every destination">Hold</button>
+            </form>
+          {% endif %}
+          {% if live %}
+            <form class="inline" method="post" action="{{ url_for('video_action', brand=brand.path, action='cancel') }}">
+              {% for i in live %}<input type="hidden" name="ids" value="{{ i }}">{% endfor %}
+              <button class="danger" title="Cancel this video on every destination that has not sent it">Cancel</button>
+            </form>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty">Nothing queued. Render on the host and push with <span class="mono">main.py --enqueue &lt;date&gt;/&lt;slug&gt;</span>.</p>
+  {% endfor %}
+</section>
+{% endblock %}

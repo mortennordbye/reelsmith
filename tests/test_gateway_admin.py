@@ -381,22 +381,72 @@ async def test_an_unreferenced_file_is_still_pruned(client, cfg, monkeypatch):
 # --- The panel ------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "path", ["/admin/", "/admin/posts", "/admin/slots", "/admin/health"]
-)
+SCHEDULE = "/admin/b/nightly/schedule"
+LIBRARY = "/admin/b/nightly/library"
+PERFORMANCE = "/admin/b/nightly/performance"
+SUBJECTS = "/admin/b/nightly/subjects"
+PAGES = [
+    "/admin/", "/admin/calendar", "/admin/destinations", "/admin/system",
+    "/admin/search?q=uv", "/admin/settings",
+    "/admin/b/nightly/", SCHEDULE, LIBRARY, PERFORMANCE, SUBJECTS, "/admin/b/nightly/setup",
+]
+
+
+@pytest.mark.parametrize("path", PAGES)
 async def test_the_pages_render(client, path):
+    """With a queued video on every page, because a page with nothing on it
+    never reaches the code that breaks."""
     http, _ = client
+    await queue(http, approved=True, hook="It reads 40 pages of a PDF in a single pass")
+
     response = await http.get(path)
-    assert response.status_code == 200
+
+    assert response.status_code == 200, response.text[:400]
     assert "reelsmith" in response.text
 
 
-async def test_the_queue_page_shows_a_queued_post_and_its_keyword(client):
+async def test_the_pages_render_with_numbers_on_two_platforms(client):
+    """One render published to Instagram and YouTube with a reading on each,
+    which is the shape every brand page exists to show and the one an empty
+    fixture never exercises."""
+    http, app = client
+    conn = app.state.db
+    await db.upsert_account(
+        conn, account_id=CHANNEL, access_token="", username="@nightly",
+        platform=db.PLATFORM_YOUTUBE, brand="nightly",
+    )
+    await db.add_slot(conn, account_id=ACCOUNT, hour=8, minute=10, tz="Europe/Oslo")
+    for account_id, media in ((ACCOUNT, "ig-1"), (CHANNEL, "yt-1")):
+        qid = await db.enqueue_post(
+            conn, account_id=account_id, video_name="shared.mp4", cover_name=None,
+            caption="c", keyword="UV", link=LINK, repo_full_name="astral-sh/uv",
+            approved=True, hook="One render, two feeds",
+        )
+        await db.mark_queue_published(conn, qid, media_id=media, permalink="https://ig/p")
+    await db.record_insights(
+        conn, media_id="ig-1", account_id=ACCOUNT,
+        metrics={"views": 120, "reach": 100, "skip_rate": 61.0, "avg_watch_ms": 5000},
+    )
+    await db.record_insights(
+        conn, media_id="yt-1", account_id=CHANNEL, platform=db.PLATFORM_YOUTUBE,
+        metrics={"views": 700, "avg_view_pct": 55.0, "avg_watch_ms": 18000},
+    )
+    await queue(http, approved=True)
+
+    for path in PAGES:
+        response = await http.get(path)
+        assert response.status_code == 200, (path, response.text[:400])
+    assert "Where the views came from" in (await http.get("/admin/b/nightly/")).text
+    assert (await http.get(LIBRARY)).text.count("One render, two feeds") == 1, (
+        "one video is one row, however many platforms it went to"
+    )
+
+
+async def test_the_schedule_shows_a_queued_video(client):
     http, _ = client
     await queue(http)
-    body = (await http.get("/admin/queue")).text
+    body = (await http.get(SCHEDULE)).text
     assert "astral-sh/uv" in body
-    assert "UV" in body
 
 
 async def test_the_queue_page_says_when_the_video_was_made(client):
@@ -412,7 +462,7 @@ async def test_the_queue_page_says_when_the_video_was_made(client):
         rendered_at="2026-08-14T02:31:00+00:00",
     )
 
-    body = (await http.get("/admin/queue")).text
+    body = (await http.get(SCHEDULE)).text
 
     assert "made Fri 14 Aug 02:31" in body
 
@@ -424,7 +474,7 @@ async def test_a_post_with_no_render_on_record_says_when_it_arrived_instead(clie
     http, _ = client
     await queue(http)
 
-    body = (await http.get("/admin/queue")).text
+    body = (await http.get(SCHEDULE)).text
 
     assert "made " not in body
     assert "queued " in body
@@ -443,7 +493,7 @@ async def test_the_youtube_row_gets_the_date_too(client):
         rendered_at="2026-08-14T02:31:00+00:00",
     )
 
-    body = (await http.get("/admin/queue")).text
+    body = (await http.get(SCHEDULE)).text
 
     assert "made Fri 14 Aug 02:31" in body
 
@@ -880,7 +930,7 @@ async def test_the_queue_shows_the_hook_being_reviewed(client):
     http, _ = client
     await queue(http, hook="It reads 40 pages of a PDF in a single pass")
 
-    page = (await http.get("/admin/queue", headers={"accept": "text/html"})).text
+    page = (await http.get(SCHEDULE, headers={"accept": "text/html"})).text
 
     assert "It reads 40 pages of a PDF in a single pass" in page
 
@@ -891,7 +941,7 @@ async def test_a_row_queued_before_the_hook_travelled_shows_no_hook(client):
     http, _ = client
     await queue(http)
 
-    page = (await http.get("/admin/queue", headers={"accept": "text/html"})).text
+    page = (await http.get(SCHEDULE, headers={"accept": "text/html"})).text
 
     assert 'class="hook"' not in page
 
@@ -911,7 +961,7 @@ async def test_the_posts_page_puts_the_hook_next_to_what_it_scored(client):
     await db.mark_queue_published(conn, qid, media_id="m1", permalink="https://ig/x")
     await conn.commit()
 
-    page = (await http.get("/admin/posts", headers={"accept": "text/html"})).text
+    page = (await http.get(LIBRARY, headers={"accept": "text/html"})).text
 
     assert "Your coding agent dies when you close the terminal" in page
 
@@ -924,7 +974,7 @@ async def test_the_insights_page_opens_with_nothing_to_compare(client):
     sentence saying why there is nothing to draw."""
     http, _ = client
 
-    response = await http.get("/admin/insights", headers={"accept": "text/html"})
+    response = await http.get(PERFORMANCE, headers={"accept": "text/html"})
 
     assert response.status_code == 200
     assert "Nothing to compare yet" in response.text
@@ -953,7 +1003,7 @@ async def test_the_insights_page_groups_published_reels(client):
             )
     await conn.commit()
 
-    page = (await http.get("/admin/insights", headers={"accept": "text/html"})).text
+    page = (await http.get(PERFORMANCE, headers={"accept": "text/html"})).text
 
     assert "old1234.aaaaaaaa" in page
     assert "new5678.bbbbbbbb" in page
@@ -994,7 +1044,7 @@ async def test_a_post_still_arriving_is_held_back_from_the_cohorts(client):
     await publish("fresh", 1)
     await conn.commit()
 
-    page = (await http.get("/admin/insights", headers={"accept": "text/html"})).text
+    page = (await http.get(PERFORMANCE, headers={"accept": "text/html"})).text
 
     assert "held back" in page
     assert "1</strong>" in page, "and it says how many"
@@ -1015,7 +1065,7 @@ async def test_the_repos_page_shows_what_blocks_discovery(client):
     )
     await conn.commit()
 
-    page = (await http.get("/admin/repos", headers={"accept": "text/html"})).text
+    page = (await http.get(SUBJECTS, headers={"accept": "text/html"})).text
 
     assert "astral-sh/uv" in page
     assert "never/committed" in page
@@ -1029,7 +1079,7 @@ async def test_the_repos_page_shows_what_blocks_discovery(client):
 
 async def test_a_stranger_cannot_read_the_repo_list(anon):
     anon_http, _ = anon
-    assert (await anon_http.get("/admin/repos")).status_code == 401
+    assert (await anon_http.get(SUBJECTS)).status_code == 401
 
 
 async def test_a_stranger_cannot_read_the_insights(anon):
@@ -1037,7 +1087,7 @@ async def test_a_stranger_cannot_read_the_insights(anon):
     panel that publishes to a real account has to be reachable from the
     internet for Meta to fetch media from it."""
     anon_http, _ = anon
-    assert (await anon_http.get("/admin/insights")).status_code == 401
+    assert (await anon_http.get(PERFORMANCE)).status_code == 401
 
 
 async def test_the_wrong_token_does_not_sign_you_in(anon):
@@ -1240,7 +1290,7 @@ async def test_the_posts_page_shows_what_a_reel_did(client):
         app.state.db, igsid="a1", account_id=ACCOUNT, media_id="media-1"
     )
 
-    body = (await http.get("/admin/posts")).text
+    body = (await http.get(LIBRARY)).text
 
     assert "astral-sh/uv" in body
     assert "1500" in body, "the view count"
@@ -1263,7 +1313,7 @@ async def test_the_posts_page_scores_the_hook(client):
                  "total_watch_ms": 10_622_235, "skip_rate": 64.2},
     )
 
-    body = (await http.get("/admin/posts")).text
+    body = (await http.get(LIBRARY)).text
 
     assert "64.2%" in body, "the skip rate, to the tenth"
     assert "8.4s" in body, "average watch time in seconds, not milliseconds"
@@ -1279,105 +1329,136 @@ async def test_a_reel_with_no_reading_yet_says_so_rather_than_showing_zero(clien
         app.state.db, queued["id"], media_id="fresh", permalink=None
     )
 
-    body = (await http.get("/admin/posts")).text
+    body = (await http.get(LIBRARY)).text
 
     assert "No reading yet" in body
 
 
-async def test_the_switcher_appears_only_once_there_is_a_choice(client):
-    """At one account a switcher offering one option is furniture."""
+async def test_the_picker_offers_every_brand(client):
+    """One entry per identity, in the sidebar, on every page."""
     http, app = client
-    assert 'class="switcher' not in (await http.get("/admin/")).text
-
     await db.upsert_account(
         app.state.db, account_id="17841400000000009", access_token="t2", username="second"
     )
-    assert 'class="switcher' in (await http.get("/admin/")).text
+
+    aside = (await http.get("/admin/")).text.split("<aside", 1)[1].split("</aside>", 1)[0]
+
+    assert "/admin/b/nightly/" in aside
+    assert "/admin/b/second/" in aside
 
 
-async def test_scoping_to_an_account_hides_the_others(client):
+async def test_a_brand_page_is_about_that_brand_only(client):
     http, app = client
     other = "17841400000000009"
     await db.upsert_account(
         app.state.db, account_id=other, access_token="t2", username="second"
     )
+    await queue(http, approved=True)
 
-    body = (await http.get(f"/admin/?account={other}")).text
+    body = (await http.get("/admin/b/second/schedule")).text
 
-    assert "second" in body
-    # Split at the header, because the switcher names every account by
-    # definition and now names each one twice: once as the chip and once in the
-    # title a mark carries for the sake of a screen reader. Counting mentions
-    # across the whole page measured the switcher's markup rather than the
-    # scope. What the scope promises is about the body.
-    main = body.split("</header>", 1)[-1]
-    assert "nightly" not in main, "the scoped page still renders the other board"
+    # Split at the sidebar, which names every brand by definition. What the
+    # brand path promises is about the page itself.
+    main = body.split("</aside>", 1)[-1]
+    assert "second" in main
+    assert "astral-sh/uv" not in main, "the other brand's queue leaked onto this page"
 
 
-async def test_an_unknown_account_falls_back_to_everything(client):
-    """A bookmark that outlived its account should show the panel, not a 404."""
+async def test_an_unknown_brand_lands_on_today(client):
+    """A bookmark that outlived its identity should open the panel, not a 404."""
     http, _ = client
-    response = await http.get("/admin/?account=does-not-exist")
-    assert response.status_code == 200
-    assert "nightly" in response.text
+
+    response = await http.get("/admin/b/does-not-exist/schedule")
+
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("/admin/")
+
+
+async def test_old_addresses_land_on_the_new_pages(client):
+    """The eight tab URLs are in bookmarks and in this repo's own notes."""
+    http, app = client
+    await db.upsert_account(
+        app.state.db, account_id=CHANNEL, access_token="", username="@nightly",
+        platform=db.PLATFORM_YOUTUBE, brand="nightly",
+    )
+
+    expected = {
+        f"/admin/queue?account={CHANNEL}": "/admin/b/nightly/schedule?platform=youtube",
+        "/admin/posts?brand=nightly": "/admin/b/nightly/library",
+        "/admin/insights?brand=nightly": "/admin/b/nightly/performance",
+        "/admin/repos?brand=nightly": "/admin/b/nightly/subjects",
+        "/admin/slots": "/admin/destinations",
+        "/admin/health": "/admin/system",
+        "/admin/queue": "/admin/calendar",
+    }
+    for old, new in expected.items():
+        response = await http.get(old)
+        assert response.status_code == 303, old
+        assert response.headers["location"].endswith(new), (old, response.headers["location"])
 
 
 # --- Which surface a board describes ----------------------------------------
 
 
-@pytest.mark.parametrize("page", ["/admin/", "/admin/slots", "/admin/posts", "/admin/health"])
-async def test_every_board_names_its_platform(client, page):
-    """A YouTube channel is its own account row publishing on its own schedule
-    under its own rules. Before this, two boards appeared with nothing but a
-    username between them."""
+@pytest.mark.parametrize(
+    "page", ["/admin/b/nightly/", "/admin/b/nightly/setup", "/admin/b/nightly/performance"]
+)
+async def test_every_destination_names_its_platform(client, page):
+    """A YouTube channel is its own row publishing on its own schedule under its
+    own rules, and a board with nothing but a handle on it was ambiguous."""
     http, app = client
     await db.upsert_account(
         app.state.db, account_id="UC-chan", access_token="tok",
-        username="thenightlybuild", platform=db.PLATFORM_YOUTUBE,
+        username="@nightly", platform=db.PLATFORM_YOUTUBE, brand="nightly",
     )
 
     body = (await http.get(page)).text
 
-    # The badge markup, not the bare word: the stylesheet explains itself and
-    # mentions both platforms by name, so a substring match passes on a page
-    # that renders no badge at all.
-    assert 'class="platform youtube"' in body, f"{page} does not mark the channel board"
-    assert 'class="platform instagram"' in body, f"{page} does not mark the Reels board"
+    # The badge markup, not the bare word, because the word is also in the
+    # sidebar and in sentences that explain a platform.
+    assert 'class="platform youtube"' in body, f"{page} does not mark the channel"
+    assert 'class="platform instagram"' in body, f"{page} does not mark the Reels account"
 
 
-async def test_a_single_board_still_names_its_platform(client):
-    """The posts page used to hide the heading when only one board was shown,
-    which is exactly when the switcher has narrowed to one account and nothing
-    else on the page says which surface it is."""
+async def test_a_platform_filter_narrows_the_schedule(client):
     http, app = client
     await db.upsert_account(
         app.state.db, account_id="UC-chan", access_token="tok",
-        username="thenightlybuild", platform=db.PLATFORM_YOUTUBE,
+        username="@nightly", platform=db.PLATFORM_YOUTUBE, brand="nightly",
     )
+    await queue(http, approved=True)
 
-    body = (await http.get("/admin/posts?account=UC-chan")).text
+    main = (await http.get(f"{SCHEDULE}?platform=youtube")).text.split("</aside>", 1)[-1]
 
-    assert 'class="platform youtube"' in body
-    assert 'class="platform instagram"' not in body, "the switcher narrowed to one account"
+    assert "astral-sh/uv" not in main, "an Instagram row survived a YouTube filter"
 
 
 # --- The dashboard ----------------------------------------------------------
 
 
-async def test_the_dashboard_is_the_landing_page(client):
-    """Queue answers "what is next" and Posts answers "how did they do", and
-    neither answers "is the machine running", which is the question somebody
-    opening this actually has."""
+async def test_today_is_the_landing_page(client):
+    """What needs a person across every brand, then one row per brand."""
     http, _ = client
 
     body = (await http.get("/admin/")).text
 
+    assert "Needs a decision" in body
+    assert "Brands" in body
+    # The manager is loud-only decoration, and loud is what a first visit gets.
     assert "Hi Boss" in body
-    assert "Next out" in body
-    assert "The machine" in body
 
 
-async def test_the_dashboard_names_the_next_post_and_when_it_goes(client):
+async def test_the_plain_look_drops_the_manager(client):
+    http, _ = client
+    http.cookies.set("skin", "plain")
+
+    body = (await http.get("/admin/")).text
+
+    assert "Hi Boss" not in body
+    assert "boss-room.jpg" not in body, "the plain look must not download the wallpaper"
+
+
+async def test_the_brand_page_names_the_next_post_and_when_it_goes(client):
     """The countdown and the hook together, because the hook is what a person
     would cancel over and the time is how long they have to do it."""
     http, app = client
@@ -1387,7 +1468,7 @@ async def test_the_dashboard_names_the_next_post_and_when_it_goes(client):
     )
     await queue(http, approved=True, hook="It reads 40 pages of a PDF in a single pass")
 
-    body = (await http.get("/admin/")).text
+    body = (await http.get("/admin/b/nightly/")).text
 
     assert "It reads 40 pages of a PDF in a single pass" in body
     assert "Europe/Oslo" in body, "the slot's own zone, not UTC"
@@ -1396,40 +1477,39 @@ async def test_the_dashboard_names_the_next_post_and_when_it_goes(client):
     assert "-" not in re.search(r'class="cap">\s*(in [^<&]*)', body).group(1)
 
 
-async def test_the_dashboard_says_so_when_nothing_is_scheduled(client):
+async def test_the_brand_page_says_so_when_nothing_is_scheduled(client):
     """An empty queue and a queue with no active slot are the same picture from
     here, and both are better than a blank panel."""
     http, _ = client
 
-    assert "Nothing scheduled" in (await http.get("/admin/")).text
+    assert "Nothing armed on a destination with an active slot" in (
+        await http.get("/admin/b/nightly/")
+    ).text
 
 
-async def test_the_dashboard_scopes_to_one_destination(client):
+async def test_an_empty_queue_with_a_slot_is_a_decision_on_today(client):
+    """The shape of an account that went quiet three days ago and nobody noticed."""
     http, app = client
-    await db.upsert_account(
-        app.state.db, account_id="UC-chan", access_token="tok",
-        username="thenightlybuild", platform=db.PLATFORM_YOUTUBE,
-    )
+    await db.add_slot(app.state.db, account_id=ACCOUNT, hour=8, minute=10, tz="UTC")
 
-    main = (await http.get("/admin/?account=UC-chan")).text.split("</header>", 1)[-1]
+    body = (await http.get("/admin/")).text
 
-    assert 'class="platform youtube"' in main
-    assert 'class="platform instagram"' not in main
+    assert "Nothing armed on Instagram" in body
 
 
-async def test_the_dashboard_scores_openings_on_instagram_only(client):
+async def test_performance_scores_openings_on_instagram_only(client):
     """`skip_rate` is 0 on every other platform and that 0 is an absence, not a
-    perfect opening. Feeding it to this board would report a video nobody
-    skipped."""
+    perfect opening, so a brand without Instagram gets no skip chart at all."""
     http, app = client
     await db.upsert_account(
         app.state.db, account_id="UC-chan", access_token="tok",
-        username="thenightlybuild", platform=db.PLATFORM_YOUTUBE,
+        username="@tubeonly", platform=db.PLATFORM_YOUTUBE,
     )
 
-    body = (await http.get("/admin/?account=UC-chan")).text
+    body = (await http.get("/admin/b/tubeonly/performance")).text
 
-    assert "Opening retention" not in body
+    assert "The opening" not in body
+    assert "average view percentage" in body
 
 
 # --- The panel's own images -------------------------------------------------
@@ -1463,7 +1543,7 @@ async def test_assets_need_the_login_like_everything_else(anon):
 # --- Reading a counter that has labels --------------------------------------
 
 
-async def test_the_health_page_counts_posts_that_carry_a_platform_label(client):
+async def test_the_system_page_counts_posts_that_carry_a_platform_label(client):
     """`posts_published` gained a `platform` label on 2026-08-26, and
     `prometheus_client` never runs `_metric_init` on a labelled parent, so the
     read swallowed an AttributeError and the tile said 0 on a service that had
@@ -1472,9 +1552,12 @@ async def test_the_health_page_counts_posts_that_carry_a_platform_label(client):
     app.state.metrics.posts_published.labels(platform=db.PLATFORM_INSTAGRAM).inc()
     app.state.metrics.posts_published.labels(platform=db.PLATFORM_YOUTUBE).inc(2)
 
-    body = (await http.get("/admin/health")).text
+    body = (await http.get("/admin/system")).text
 
     assert ">3<" in body.replace(" ", "").replace("\n", "")
+    # And it says since when, because those counters start again at a restart
+    # and "4 published" on a service holding 150 posts reads as a total.
+    assert "Process up since" in body
 
 
 # --- Publishing every destination of one identity at once --------------------
@@ -1603,36 +1686,31 @@ async def _two_identities(app) -> None:
     )
 
 
-async def test_the_dashboard_counts_only_the_scoped_identity(client):
-    """Invisible until there were two identities to leak between.
-
-    `_machine` passed a single account id when the scope held exactly one and
-    `None` otherwise, and `None` means every account. That was right while the
-    only scopes were one destination or the whole service. An identity is
-    neither: it holds several destinations, so scoping to a brand fell through
-    to the `None` branch and reported the other identity's work as this one's.
-
-    Asserted through the page rather than the helper, because what the page
-    shows is the thing that was wrong.
-    """
+async def test_today_counts_each_identity_on_its_own_row(client):
+    """Two identities used to be summed into one runway, one next post and one
+    retention chart. Each brand is a row now, and its numbers are its own."""
     http, app = client
     await _two_identities(app)
     await queue(http, approved=True)
     await queue(http, approved=True, account_id=CHANNEL)
     await queue(http, approved=True, account_id=PAGE_ID)
 
-    scoped = (await http.get("/admin/?brand=one")).text
-    everything = (await http.get("/admin/")).text
+    body = (await http.get("/admin/")).text
 
-    assert "Waiting in the queue</td><td class=\"num\">2<" in scoped
-    assert "Waiting in the queue</td><td class=\"num\">3<" in everything
+    def armed(brand: str) -> int:
+        match = re.search(
+            rf'nm">{brand}<small>.*?</td>\s*<td>.*?</td>\s*<td class="r">(\d+)</td>', body, re.S
+        )
+        assert match, f"no row for {brand}"
+        return int(match.group(1))
+
+    assert armed("one") == 2
+    assert armed("two") == 1
 
 
-async def test_a_repo_rendered_for_one_identity_counts_once_not_per_destination(client):
-    """Repos are unioned and posts are summed, which is the difference between
-    the two kinds of number on that strip. One video rendered for an identity
-    is one row on each of its destinations, so summing would report a single
-    night's work as two or four."""
+async def test_a_repo_rendered_for_one_identity_is_one_subject_not_one_per_destination(client):
+    """The cooldown list is per identity. It was one table per destination, so
+    one render showed up once for every platform the brand posts to."""
     http, app = client
     await _two_identities(app)
     for account_id in (ACCOUNT, CHANNEL):
@@ -1640,29 +1718,192 @@ async def test_a_repo_rendered_for_one_identity_counts_once_not_per_destination(
             app.state.db, account_id=account_id, repo_full_name="astral-sh/uv"
         )
 
-    scoped = (await http.get("/admin/?brand=one")).text
+    body = (await http.get("/admin/b/one/subjects")).text
 
-    assert ">1</span><span class=\"sl\">Rendered<" in scoped.replace("\n", "")
+    assert body.count("astral-sh/uv</a>") == 1
 
 
-async def test_the_publish_all_button_is_on_the_page_when_scoped(client):
-    """It was not, and the endpoint working hid that.
+async def test_a_render_with_no_owner_stays_with_the_first_identity(client):
+    """A blank account id matched every account, so the second brand's page
+    listed a repository it never touched and counted it as its one render."""
+    http, app = client
+    await _two_identities(app)
+    await db.record_rendered(app.state.db, account_id="", repo_full_name="teamchong/pxpipe")
 
-    The card was gated on `brand or selected`, which are fields of the scope
-    object rather than top level template variables, so the condition was
-    always false and the button never rendered on any page. Every test of the
-    control posted to the route directly, which is exactly the gap a test
-    suite leaves when it never looks at what it built.
-    """
+    assert "teamchong/pxpipe" in (await http.get("/admin/b/one/subjects")).text
+    assert "teamchong/pxpipe" not in (await http.get("/admin/b/two/subjects")).text
+    # Discovery still reads it for everyone, which is what the table is for.
+    rows = await db.rendered_repos_list(app.state.db, PAGE_ID)
+    assert [row["repo_full_name"] for row in rows] == ["teamchong/pxpipe"]
+
+
+async def test_the_publish_all_button_is_only_inside_a_brand(client):
+    """It was not on any page for a while, and the endpoint working hid that.
+    It belongs on a brand's Schedule, which is always scoped, and nowhere a
+    misread click could fire every identity at once."""
     http, app = client
     await db.upsert_account(
         app.state.db, account_id=ACCOUNT, access_token="t", username="one", brand="one"
     )
 
-    scoped = (await http.get("/admin/queue?brand=one")).text
-    everything = (await http.get("/admin/queue")).text
+    assert "Publish all now" in (await http.get("/admin/b/one/schedule")).text
+    assert "Publish all now" not in (await http.get("/admin/")).text
+    assert "Publish all now" not in (await http.get("/admin/calendar")).text
 
-    assert "Publish all now" in scoped
-    # Unscoped, `visible` is every account, and a button that publishes must
-    # not be one misread click away from firing all of them.
-    assert "Publish all now" not in everything
+
+# --- One video, several destinations ---------------------------------------
+
+
+async def _one_video_on_two_destinations(app, *, state: str = db.QUEUE_DRAFT) -> list[int]:
+    await _two_identities(app)
+    ids = []
+    for account_id in (ACCOUNT, CHANNEL):
+        ids.append(await db.enqueue_post(
+            app.state.db, account_id=account_id, video_name="shared.mp4", cover_name=None,
+            caption="c", keyword="UV", link=LINK, repo_full_name="astral-sh/uv",
+            approved=state == db.QUEUE_APPROVED, hook="One render, two feeds",
+        ))
+    return ids
+
+
+async def test_a_video_is_approved_on_every_destination_at_once(client):
+    """Reviewing one render used to be the same decision on four cards."""
+    http, app = client
+    ids = await _one_video_on_two_destinations(app)
+
+    await http.post("/admin/b/one/videos/approve", data={"ids": [str(i) for i in ids]})
+
+    for queued_id in ids:
+        assert (await db.get_queued(app.state.db, queued_id))["state"] == db.QUEUE_APPROVED
+
+
+async def test_the_schedule_shows_one_row_for_one_video(client):
+    http, app = client
+    await _one_video_on_two_destinations(app, state=db.QUEUE_APPROVED)
+
+    body = (await http.get("/admin/b/one/schedule")).text
+
+    assert body.count('<p class="hook">One render, two feeds</p>') == 1
+    assert 'class="chip instagram' in body
+    assert 'class="chip youtube' in body
+
+
+async def test_a_video_action_cannot_reach_another_brand(client):
+    """The ids come from a form, so a forged list must not touch another
+    identity's queue."""
+    http, app = client
+    await _two_identities(app)
+    theirs = await db.enqueue_post(
+        app.state.db, account_id=PAGE_ID, video_name="v.mp4", cover_name=None,
+        caption="c", keyword="UV", link=LINK, approved=True,
+    )
+
+    await http.post("/admin/b/one/videos/cancel", data={"ids": [str(theirs)]})
+
+    assert (await db.get_queued(app.state.db, theirs))["state"] == db.QUEUE_APPROVED
+
+
+async def test_arming_a_whole_video_skips_a_failure_with_a_container(client):
+    """Retrying a row whose container existed is a decision made after reading
+    the failure. One click arming a video must not make it for somebody."""
+    http, app = client
+    first, second = await _one_video_on_two_destinations(app)
+    await db.set_container(app.state.db, second, "container-1")
+    await db.set_queue_state(app.state.db, second, db.QUEUE_FAILED, failure="gave up")
+
+    await http.post("/admin/b/one/videos/approve", data={"ids": [str(first), str(second)]})
+
+    assert (await db.get_queued(app.state.db, first))["state"] == db.QUEUE_APPROVED
+    assert (await db.get_queued(app.state.db, second))["state"] == db.QUEUE_FAILED
+
+
+# --- What each destination is shown ----------------------------------------
+
+
+async def test_setup_offers_comment_replies_only_where_they_exist(client):
+    """The keyword mechanic is Instagram's. Health showed the switch on YouTube."""
+    http, app = client
+    await _two_identities(app)
+
+    body = (await http.get("/admin/b/one/setup")).text
+
+    assert body.count("Stop DMs") == 1
+
+
+async def test_a_tiktok_token_reports_the_expiry_it_has(client):
+    """Health read `accounts.token_expires_at` for every platform, which TikTok
+    never fills, and printed "?" for a refresh token with a year left."""
+    http, app = client
+    await db.upsert_account(
+        app.state.db, account_id="tt-open", access_token="", username="@nightly",
+        platform=db.PLATFORM_TIKTOK, brand="nightly",
+    )
+    await db.upsert_tiktok_credentials(
+        app.state.db, open_id="tt-open", client_key="k", client_secret="s",
+        refresh_token="r", refresh_expires_in=300 * 86_400,
+    )
+
+    body = (await http.get("/admin/b/nightly/setup")).text
+
+    # 300 days less the seconds the test took, rounded.
+    assert re.search(r"(299|300) days left", body)
+    # Once, on the Instagram row, whose fixture account has no expiry stored.
+    assert body.count("Expiry not recorded") == 1
+
+
+async def test_a_page_token_says_it_does_not_expire(client):
+    http, app = client
+    await _two_identities(app)
+
+    assert "Does not expire" in (await http.get("/admin/b/two/setup")).text
+
+
+async def test_a_tiktok_destination_with_no_readings_says_why(client):
+    """The inbox upload sends no title and the sweep matches TikTok videos by
+    title, so nothing is ever matched. The page used to say "No reading yet",
+    which reads as a post that is merely new."""
+    http, app = client
+    await db.upsert_account(
+        app.state.db, account_id="tt-open", access_token="", username="@nightly",
+        platform=db.PLATFORM_TIKTOK, brand="nightly",
+    )
+    for n in range(3):
+        qid = await db.enqueue_post(
+            app.state.db, account_id="tt-open", video_name=f"v{n}.mp4", cover_name=None,
+            caption="c", keyword="UV", link=LINK, approved=True,
+        )
+        await db.mark_queue_published(app.state.db, qid, media_id=f"pub-{n}", permalink=None)
+
+    body = (await http.get("/admin/")).text
+
+    assert "No readings stored for 3 posts on TikTok" in body
+    assert "Inbox uploads carry no title" in body
+
+
+async def test_the_library_offers_no_player_for_a_pruned_video(client):
+    """Media is deleted after publish by design, and the Posts page still drew
+    a player for every row: 173 of 191 media URLs returned 404 on one load."""
+    http, app = client
+    live = await upload(http, "live.mp4")
+    for name, media in ((live, "m-live"), ("pruned-long-ago.mp4", "m-gone")):
+        qid = await db.enqueue_post(
+            app.state.db, account_id=ACCOUNT, video_name=name, cover_name=None,
+            caption="c", keyword="UV", link=LINK, approved=True, hook=f"hook for {media}",
+        )
+        await db.mark_queue_published(app.state.db, qid, media_id=media, permalink=None)
+
+    body = (await http.get(LIBRARY)).text
+
+    assert body.count("<video") == 1
+    assert f'src="/media/{live}"' in body
+    assert "pruned after publishing" in body
+
+
+async def test_search_finds_a_video_by_its_hook(client):
+    http, _ = client
+    await queue(http, hook="It reads 40 pages of a PDF in a single pass")
+
+    body = (await http.get("/admin/search?q=40 pages")).text
+
+    assert "It reads 40 pages of a PDF in a single pass" in body
+    assert "/admin/b/nightly/library" in body

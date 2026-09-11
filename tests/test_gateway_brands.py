@@ -166,151 +166,97 @@ async def test_boards_arrive_grouped_and_in_platform_order(client):
     ]
 
 
-# --- The switcher -------------------------------------------------------------
+# --- The picker and the brand pages -------------------------------------------
 
 
-async def test_the_switcher_is_one_chip_per_identity(client):
-    """Not one per destination. Five destinations is two chips, and the marks
-    inside them are what pick a single platform."""
+def sidebar(body: str) -> str:
+    return body.split("<aside", 1)[1].split("</aside>", 1)[0]
+
+
+def page(body: str) -> str:
+    return body.split("</aside>", 1)[-1]
+
+
+async def test_the_picker_is_one_entry_per_identity(client):
+    """Not one per destination. Five destinations is two entries."""
     http, app = client
     await seed(app.state.db, second=True)
 
-    body = (await http.get("/admin/posts")).text
+    aside = sidebar((await http.get("/admin/")).text)
 
-    assert body.count('href="?brand=thenightlybuild"') == 1
-    assert body.count('href="?brand=dawnpatrol"') == 1
-    assert marks(body, "instagram") == 2
-    assert marks(body, "youtube") == 2
-    assert marks(body, "tiktok") == 1
+    assert aside.count("/admin/b/thenightlybuild/\"") == 1
+    assert aside.count("/admin/b/dawnpatrol/\"") == 1
 
 
-async def test_a_single_identity_still_gets_no_furniture(client):
-    """One identity on three platforms is a real choice, so the switcher shows.
-    What it must not grow is a heading naming the only identity there is."""
-    http, app = client
-    await seed(app.state.db)
-
-    body = (await http.get("/admin/posts")).text
-
-    assert 'class="switcher' in body
-    assert 'class="identity"' not in body
-
-
-async def test_two_identities_get_a_heading_each(client):
+async def test_a_brand_page_holds_every_platform_it_posts_to(client):
     http, app = client
     await seed(app.state.db, second=True)
 
-    body = (await http.get("/admin/posts")).text
+    main = page((await http.get("/admin/b/thenightlybuild/")).text)
 
-    assert body.count('class="identity"') == 2
-
-
-# --- Scoping ------------------------------------------------------------------
-
-
-async def test_a_brand_selects_every_platform_it_posts_to(client):
-    http, app = client
-    await seed(app.state.db, second=True)
-
-    main = (await http.get("/admin/posts?brand=thenightlybuild")).text.split("</header>", 1)[-1]
-
-    assert main.count('class="board') == 3
+    assert main.count('class="platform ') == 3
     assert "dawnpatrol" not in main
 
 
-async def test_a_mark_selects_one_destination(client):
+async def test_today_lists_each_identity_once(client):
     http, app = client
     await seed(app.state.db, second=True)
 
-    main = (await http.get(f"/admin/posts?account={NIGHT_YT}")).text.split("</header>", 1)[-1]
+    main = page((await http.get("/admin/")).text)
 
-    assert main.count('class="board') == 1
-    assert "YouTube" in main
+    assert main.count('nm">thenightlybuild<small>3 destinations') == 1
+    assert main.count('nm">dawnpatrol<small>2 destinations') == 1
 
 
-async def test_picking_a_destination_still_lights_its_identity(client):
-    """Otherwise a YouTube board looks like it belongs to nobody, which is the
-    confusion the grouping exists to remove."""
+async def test_the_brand_survives_navigation(client):
+    """The brand is in the path, so a link built for another page of it cannot
+    drop it the way a forgotten query string did."""
     http, app = client
     await seed(app.state.db, second=True)
 
-    body = (await http.get(f"/admin/posts?account={NIGHT_YT}")).text
+    body = (await http.get("/admin/b/dawnpatrol/library")).text
 
-    assert 'class="group on"' in body
-    assert body.count('class="group on"') == 1
+    assert "/admin/b/dawnpatrol/performance" in body
+    assert "/admin/b/dawnpatrol/schedule" in body
 
 
-async def test_the_choice_survives_navigation(client):
-    """The scope rides on every in-panel link, or navigating away from an
-    identity silently widens the page back to all of them."""
+async def test_an_unknown_brand_lands_on_today(client):
     http, app = client
     await seed(app.state.db, second=True)
 
-    body = (await http.get("/admin/posts?brand=dawnpatrol")).text
+    response = await http.get("/admin/b/gone/library")
 
-    assert "/admin/insights?brand=dawnpatrol" in body
-    assert "/admin/?brand=dawnpatrol" in body
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("/admin/")
 
 
-async def test_an_unknown_brand_falls_back_to_everything(client):
-    """A bookmark that outlived an identity should show the panel, not a 404."""
+async def test_an_old_destination_link_lands_inside_its_brand(client):
+    """`?account=` picked one destination. It opens that brand, narrowed to
+    that platform, which is the closest page to what the link meant."""
     http, app = client
     await seed(app.state.db, second=True)
 
-    response = await http.get("/admin/posts?brand=gone")
+    response = await http.get(f"/admin/posts?account={NIGHT_YT}")
 
-    assert response.status_code == 200
-    assert response.text.split("</header>", 1)[-1].count('class="board') == 5
-
-
-async def test_a_destination_wins_over_a_brand(client):
-    """Both arriving together is a stale link rather than a contradiction, and
-    the narrower answer is the one a person clicked."""
-    http, app = client
-    await seed(app.state.db, second=True)
-
-    main = (
-        await http.get(f"/admin/posts?brand=dawnpatrol&account={NIGHT_YT}")
-    ).text.split("</header>", 1)[-1]
-
-    assert main.count('class="board') == 1
-    assert "dawnpatrol" not in main
+    location = response.headers["location"]
+    assert location.endswith("/admin/b/thenightlybuild/library?platform=youtube")
 
 
 # --- What each platform's page says -------------------------------------------
 
 
-async def test_insights_says_why_it_cannot_compare_youtube(client):
-    """It rendered a heading and empty space, which reads as a broken page
-    rather than as a question this data cannot answer."""
+async def test_performance_says_why_youtube_is_not_a_skip_rate(client):
+    """Shown in its own terms rather than refused. The rule was that skip rate
+    never shares a table with anything else, not that the others go unshown."""
     http, app = client
     await seed(app.state.db)
 
-    body = (await http.get(f"/admin/insights?account={NIGHT_YT}")).text
+    # Whitespace collapsed, because the sentences wrap in the template.
+    body = " ".join((await http.get("/admin/b/thenightlybuild/performance")).text.split())
 
-    assert "No comparisons for this platform" in body
     assert "average view percentage" in body
-    assert f"/admin/posts?account={NIGHT_YT}" in body
-
-
-async def test_insights_says_something_different_about_tiktok(client):
-    """One reports the wrong measure and the other reports none, and a page
-    that gave both the same sentence would be wrong about one of them."""
-    http, app = client
-    await seed(app.state.db)
-
-    body = (await http.get(f"/admin/insights?account={NIGHT_TT}")).text
-
     assert "no retention, watch time or completion metric" in body
-
-
-async def test_insights_still_compares_instagram(client):
-    http, app = client
-    await seed(app.state.db)
-
-    body = (await http.get(f"/admin/insights?account={NIGHT_IG}")).text
-
-    assert "No comparisons for this platform" not in body
+    assert 'class="platform instagram"' in body
 
 
 async def test_the_dm_funnel_is_absent_where_it_cannot_exist(client):
@@ -322,14 +268,15 @@ async def test_the_dm_funnel_is_absent_where_it_cannot_exist(client):
     conn = app.state.db
     for account_id in (NIGHT_IG, NIGHT_YT):
         queued_id = await db.enqueue_post(
-            conn, account_id=account_id, video_name="a.mp4", cover_name="c.png",
-            caption="c", keyword="send", link="https://github.com/a/b",
-            repo_full_name="a/b", approved=True, title="t",
+            conn, account_id=account_id, video_name=f"{account_id}.mp4", cover_name=None,
+            caption="c", keyword="SEND", link="https://github.com/a/b", approved=True,
         )
         await db.mark_queue_published(conn, queued_id, media_id=f"m-{account_id}", permalink="")
 
-    instagram = (await http.get(f"/admin/posts?account={NIGHT_IG}")).text
-    youtube = (await http.get(f"/admin/posts?account={NIGHT_YT}")).text
+    instagram = page((await http.get(
+        "/admin/b/thenightlybuild/library?platform=instagram"
+    )).text)
+    youtube = page((await http.get("/admin/b/thenightlybuild/library?platform=youtube")).text)
 
     assert "links sent" in instagram
     assert "links sent" not in youtube

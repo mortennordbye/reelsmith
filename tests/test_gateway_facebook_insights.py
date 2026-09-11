@@ -28,7 +28,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from gateway import analysis, db, insights
+from gateway import analysis, db, facebook, insights
 from gateway.app import create_app
 from gateway.graph import GraphClient
 from gateway.metrics import Metrics
@@ -104,6 +104,37 @@ async def sweep(conn, meta, cfg, metrics) -> int:
 
 
 # --- Reading them -------------------------------------------------------------
+
+
+async def test_a_metric_meta_refuses_is_dropped_named_and_probed_once(
+    conn, meta, cfg, metrics, caplog
+):
+    """On 2026-09-11 every Facebook read had failed with "(#100) The value must
+    be a valid insights metric", so no Page had stored a single reading, and the
+    error does not say which name it means. Meta retired a family of impression
+    metrics on 2025-11-15 while the Reels documentation still lists all five of
+    these, so the reader finds out rather than guessing."""
+    facebook.forget_refused_metrics()
+    try:
+        await publish(conn)
+        await publish(conn, video_id="fb-video-2")
+        meta.facebook.insights = {"fb-video-1": READING, "fb-video-2": READING}
+        meta.facebook.rejected_metrics = {"post_impressions_unique"}
+
+        with caplog.at_level("WARNING"):
+            assert await sweep(conn, meta, cfg, metrics) == 2
+
+        assert (await db.latest_insights(conn, PAGE_ID))["fb-video-1"]["views"] == 1614
+        assert "post_impressions_unique" in caplog.text
+        remaining = [m for m in facebook.INSIGHT_METRICS if m != "post_impressions_unique"]
+        # Probed once for the whole sweep, not once per Reel: the second post
+        # asks straight for what is left.
+        probes = [asked for asked in meta.facebook.metric_requests if len(asked) == 1]
+        assert len(probes) == len(facebook.INSIGHT_METRICS)
+        assert meta.facebook.metric_requests[-1] == remaining
+    finally:
+        facebook.forget_refused_metrics()
+
 
 
 async def test_a_published_reel_gets_a_reading(conn, meta, cfg, metrics):

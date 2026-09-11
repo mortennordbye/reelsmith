@@ -2140,7 +2140,11 @@ async def record_rendered(
 
 
 async def rendered_repos_list(
-    conn: aiosqlite.Connection, account_id: str | None = None, limit: int = 500
+    conn: aiosqlite.Connection,
+    account_id: str | None = None,
+    limit: int = 500,
+    *,
+    include_unowned: bool = True,
 ) -> list[Any]:
     """Every repo with a Reel built for it, oldest first.
 
@@ -2152,10 +2156,16 @@ async def rendered_repos_list(
     A blank `account_id` matches every account, since a render can predate the
     account being configured and filtering it out would hide exactly the early
     records this table exists to keep.
+
+    **The panel asks without the unowned rows.** Discovery wants them, because a
+    render recorded before `--account` existed still blocks a rebuild. A page
+    about one identity does not: a blank owner matched every account, so the
+    second brand's page listed a repository it never touched and counted it as
+    its one render. `include_unowned=False` is how a caller says whose rows.
     """
     where, args = [], []
     if account_id:
-        where.append("account_id IN (?, '')")
+        where.append("account_id IN (?, '')" if include_unowned else "account_id = ?")
         args.append(account_id)
     clause = f"WHERE {' AND '.join(where)}" if where else ""
     return await _all(
@@ -2444,3 +2454,114 @@ async def funnel(conn: aiosqlite.Connection, account_id: str | None = None) -> d
         row = await _one(conn, sql, args)
         counts[name] = int(row[0]) if row else 0
     return counts
+
+
+# --------------------------------------------------------------------------
+# The panel's portfolio readers
+# --------------------------------------------------------------------------
+#
+# Grouped rather than asked once per account. Every page used to loop the
+# destinations and query inside the loop, which is invisible at seven and is
+# the difference between a page and a timeout at two hundred.
+
+
+async def destination_activity(conn: aiosqlite.Connection) -> dict[str, dict[str, Any]]:
+    """What each destination has published and read, in three grouped queries.
+
+    Both publish paths, for the reason `published_media` reads both. The reading
+    count is distinct posts rather than rows, because a post read on three days
+    is one post with numbers, and "no readings for 15 published posts" is the
+    sentence this exists to make possible.
+    """
+    out: dict[str, dict[str, Any]] = {}
+
+    def entry(account_id: Any) -> dict[str, Any]:
+        return out.setdefault(
+            str(account_id),
+            {"published": 0, "last_published_at": None, "readings": 0, "last_reading_at": None},
+        )
+
+    for sql, args in (
+        (
+            "SELECT account_id, COUNT(*), MAX(published_at) FROM queued_posts "
+            "WHERE state = ? AND media_id IS NOT NULL GROUP BY account_id",
+            (QUEUE_PUBLISHED,),
+        ),
+        (
+            "SELECT account_id, COUNT(*), MAX(COALESCE(published_at, registered_at)) FROM posts "
+            "WHERE media_id NOT IN (SELECT media_id FROM queued_posts WHERE media_id IS NOT NULL) "
+            "GROUP BY account_id",
+            (),
+        ),
+    ):
+        for row in await _all(conn, sql, args):
+            seen = entry(row[0])
+            seen["published"] += int(row[1])
+            seen["last_published_at"] = max(
+                (stamp for stamp in (seen["last_published_at"], row[2]) if stamp), default=None
+            )
+    for row in await _all(
+        conn,
+        "SELECT account_id, COUNT(DISTINCT media_id), MAX(fetched_at) FROM insights "
+        "GROUP BY account_id",
+    ):
+        seen = entry(row[0])
+        seen["readings"] = int(row[1])
+        seen["last_reading_at"] = row[2]
+    return out
+
+
+async def tiktok_refresh_expiries(conn: aiosqlite.Connection) -> dict[str, str]:
+    """When each TikTok refresh token lapses, keyed by open id.
+
+    The panel read `accounts.token_expires_at` for every platform, which TikTok
+    never fills, and printed "?" for a credential this table knows has a year
+    left.
+    """
+    rows = await _all(conn, "SELECT open_id, refresh_expires_at FROM tiktok_credentials")
+    return {str(row[0]): str(row[1] or "") for row in rows}
+
+
+async def last_rendered(
+    conn: aiosqlite.Connection, account_ids: Iterable[str], *, include_unowned: bool = False
+) -> str | None:
+    """The newest render recorded for any of these destinations.
+
+    The only heartbeat the render host leaves on this side. A host that stops
+    rendering is invisible from every metric that starts at the queue, and the
+    newest `rendered_at` per identity is what can say so days before the feed
+    goes dark.
+    """
+    ids = [str(one) for one in account_ids if one]
+    if include_unowned:
+        ids.append("")
+    if not ids:
+        return None
+    row = await _one(
+        conn,
+        "SELECT MAX(rendered_at) FROM rendered_repos "
+        f"WHERE account_id IN ({','.join('?' * len(ids))})",
+        ids,
+    )
+    return row[0] if row and row[0] else None
+
+
+async def search_queue(conn: aiosqlite.Connection, query: str, limit: int = 120) -> list[Any]:
+    """Queue rows whose hook, repository, title or file name contains `query`.
+
+    Every row ever queued, published or not, because "which video was the one
+    about Cook" is asked about the past more often than about the line.
+    """
+    escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    pattern = f"%{escaped}%"
+    return await _all(
+        conn,
+        """
+        SELECT * FROM queued_posts
+        WHERE hook LIKE ? ESCAPE '\\' OR repo_full_name LIKE ? ESCAPE '\\'
+           OR title LIKE ? ESCAPE '\\' OR video_name LIKE ? ESCAPE '\\'
+        ORDER BY COALESCE(published_at, created_at) DESC
+        LIMIT ?
+        """,
+        (pattern, pattern, pattern, pattern, limit),
+    )

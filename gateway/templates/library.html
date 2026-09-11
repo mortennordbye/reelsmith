@@ -1,0 +1,178 @@
+{# Every published video, one row each, with a column per platform holding only
+   the numbers that platform reports.
+
+   **Nothing here may say reach, saves or skipped for a platform that does not
+   report them.** A YouTube brand's page renders none of the three, and
+   `test_gateway_youtube_insights` asserts it, because a zero beside a metric a
+   platform never measures reads as a result. #}
+{% extends "base.html" %}
+{% from "_icons.html" import platform_icon, platform_name %}
+{% from "_parts.html" import badge %}
+{% block title %}{{ brand.name }} library{% endblock %}
+{% block style %}
+    table.lib tr.video td { border-bottom: 0; padding-bottom: 4px; }
+    table.lib tr.detail td { padding-top: 0; }
+    .posts { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin: 10px 0; }
+    .posts .box { margin: 0; background: var(--bg); }
+    .pager { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+{% endblock %}
+
+{% block body %}
+{% set absent_word = {'pending': 'No reading yet', 'none': 'None stored', 'missing': 'No reading'} %}
+{% set units = {'instagram': 'views · skip', 'youtube': 'views · viewed', 'facebook': 'views · reach', 'tiktok': 'views'} %}
+{% set base = url_for('library_page', brand=brand.path) %}
+{% set platform_qs = 'platform=' ~ platform ~ '&' if platform else '' %}
+<header class="ph">
+  <div>
+    <p class="crumb">{{ brand.name }}</p>
+    <h1>Library</h1>
+    <p class="quip">{{ quip_for(page) }}</p>
+  </div>
+  <nav class="filters" aria-label="Filter">
+    <a href="{{ base }}?sort={{ sort }}" class="{{ 'on' if not platform }}">All platforms</a>
+    {% for p in brand.platforms %}
+      <a href="{{ base }}?platform={{ p }}&sort={{ sort }}" class="{{ 'on' if platform == p }}">{{ platform_name(p) }}</a>
+    {% endfor %}
+    <a href="{{ base }}?{{ platform_qs }}sort=published" class="{{ 'on' if sort == 'published' }}">Newest</a>
+    <a href="{{ base }}?{{ platform_qs }}sort=views" class="{{ 'on' if sort == 'views' }}">Most views</a>
+  </nav>
+</header>
+
+<section class="box">
+  <div class="pad">
+    <div class="stat">
+      <div><span class="n">{{ lib.total }}</span><span class="l">videos</span></div>
+      {% for p in lib.platforms %}
+        {% set s = lib.summary[p] %}
+        <div><span class="n">{{ s.views }}</span><span class="l">{{ platform_name(p) }} views</span></div>
+        {% if s.skip is not none %}<div><span class="n">{{ '%.0f' | format(s.skip) }}%</span><span class="l">avg skip</span></div>{% endif %}
+        {% if s.viewed is not none %}<div><span class="n">{{ '%.0f' | format(s.viewed) }}%</span><span class="l">avg viewed</span></div>{% endif %}
+        {% if s.watch_ms is not none %}<div><span class="n">{{ '%.1f' | format(s.watch_ms / 1000) }}s</span><span class="l">{{ platform_name(p) }} avg watch</span></div>{% endif %}
+        {% if s.reach is not none and s.read %}<div><span class="n">{{ s.reach }}</span><span class="l">{{ platform_name(p) }} reach</span></div>{% endif %}
+        {% if s.links_sent is not none %}<div><span class="n">{{ s.links_sent }}</span><span class="l">links sent</span></div>{% endif %}
+      {% endfor %}
+    </div>
+    <details style="margin-top:10px">
+      <summary class="small muted">How to read this</summary>
+      <div class="small muted">
+        {% if 'instagram' in lib.platforms %}<p>Skip is Instagram's share of viewers who scrolled past inside the first three seconds, so it scores the opening and nothing after it. Lower is better, and green is under 60 percent.</p>{% endif %}
+        {% if 'youtube' in lib.platforms %}<p>Viewed is YouTube's share of the whole video watched on average. It scores the video rather than the opening, so it never compares with a skip rate. Over 100 percent means the Short looped.</p>{% endif %}
+        {% if 'facebook' in lib.platforms %}<p>Facebook's watch time includes replays, so it is not Instagram's, and its shares are missing rather than zero because Meta reports them fused to comments.</p>{% endif %}
+        {% if 'tiktok' in lib.platforms %}<p>TikTok reports four counts and nothing about watching.</p>{% endif %}
+        <p>"No reading yet" is a post too new to have numbers. "None stored" is a destination that has never stored one, which is a sweep to look at rather than a post that did badly.</p>
+      </div>
+    </details>
+  </div>
+</section>
+
+<section class="box">
+  {% if lib.videos %}
+    <div class="scroll-x">
+      <table class="t lib">
+        <thead>
+          <tr>
+            <th>Published</th>
+            <th>Video</th>
+            {% for p in lib.platforms %}<th class="r">{{ platform_icon(p) }} {{ units[p] }}</th>{% endfor %}
+            <th class="r">All views</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for v in lib.videos %}
+            <tr class="video">
+              <td class="mono">{{ v.published | fmt(cfg.default_timezone) if v.published else '' }}</td>
+              <td>
+                {% if v.hook %}<p class="hook">{{ v.hook }}</p>{% endif %}
+                <span class="meta mono faint">{{ v.subject }}</span>
+              </td>
+              {% for p in lib.platforms %}
+                {% set post = v.posts.get(p) %}
+                <td class="r">
+                  {% if not post %}
+                    <span class="faint">not posted</span>
+                  {% elif post.reading is not none %}
+                    {{ post.reading['views'] }}
+                    {%- if p == 'instagram' and post.reading['skip_rate'] %} · <span class="{{ 'good' if post.reading['skip_rate'] < 60 }}">{{ '%.1f' | format(post.reading['skip_rate']) }}%</span>
+                    {%- elif p == 'youtube' and post.reading['avg_view_pct'] %} · {{ '%.1f' | format(post.reading['avg_view_pct']) }}%
+                    {%- elif p == 'facebook' %} · {{ post.reading['reach'] }}{% endif %}
+                  {% else %}
+                    <span class="faint">{{ absent_word[post.absent] }}</span>
+                  {% endif %}
+                </td>
+              {% endfor %}
+              <td class="r">{{ v.views }}</td>
+            </tr>
+            <tr class="detail">
+              <td></td>
+              <td colspan="{{ lib.platforms | length + 2 }}">
+                <details>
+                  <summary class="small muted">Details</summary>
+                  <div class="posts">
+                    {% for p in lib.platforms %}
+                      {% set post = v.posts.get(p) %}
+                      {% if post %}
+                        <div class="box pad">
+                          {{ badge(p) }}
+                          <p class="cap">
+                            {{ (post.row['published_at'] or '')[:16] | replace('T', ' ') }}
+                            {% if post.row['permalink'] %} · <a href="{{ post.row['permalink'] }}" rel="noreferrer">open</a>{% endif %}
+                          </p>
+                          {% if post.reading is not none %}
+                            <div class="metrics">
+                              {% for key in measured_columns(p) %}
+                                <div><span class="n">{{ post.reading[key] }}</span><span class="l">{{ {'saved': 'saves'}.get(key, key) }}</span></div>
+                              {% endfor %}
+                              {% if post.reading['skip_rate'] %}
+                                <div><span class="n">{{ '%.1f' | format(post.reading['skip_rate']) }}%</span><span class="l">skipped</span></div>
+                              {% endif %}
+                              {% if post.reading['avg_watch_ms'] %}
+                                <div><span class="n">{{ '%.1f' | format(post.reading['avg_watch_ms'] / 1000) }}s</span><span class="l">avg watch</span></div>
+                              {% endif %}
+                              {% if post.reading['avg_view_pct'] %}
+                                <div><span class="n">{{ '%.1f' | format(post.reading['avg_view_pct']) }}%</span><span class="l">avg viewed</span></div>
+                              {% endif %}
+                            </div>
+                          {% else %}
+                            <p class="small faint">{{ absent_word[post.absent] }}.</p>
+                          {% endif %}
+                          {% if post.funnel.get('comments_seen') or post.funnel.get('links_sent') %}
+                            <div class="metrics">
+                              <div><span class="n">{{ post.funnel.get('comments_seen', 0) }}</span><span class="l">asked</span></div>
+                              <div><span class="n">{{ post.funnel.get('links_sent', 0) }}</span><span class="l">links sent</span></div>
+                              <div>
+                                <span class="n">{% if post.funnel.get('comments_seen') %}{{ ((post.funnel.get('links_sent', 0) / post.funnel['comments_seen']) * 100) | round | int }}%{% else %}n/a{% endif %}</span>
+                                <span class="l">converted</span>
+                              </div>
+                            </div>
+                          {% endif %}
+                        </div>
+                      {% endif %}
+                    {% endfor %}
+                  </div>
+                  {% if v.media %}
+                    {# Served from the same public route the platforms fetch from, so
+                       the preview is the file that was published. #}
+                    <video controls preload="none" src="/media/{{ v.video_name }}"></video>
+                  {% elif v.video_name %}
+                    <p class="small faint">The video file was pruned after publishing, so there is no player.</p>
+                  {% endif %}
+                  {% if v.recipe %}<p class="small faint">Recipe <span class="mono">{{ v.recipe }}</span></p>{% endif %}
+                </details>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <span class="hint">Showing {{ lib.videos | length }} of {{ lib.total }} videos · page {{ lib.page }} of {{ lib.pages }}</span>
+      <span>
+        {% if lib.page > 1 %}<a class="btn" href="{{ base }}?{{ platform_qs }}sort={{ sort }}&page={{ lib.page - 1 }}">Previous</a>{% endif %}
+        {% if lib.page < lib.pages %}<a class="btn" href="{{ base }}?{{ platform_qs }}sort={{ sort }}&page={{ lib.page + 1 }}">Next</a>{% endif %}
+      </span>
+    </div>
+  {% else %}
+    <p class="empty">Nothing published yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

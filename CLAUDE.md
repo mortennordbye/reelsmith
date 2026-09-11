@@ -372,7 +372,7 @@ attempted*:
   Facebook's `post_video_avg_time_watched` scores a whole Reel including
   replays, and TikTok exposes no retention metric at all. So `insights` carries
   a `platform` column, every platform's counts are stored and shown on the Posts
-  page, and `/api/results` and the Insights page both filter to Instagram
+  page, and `/api/results` and the Performance page both filter to Instagram
   **explicitly** rather than relying on nothing else filling the `skip_rate`
   column, which is a rule that holds by accident. Feeding anything else to
   `_results_block` would corrupt the single measurement everything else is
@@ -402,7 +402,7 @@ attempted*:
   died, where the alternative is a failed mint every six hours.
 - **On a TikTok row the unmeasured columns are 0 and the platform column is
   what says so.** `reach`, `saved`, `avg_watch_ms`, `total_watch_ms` and
-  `skip_rate` are absences rather than results, and the Posts page renders the
+  `skip_rate` are absences rather than results, and the Library page renders the
   column set for the platform so a TikTok post is not shown as one that got
   zero reach and zero saves.
 - **TikTok takes pushed bytes, not a URL, and that was forced rather than
@@ -469,8 +469,22 @@ attempted*:
   splitting that by subtracting a separately fetched comment count would be
   arithmetic on two different definitions; `shares` stays 0 and the platform
   column says so. `reach` is genuine, which makes this the only board besides
-  Instagram's to carry it, and the reason the Posts page spends a sentence
+  Instagram's to carry it, and the reason the Library page spends a sentence
   saying that its watch time is not Instagram's watch time.
+- **On the inbox path TikTok stores no readings at all, and that is still
+  open.** The sweep matches a TikTok video to its queue row by the title this
+  service wrote, and the inbox upload sends no `post_info`, so there is no
+  title and no row is ever matched. Measured 2026-09-11: 13 published, 0
+  readings. Matching on `create_time` is what `refresh_tiktok_account`
+  deliberately chose not to do, so it is a decision rather than a patch. The
+  panel says why on the destination instead of "No reading yet".
+- **Facebook insights drop a metric Meta refuses rather than failing whole.**
+  On 2026-09-11 every Reel's read had failed with `(#100) The value must be a
+  valid insights metric`, so no Page had a reading, and the error does not say
+  which name. `facebook.read_insights` probes each metric once per process,
+  remembers the refused ones, names them in a warning and reads with the rest.
+  A refused column reads 0 until `INSIGHT_METRICS` is corrected from that log
+  line.
 - **`is_aigc` and `containsSyntheticMedia` are the same question and they move
   together.** Both are `false`, and since 2026-08-26 for a reason rather than
   because a value had to be sent: the fields ask whether the content depicts
@@ -514,18 +528,15 @@ identity would have made it six chips reading nearly the same word.
   *argument* rather than the value being inserted, because those differ exactly
   when nobody said, and reading `excluded.brand` put a corrected brand back
   under its handle on the next OAuth run. Same rule as `active` and `platform`.
-- **The switcher is one chip per identity**, holding its name and one mark per
-  platform. The name selects the identity across every platform, a mark selects
-  one of them, and `?brand=` and `?account=` are the two scopes. The narrower
-  wins when both arrive, since that means a stale link rather than a
-  contradiction.
-- **Boards are grouped in SQL, not in five templates.** `_ACCOUNT_ORDER` sorts
-  by brand and then by platform in the order the fan-out writes them, so the
-  switcher and the boards cannot disagree about the order without someone
-  changing one query.
-- **Nothing new appears at one identity.** The identity heading and the
-  switcher both stay hidden until there are two, for the same reason the
-  switcher always has: a control naming the only option there is is furniture.
+- **A brand is a path, not a query string.** `/admin/b/<brand>/...` holds
+  every page about one identity, and a destination is a `?platform=` filter
+  inside it. The old `?brand=` and `?account=` links redirect.
+- **Accounts are grouped in SQL, not in templates.** `_ACCOUNT_ORDER` sorts by
+  brand and then by platform in the order the fan-out writes them, and
+  `panel.load_brands` keeps that order rather than sorting again.
+- **The brand picker is always there**, in the sidebar, attention first and
+  then by name, capped at twelve with the rest on Today. At one identity it is
+  also the way into that identity's pages, so hiding it would hide them.
 
 **What each board shows is the platform's own answer, never a zero standing in
 for an absence.** Instagram gets skip and watch time, YouTube gets watch time
@@ -1186,35 +1197,60 @@ Two things about the queue are load bearing and easy to undo by accident:
   which `CLAIM_STALE_AFTER` makes visible after an hour but nothing undoes for
   you.
 
-### The panel is called SLOPENGINE and the landing page is a dashboard
+### The panel is organised by brand, and the loud look is a layer
 
-Since 2026-08-27 the panel has a face: a wordmark reading **SLOPENGINE** in a
-gold frame with `reelsmith` under it, a photograph of the account's mascot as
-the page's backdrop, and a Dashboard at `/admin/` that summarises the other six
-pages. It is the internal panel only. **The public pages are deliberately
-untouched**, because four platforms hold those URLs on file and a reviewer
-reads them; `public_base.html` and its four templates keep their sober styling
-and share nothing with `base.html`.
+Rebuilt on 2026-09-11 from an audit of the live panel at two identities on
+seven destinations (`notes/ui-audit-2026-09-11.md`, private). It was eight tabs
+of data types, each stacking a board per destination: a 32,000 pixel Posts
+page, the same video four times on the queue, and a header switcher that cut
+off the eighth brand. The shape now:
 
-- **`/admin/` is the dashboard and the queue moved to `/admin/queue`.** Every
-  in-panel link goes through `url_for`, so the templates needed no edits, but a
-  bookmark straight to the old queue lands on the dashboard now. Login and
-  `do_login` redirect to the dashboard; `_back` still falls back to the queue,
-  which is where the controls are.
-- **The dashboard adds no query of its own.** Every number on it is a call one
-  of the other pages already makes, which is what stops it disagreeing with the
-  page it summarises. `_machine` and `_retention` in `admin.py` are the only
-  new arithmetic and both are thin joins over existing readers.
-- **The machine strip starts at the first step the gateway can see.**
-  Discovery matches a few thousand repositories a night and ranks them down to
-  a handful, and both numbers live on the render host and never arrive here.
-  Putting them on the strip would be putting a number on the page that nothing
-  could check, so it starts at "committed" and says so underneath.
-- **The dashboard scores openings on Instagram only, explicitly.** Same rule as
-  `/api/results` and the Insights page, and for the same reason: `skip_rate` is
-  0 on every other platform and that 0 is an absence. `_retention` returns
-  `None` when the scope holds no Instagram row, and the board disappears rather
-  than reporting a video nobody skipped.
+- **Portfolio pages** are `/admin/` (Today), `/admin/calendar`,
+  `/admin/destinations`, `/admin/system` and `/admin/search`, one row per brand
+  or per destination, which is what stays a page at fifty identities.
+- **Brand pages** are `/admin/b/<brand>/` and its `schedule`, `library`,
+  `performance`, `subjects` and `setup`. The brand is in the path so a link
+  built with `url_for` cannot drop it, and a destination is a `?platform=`
+  filter inside it.
+- **A video is a row and a destination is a chip.** Queue rows sharing
+  `video_name` are one render, so Schedule and Library group on it. The row's
+  Approve, Hold and Cancel post to `/admin/b/<brand>/videos/<action>`, which
+  applies the single-row rule to each id and ignores ids belonging to another
+  brand. Arming a whole video skips a failed row that has a container, because
+  retrying that one is a decision made after reading the failure.
+- **`gateway/panel.py` holds what a page is about**, and each route in
+  `admin.py` is one call and a template. What a platform supports is
+  `panel.CAPS` rather than `if platform ==` in templates: Health once showed
+  the DM switch on YouTube because it missed a rule two other templates kept.
+- **Today's inbox and the sidebar counts are one calculation.** `panel.shell`
+  builds every destination's issues from grouped queries on every page, so the
+  number beside Today and the rows on it cannot disagree. One problem shared
+  by several brands is one row naming them.
+- **The render heartbeat is the newest `rendered_at` per brand**, flagged past
+  30 hours only when that brand's runway is under two days, because a full
+  queue rendering nothing is the `--max-queue` ceiling working.
+- **A render with no account belongs to the first identity registered.**
+  Discovery still reads blank rows for everyone through `rendered_repos_list`;
+  the panel passes `include_unowned=False` for every other brand, which is what
+  stopped a repository the second brand never touched appearing as its render.
+- **Media is shown only while the file exists.** `_prune_media` deletes it
+  after publish by design, and the Library page drew a player for every row
+  anyway: 173 of 191 media URLs returned 404 on one load.
+- **The old URLs redirect.** `/admin/queue`, `/posts`, `/insights`, `/repos`,
+  `/slots` and `/health` land inside the brand a `?brand=` or `?account=`
+  named, narrowed to that platform, or on the nearest portfolio page.
+- **System labels its counters as the process's.** They reset at a restart,
+  and Health led with "4 published" on a service holding 150 posts.
+  `app.state.started_at` is what the page says they count from.
+
+The loud look is SLOPENGINE in a gold frame, the room photograph behind it, the
+manager on Today and one quip per page. **The plain look is what the panel is
+designed against**; loud may only swap the tokens on `body` and show
+decoration, never move anything. A first visit still gets loud. **The public
+pages are deliberately untouched**, because four platforms hold those URLs on
+file and a reviewer reads them; `public_base.html` and its four templates
+share nothing with `base.html`.
+
 - **The accent is gold because cyan would collide with TikTok.** The Room's
   wordmark is neon cyan, and making that the functional accent would have put
   links, the nav underline and the primary button one step from the TikTok
@@ -1229,7 +1265,7 @@ and share nothing with `base.html`.
   would ever help. The login page therefore gets the plain ground, since an
   unauthenticated browser cannot fetch the wall.
 - **One dry line per page, from `_QUIPS` in `admin.py`.** The pages call
-  `quip_for(page)` under their own standfirst. **Nothing on the Posts page may
+  `quip_for(page)` under their own standfirst. **Nothing on the Library page may
   say reach, saves or skipped**: a YouTube account reports none of the three
   and `test_gateway_youtube_insights` asserts the words appear nowhere on that
   page, because a zero beside an unmeasured metric reads as a result. A joke
@@ -1250,7 +1286,7 @@ deliberate: a list cannot answer "did that change work" while posts go out on a
 timetable and the prompt changes underneath them.
 
 - **Publish now is the only control that acts rather than schedules**, added
-  2026-08-28. Everything else on the Queue page decides what the scheduler will
+  2026-08-28. Everything else on the Schedule page decides what the scheduler will
   do later, so a row whose failure you had just fixed still cost a day to find
   out about, and the only lever was deleting its `slot_fires` row against the
   live database by hand. It appears on a pending row and, as "Retry now", on a
@@ -1272,7 +1308,7 @@ timetable and the prompt changes underneath them.
 - **The hook is on the queue card, and it is not decoration.** Cancelling
   before the slot fires is the only review this account has, and until the hook
   travelled with the video, reviewing meant pressing play on every queued Reel
-  to see the one line `skip_rate` actually scores. On the Posts page it sits
+  to see the one line `skip_rate` actually scores. On the Library page it sits
   directly above the percentage it earned, which is the only pair on that page
   where one plainly caused the other.
 - **`gateway/analysis.py` holds the arithmetic and no FastAPI.** Cohorts, the
@@ -1295,7 +1331,7 @@ timetable and the prompt changes underneath them.
 - **Server rendered SVG, no chart library and no measurement step.** The
   viewBox is fixed and scales to its container, so the page has content before
   any script runs.
-- **The Repos page is the cooldown list, made visible.** It is what decides
+- **The Subjects page is the cooldown list, made visible.** It is what decides
   whether tonight's batch may pick a repo, and it existed as
   `accounts/<name>/data/used_repos.json` on the machine that renders plus two
   gateway tables
@@ -1326,7 +1362,7 @@ timetable and the prompt changes underneath them.
 - **The chart keeps every post.** Skip rate settles a reading earlier than views
   and then drifts about a point, so holding back the newest dots would hide the
   most recent evidence to avoid an error smaller than the marker.
-- **The Repos page says why the scorer picked each repo.**
+- **The Subjects page says why the scorer picked each repo.**
   `score_candidates` splits the score into velocity, stars, Hacker News and
   README quality and writes it into `repo.json`, where it never left the machine
   that ranked. It rides on `register_rendered`, because a score is a property of

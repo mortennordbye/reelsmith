@@ -1,0 +1,130 @@
+{# What a brand is connected to, and the few switches that belong to a person
+   rather than to the ConfigMap. Only the controls a platform supports: the
+   comment reply switch is Instagram's, and Health showed it on YouTube. #}
+{% extends "base.html" %}
+{% from "_parts.html" import badge, sev %}
+{% block title %}{{ brand.name }} setup{% endblock %}
+
+{% block body %}
+<header class="ph">
+  <div>
+    <p class="crumb">{{ brand.name }}</p>
+    <h1>Setup</h1>
+    <p class="quip">{{ quip_for(page) }}</p>
+  </div>
+</header>
+<p class="sub">
+  Slots declared in <span class="mono">GATEWAY_SLOTS</span> are rewritten at every boot, so they can be
+  paused here and changed only in the ConfigMap. A destination is added with
+  <span class="mono">scripts/authorise.py</span>, not from this page.
+</p>
+
+{% for e in entries %}
+  {% set d = e.dest %}
+  <section class="box">
+    <header>
+      <h2>{{ badge(d.platform) }} <span style="text-transform:none;letter-spacing:0;color:var(--ink);font-size:13px">{{ d.handle }}</span></h2>
+      <span class="mono faint">{{ d.account_id }}</span>
+    </header>
+    <div class="pad">
+      <table class="t kv">
+        <tbody>
+          <tr>
+            <th>State</th>
+            <td>{% if d.active %}Active{% else %}{{ sev('info', 'Paused') }} Nothing polls or publishes here.{% endif %}</td>
+            <td class="r">
+              <form class="inline" method="post" action="{{ url_for('set_flags', account_id=d.account_id) }}">
+                <input type="hidden" name="field" value="active">
+                <input type="hidden" name="value" value="{{ '0' if d.active else '1' }}">
+                <button class="{{ 'danger' if d.active else 'primary' }}">{{ 'Pause this destination' if d.active else 'Resume' }}</button>
+              </form>
+            </td>
+          </tr>
+          {% if d.caps.dm %}
+            <tr>
+              <th>Comment replies</th>
+              <td>{{ 'On' if d.row['dm_enabled'] else 'Off' }}. Dormant: nothing advertises the word, so nobody asks.</td>
+              <td class="r">
+                <form class="inline" method="post" action="{{ url_for('set_flags', account_id=d.account_id) }}">
+                  <input type="hidden" name="field" value="dm_enabled">
+                  <input type="hidden" name="value" value="{{ '0' if d.row['dm_enabled'] else '1' }}">
+                  <button>{{ 'Stop DMs' if d.row['dm_enabled'] else 'Resume DMs' }}</button>
+                </form>
+              </td>
+            </tr>
+          {% endif %}
+          <tr>
+            <th>Token</th>
+            <td>
+              {% if d.token_days is not none %}
+                <span class="{{ 'bad' if d.token_days < 15 else ('warn' if d.token_days < 21 else '') }}">{{ d.token_days | round | int }} days left</span>
+              {% elif not d.expires %}Does not expire
+              {% else %}Expiry not recorded{% endif %}
+            </td>
+            <td></td>
+          </tr>
+          <tr><th>Credentials</th><td>{{ 'Stored' if e.registration.get('credentials') else 'Missing, so publishing here fails' }}</td><td></td></tr>
+          <tr><th>Published</th><td>{{ d.published }} · last {{ d.last_published | ago }}</td><td></td></tr>
+          <tr><th>Readings</th><td>{% if d.readings %}{{ d.readings }} posts read · last {{ d.last_reading | ago }}{% else %}None stored{% endif %}</td><td></td></tr>
+        </tbody>
+      </table>
+
+      <h3>Slots</h3>
+      {% if e.slots %}
+        <table class="t">
+          <tbody>
+            {% for item in e.slots %}
+              <tr>
+                <td>
+                  <strong class="mono">{{ '%02d:%02d' | format(item.row['hour'], item.row['minute']) }}</strong>
+                  <span class="muted">{{ item.row['tz'] }}{% if item.row['jitter_minutes'] %} ±{{ item.row['jitter_minutes'] }} min{% endif %}</span>
+                </td>
+                <td class="small">{{ item.slot.day_names }}</td>
+                <td class="small {{ 'faint' if not item.row['active'] }}">{{ 'active' if item.row['active'] else 'paused' }}</td>
+                <td class="r">
+                  <form class="inline" method="post" action="{{ url_for('toggle_slot', slot_id=item.row['id']) }}">
+                    <input type="hidden" name="active" value="{{ '0' if item.row['active'] else '1' }}">
+                    <button>{{ 'Pause' if item.row['active'] else 'Resume' }}</button>
+                  </form>
+                  {% if item.row['source'] == 'config' %}
+                    <span class="tag" title="Declared in GATEWAY_SLOTS. Edit the ConfigMap; a change here would be undone by the next rollout.">config</span>
+                  {% else %}
+                    <form class="inline" method="post" action="{{ url_for('remove_slot', slot_id=item.row['id']) }}">
+                      <button class="danger">Delete</button>
+                    </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="small muted">No slots, so nothing publishes here on its own.</p>
+      {% endif %}
+
+      <details style="margin-top:12px">
+        <summary class="small muted">Add a slot by hand</summary>
+        <form method="post" action="{{ url_for('add_slot') }}" style="margin-top:10px">
+          <input type="hidden" name="account_id" value="{{ d.account_id }}">
+          <label class="small muted">At <input name="hour" type="number" min="0" max="23" value="18" required aria-label="Hour"></label> :
+          <input name="minute" type="number" min="0" max="59" value="0" aria-label="Minute">
+          <label class="small muted">Zone <input name="tz" value="{{ cfg.default_timezone }}"></label>
+          <label class="small muted">Jitter <input name="jitter_minutes" type="number" min="0" max="120" value="{{ cfg.default_jitter_minutes }}"> min</label>
+          <span class="small muted">
+            {% for n, name in [(1, 'Mon'), (2, 'Tue'), (3, 'Wed'), (4, 'Thu'), (5, 'Fri'), (6, 'Sat'), (7, 'Sun')] %}
+              <label><input type="checkbox" name="days" value="{{ n }}"> {{ name }}</label>
+            {% endfor %}
+          </span>
+          <button class="primary">Add slot</button>
+          <p class="small muted" style="margin:8px 0 0">
+            No days ticked means every day. A slot added here survives a redeploy but is not in the
+            ConfigMap, so the declared schedule no longer tells the whole story.
+          </p>
+        </form>
+      </details>
+    </div>
+  </section>
+{% else %}
+  <section class="box"><p class="empty">No destinations registered for this brand.</p></section>
+{% endfor %}
+{% endblock %}

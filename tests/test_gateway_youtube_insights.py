@@ -384,7 +384,7 @@ async def test_the_posts_page_shows_what_youtube_reports(tmp_path, meta, metrics
                 conn, GraphClient(fake_meta, cfg), cfg, metrics,
                 await db.get_account(conn, CHANNEL),
             )
-            page = (await http.get("/admin/posts")).text
+            page = (await http.get(f"/admin/b/{CHANNEL}/library")).text
 
     assert "avg viewed" in page
     assert "avg watch" in page

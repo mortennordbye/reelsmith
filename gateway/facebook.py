@@ -482,6 +482,47 @@ class InsightsError(RuntimeError):
         self.is_auth = is_auth
 
 
+# Metrics Meta has refused on this process. Filled the first time a Reel's
+# request is refused as naming an invalid metric, so every Reel after it asks
+# for the ones that still exist instead of failing the same way.
+#
+# Why this exists rather than a corrected list: on 2026-09-11 every Facebook
+# read failed with "(#100) The value must be a valid insights metric", so no
+# Page had stored a single reading, and the error does not say which name it
+# means. Meta retired a family of impression metrics on 2025-11-15 and the
+# Reels documentation still lists all five of these. Probing each one is the
+# only answer that does not depend on guessing which of the two is right.
+_REFUSED: set[str] = set()
+
+
+def forget_refused_metrics() -> None:
+    """For tests, which share one process and must not share what Meta refused."""
+    _REFUSED.clear()
+
+
+def _refused_metric(code: str, message: str) -> bool:
+    return code.split("/")[0] == "100" and "valid insights metric" in message.lower()
+
+
+async def _read(
+    http: httpx.AsyncClient, *, video_id: str, token: str, api_version: str, metrics: list[str]
+) -> httpx.Response:
+    fields = (
+        "permalink_url,"
+        "comments.summary(true).limit(0),"
+        f"video_insights.metric({','.join(metrics)})"
+    )
+    try:
+        return await http.get(
+            f"{GRAPH}/{api_version}/{video_id}",
+            params={"fields": fields},
+            headers=_auth(token),
+            timeout=30,
+        )
+    except httpx.HTTPError as exc:
+        raise InsightsError(f"Could not read insights for {video_id}: {exc}") from exc
+
+
 async def read_insights(
     http: httpx.AsyncClient,
     *,
@@ -495,23 +536,46 @@ async def read_insights(
     for the comment count, because the two halves are always wanted together
     and a sweep that made two requests per post would double the calls to
     answer one question.
-    """
-    fields = (
-        "permalink_url,"
-        "comments.summary(true).limit(0),"
-        f"video_insights.metric({','.join(INSIGHT_METRICS)})"
-    )
-    try:
-        response = await http.get(
-            f"{GRAPH}/{api_version}/{video_id}",
-            params={"fields": fields},
-            headers=_auth(token),
-            timeout=30,
-        )
-    except httpx.HTTPError as exc:
-        raise InsightsError(f"Could not read insights for {video_id}: {exc}") from exc
 
+    **A refused metric costs one probe per metric, once per process.** The
+    request is repeated with each metric alone, the ones Meta refuses are
+    remembered and named in the log, and the reading is taken without them. A
+    metric left out reads as 0 in its column, which is the cost of having any
+    numbers at all, and the warning is what says which column that is.
+    """
+    wanted = [metric for metric in INSIGHT_METRICS if metric not in _REFUSED]
+    if not wanted:
+        raise InsightsError(
+            f"Insights for {video_id}: Meta refused every metric this asks for "
+            f"({', '.join(sorted(_REFUSED))})"
+        )
+    response = await _read(
+        http, video_id=video_id, token=token, api_version=api_version, metrics=wanted
+    )
     code, message = _api_error(response)
+
+    if code and _refused_metric(code, message) and len(wanted) > 1:
+        refused = []
+        for metric in wanted:
+            probe = await _read(
+                http, video_id=video_id, token=token, api_version=api_version, metrics=[metric]
+            )
+            if _refused_metric(*_api_error(probe)):
+                refused.append(metric)
+        if refused:
+            _REFUSED.update(refused)
+            log.warning(
+                "Meta refused the Facebook insights metric(s) %s; reading without them",
+                ", ".join(refused),
+            )
+            wanted = [metric for metric in wanted if metric not in refused]
+            if wanted:
+                response = await _read(
+                    http, video_id=video_id, token=token, api_version=api_version,
+                    metrics=wanted,
+                )
+                code, message = _api_error(response)
+
     if code:
         # 190 is every expired, revoked and invalidated token. It will fail the
         # same way for every remaining post, so the caller stops rather than

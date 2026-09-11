@@ -3,11 +3,24 @@
 Server-rendered Jinja over the tables this service already owns. No frontend
 build, no bundler, no API layer between the page and the query.
 
+**Organised by brand, not by table.** It was eight tabs, each stacking a board
+per destination, which read fine for one identity on one platform and produced
+a 32,000 pixel Posts page at two identities on seven. The shape now is:
+
+- the portfolio: Today, Calendar, Destinations and System, one row per brand or
+  per destination, which is what stays a page at fifty identities
+- one brand: Overview, Schedule, Library, Performance, Subjects and Setup, at
+  `/admin/b/<brand>/...`, where a video is one row and a destination is a chip
+
+The brand is part of the path rather than a query string, so building a link
+with `url_for` cannot silently drop it. What each page shows is computed in
+`panel.py`; the routes here stay one call and a template.
+
 **Plain forms, no HTMX.** The plan said HTMX and it would work, but every
 control here is a state change followed by a full reload, which is what a form
 POST already is. Adding a script tag would mean either a CDN fetch this
 container cannot make or a vendored copy to keep updated, in exchange for
-nothing the eye can see. Pages that want to feel live use a meta refresh.
+nothing the eye can see. Menus are `<details>` elements for the same reason.
 
 **Authentication is this router's own problem, not only the ingress's.** The
 homelab pattern is Authentik forward-auth at Traefik, and that is still the
@@ -39,13 +52,12 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from gateway import analysis, db, schedule, scheduler
+from gateway import analysis, db, panel, schedule, scheduler
 
 log = logging.getLogger(__name__)
 
@@ -229,28 +241,29 @@ def _until(when: datetime | None) -> str:
 
 
 def _clock(when: datetime | None, tz: str = "UTC") -> str:
-    """Just the time, for the one place that sets it at 58 pixels. The date
-    goes on the line underneath, where it does not have to compete."""
+    """Just the time, for the places that set it large or inside a chip."""
     if when is None:
         return "--:--"
     return when.astimezone(schedule.zone_or_utc(tz)).strftime("%H:%M")
 
 
-# One dry line per page, under its heading. Here rather than in six templates
-# so adding a page means adding a line to one dict, and the pages call
-# `quip_for(page)` instead of each one carrying its own copy.
+# One dry line per page, under its heading. Here rather than in the templates
+# so adding a page means adding a line to one dict. Shown only in the loud look.
 #
-# **Nothing on the Posts page may say reach, saves or skipped.** A YouTube
-# account reports none of the three, and `test_gateway_youtube_insights` asserts
+# **Nothing on the Library page may say reach, saves or skipped.** A YouTube
+# brand reports none of the three, and `test_gateway_youtube_insights` asserts
 # the words appear nowhere on that page, because a zero beside a metric a
 # platform does not measure reads as a result. A joke does not earn an exception.
 _QUIPS = {
-    "queue": "Cancelling one of these before its slot fires is the entire review process.",
-    "posts": "Every one of these was written, voiced, rendered and published while you slept.",
-    "insights": "The format averages 30 to 40 percent. We are working on it.",
-    "repos": "Thirty days is how long a repository gets to forget about us.",
-    "slots": "The jitter is derived, never rolled, so nothing here fires twice.",
-    "health": "Green means the machine is fine. It says nothing about the videos.",
+    "today": "Everything is queued. Nothing is reviewed. This is fine.",
+    "calendar": "Seven days of openings nobody has read yet.",
+    "destinations": "Four platforms, one voice, zero human oversight.",
+    "system": "Green means the machine is fine. It says nothing about the videos.",
+    "schedule": "Cancelling one of these before its slot fires is the entire review process.",
+    "library": "Every one of these was written, voiced, rendered and published while you slept.",
+    "performance": "The format averages 30 to 40 percent. We are working on it.",
+    "subjects": "Thirty days is how long a subject gets to forget about us.",
+    "setup": "The jitter is derived, never rolled, so nothing here fires twice.",
 }
 
 
@@ -258,10 +271,10 @@ def _quip_for(page: str) -> str:
     return _QUIPS.get(page, "")
 
 
-# The two looks this panel comes in. `loud` is the one it has always had: the
-# wordmark in its frame, the room behind it, the manager and the quips. `plain`
-# is the same panel with the joke taken out, for when it is being shown to
-# somebody, or read at an hour when a photograph of a cat is not welcome.
+# The two looks this panel comes in. `plain` is the one it is built around: the
+# structure, the spacing and the tokens. `loud` is the same panel with the joke
+# added on top, the wordmark in its frame, the room behind it, the manager and
+# the quips, and it may only swap tokens and add decoration, never move a thing.
 #
 # A cookie rather than a setting on the service, because it is a preference of
 # whoever is looking rather than a fact about the deployment, and two people
@@ -290,82 +303,19 @@ templates.env.globals["quip_for"] = _quip_for
 # Takes the request because a cookie is per viewer, unlike the other globals
 # here, which are facts about the service.
 templates.env.globals["skin_of"] = _skin_of
+templates.env.globals["platform_list"] = panel.names
+templates.env.globals["measured_columns"] = analysis.measured_columns
+templates.env.globals["platforms"] = db.PLATFORMS
 
-
-def _display_tz(cfg: Any, slots: list[Any]) -> str:
-    """Show times in the zone the schedule is written in, not in UTC.
-
-    Whoever is reading this wants to know if a post goes out at a reasonable
-    hour where the audience is, and the slot already says where that is.
-    """
-    return str(slots[0]["tz"]) if slots else cfg.default_timezone
-
-
-async def _accounts(request: Request) -> list[Any]:
-    # Every platform. The panel is where a person goes to see what is queued
-    # and what failed, and a destination it cannot show is a destination
-    # nobody is watching.
-    return await db.all_accounts(request.app.state.db, platform=None)
-
-
-async def _scope(request: Request) -> dict[str, Any]:
-    """What the page is about: everything, one original account, or one of its
-    destinations.
-
-    Every page used to stack one board per account down the screen, which reads
-    fine at one account and becomes a scroll at four. The scope narrows the
-    page instead, and `visible` is what a page iterates in every mode, so a
-    page never has to care which one it is in.
-
-    **Two levels, because an identity is not a destination.** One original
-    account posts to three platforms and is three `accounts` rows, so a flat
-    picker offered the same handle three times and would offer it nine times at
-    three identities. `?brand=` is the identity and `?account=` is one of its
-    rows, and the narrower one wins when both are given.
-
-    An unknown or removed value falls back to showing everything rather than
-    404ing. A bookmark that outlived its account should still show the panel.
-    """
-    accounts = await db.all_accounts(request.app.state.db, platform=None)
-
-    # Grouped in the order the rows come back, which `db` already sorts by
-    # brand and then by platform, so the switcher and the boards agree without
-    # either of them sorting again.
-    groups: dict[str, dict[str, Any]] = {}
-    for account in accounts:
-        brand = account["brand"] or db.brand_of(account["username"], account["account_id"])
-        groups.setdefault(brand, {"name": brand, "accounts": []})["accounts"].append(account)
-    brands = list(groups.values())
-
-    wanted = request.query_params.get("account") or ""
-    selected = next((a for a in accounts if a["account_id"] == wanted), None)
-    wanted_brand = request.query_params.get("brand") or ""
-    # The destination wins. Both arriving together means a stale link rather
-    # than a contradiction, and the narrower answer is the one a person clicked.
-    brand = groups.get(selected["brand"], {}).get("name", "") if selected else ""
-    if not selected and wanted_brand in groups:
-        brand = wanted_brand
-
-    if selected:
-        visible, query = [selected], f"?account={selected['account_id']}"
-    elif brand:
-        visible, query = list(groups[brand]["accounts"]), f"?brand={quote(brand)}"
-    else:
-        visible, query = list(accounts), ""
-
-    return {
-        "accounts": accounts,
-        "brands": brands,
-        "selected": selected,
-        # Which identity the page is inside, whether that came from a brand
-        # link or from picking one of its destinations. The switcher lights the
-        # chip either way, so a YouTube board never looks like it belongs to
-        # nobody.
-        "brand": brand,
-        "visible": visible,
-        # Appended to every in-panel link so the choice survives navigation.
-        "query": query,
-    }
+# Which route resolves an issue, keyed by the page an `Issue` names.
+templates.env.globals["issue_routes"] = {
+    "overview": "brand_page",
+    "schedule": "schedule_page",
+    "library": "library_page",
+    "performance": "performance_page",
+    "subjects": "subjects_page",
+    "setup": "setup_page",
+}
 
 
 def _back(request: Request, anchor: str = "") -> RedirectResponse:
@@ -376,7 +326,7 @@ def _back(request: Request, anchor: str = "") -> RedirectResponse:
     every control here an open redirect, which is a phishing primitive on a
     hostname the account's own audience is being asked to trust.
     """
-    fallback = str(request.url_for("queue_page"))
+    fallback = str(request.url_for("dashboard_page"))
     referer = request.headers.get("referer") or ""
     allowed = (str(request.base_url).rstrip("/"), str(request.app.state.cfg.public_base_url))
     target = referer if referer.startswith(tuple(f"{a}/" for a in allowed)) else fallback
@@ -405,533 +355,141 @@ async def serve_asset(name: str) -> FileResponse:
 
 
 # --------------------------------------------------------------------------
-# Pages
+# Rendering
 # --------------------------------------------------------------------------
 
 
-async def _rendered_at(conn: Any, rows: list[Any]) -> dict[int, datetime | None]:
-    """When each queued post's video was made, keyed by queue id.
+async def _shell(request: Request) -> tuple[dict[str, Any], datetime]:
+    moment = db.now()
+    shell = await panel.shell(request.app.state.db, request.app.state.cfg, moment=moment)
+    return shell, moment
 
-    `created_at` answers a different question. It is when a video reached the
-    gateway, and the two dates come apart by days in the ordinary case: a batch
-    renders at 02:00 and the post waits its turn in a line three days deep, and
-    a run moved aside by hand can be queued a week after it was built.
-    `rendered_repos` is the only record of when the video itself was made, so
-    the panel reads it rather than inferring it from the queue row.
+
+def _render(
+    request: Request, template: str, page: str, shell: dict[str, Any], **context: Any
+) -> Any:
+    return templates.TemplateResponse(
+        request,
+        template,
+        {"cfg": request.app.state.cfg, "page": page, "shell": shell, "brand": None, **context},
+    )
+
+
+def _home(request: Request) -> RedirectResponse:
+    """Where a link to a brand that no longer exists lands.
+
+    A bookmark that outlived its identity should open the panel, not a 404.
     """
-    stamps = await db.rendered_at_for(conn, [row["repo_full_name"] for row in rows])
-    return {
-        row["id"]: db.parse_iso(stamps.get(row["repo_full_name"] or ""))
-        for row in rows
-    }
+    return RedirectResponse(str(request.url_for("dashboard_page")), status_code=303)
+
+
+def _platform_filter(request: Request, brand: panel.Brand) -> str:
+    wanted = request.query_params.get("platform") or ""
+    return wanted if wanted in brand.platforms else ""
+
+
+# --------------------------------------------------------------------------
+# Portfolio pages
+# --------------------------------------------------------------------------
 
 
 @router.get("/", response_class=HTMLResponse, name="dashboard_page")
 async def dashboard_page(request: Request) -> Any:
-    """Everything at a glance, which is the one question the six list pages
-    could not answer between them.
+    """Today: what needs a person across every brand, then one row per brand.
 
-    Queue and Posts list things and Insights compares them; none of them says
-    "is the machine running and what has it done". This does, and it adds no
-    query of its own: every number below is a call one of those pages already
-    makes, so the dashboard cannot disagree with the page it summarises.
+    It used to sum destinations, which answered "is the machine running" for
+    one identity and mixed two identities into one runway, one next post and
+    one retention chart the moment there were two.
     """
     conn, cfg = request.app.state.db, request.app.state.cfg
-    scope = await _scope(request)
-    moment = db.now()
+    shell, moment = await _shell(request)
+    states = shell["picker"]
     metrics = request.app.state.metrics
-
-    # Two calls for every account, rather than two per account.
-    depths = await db.queue_depth_by_account(conn)
-    stale = await db.stale_claims_by_account(conn)
-
-    boards: list[dict[str, Any]] = []
-    upcoming: list[dict[str, Any]] = []
-    for account in scope["visible"]:
-        account_id = account["account_id"]
-        slots = await db.active_slots(conn, account_id)
-        approved = depths.get((account_id, db.QUEUE_APPROVED), 0)
-        rows = await scheduler.upcoming(conn, cfg, account_id, moment=moment)
-        boards.append(
-            {
-                "row": account,
-                "approved": approved,
-                "draft": depths.get((account_id, db.QUEUE_DRAFT), 0),
-                "failed": depths.get((account_id, db.QUEUE_FAILED), 0),
-                "stale": stale.get(account_id, 0),
-                "slots_per_day": len(slots),
-                # Days of posting the queue can still cover, which is the number
-                # that says whether to go and render. `health_page` computes it
-                # the same way.
-                "runway_days": (approved / len(slots)) if slots else None,
-                "tz": _display_tz(cfg, slots),
-                "days_left": _token_days(account, moment),
-            }
-        )
-        for row, when in rows:
-            if when is not None:
-                # The slot's own zone travels with the row, because whoever is
-                # reading this wants to know if a post goes out at a reasonable
-                # hour where the audience is, and UTC does not answer that.
-                upcoming.append(
-                    {"account": account, "row": row, "when": when,
-                     "tz": _display_tz(cfg, slots)}
-                )
-
-    # The soonest post across every visible destination. Sorted here rather than
-    # per board, because "what goes out next" is one answer and not four.
-    upcoming.sort(key=lambda item: item["when"])
-    next_out = upcoming[0] if upcoming else None
-    made = await _rendered_at(conn, [next_out["row"]] if next_out else [])
-
-    return templates.TemplateResponse(
+    return _render(
         request,
-        "dashboard.html",
-        {
-            "boards": boards,
-            "cfg": cfg,
-            "page": "dashboard",
-            "scope": scope,
-            "greeting": _GREETINGS[moment.date().toordinal() % len(_GREETINGS)],
-            "next_out": next_out,
-            "made": made,
-            "upcoming_count": len(upcoming),
-            "machine": await _machine(conn, scope),
-            "retention": await _retention(conn, scope),
-            "poller_last": _gauge_time(metrics.poller_last_success),
-            "scheduler_last": _gauge_time(metrics.scheduler_last_success),
-            "insights_last": _gauge_time(metrics.insights_last_success),
+        "today.html",
+        "today",
+        shell,
+        states=states,
+        issues=panel.group_across_brands(
+            panel.merge_issues([issue for state in states for issue in state.issues])
+        ),
+        next_outs={
+            state.brand.name: await panel.next_out(conn, cfg, state, moment=moment)
+            for state in states
         },
+        greeting=_GREETINGS[moment.date().toordinal() % len(_GREETINGS)],
+        stuck=sum(d.stale for d in shell["destinations"].values()),
+        poller_last=_gauge_time(metrics.poller_last_success),
+        scheduler_last=_gauge_time(metrics.scheduler_last_success),
+        insights_last=_gauge_time(metrics.insights_last_success),
     )
 
 
-def _token_days(account: Any, moment: datetime) -> float | None:
-    expires = db.parse_iso(account["token_expires_at"])
-    return (expires - moment).total_seconds() / 86_400 if expires else None
-
-
-async def _machine(conn: Any, scope: dict[str, Any]) -> dict[str, Any]:
-    """What the pipeline has moved, counted from what this service can see.
-
-    Deliberately shorter than the real pipeline. Discovery matches thousands of
-    repositories and ranks them down to a handful, and both of those numbers
-    live on the machine that renders and never reach here, so the strip starts
-    at the first step the gateway has a record of. Inventing the rest would put
-    a number on this page that nothing could check.
-    """
-    # Summed across the scope's destinations rather than read once.
-    #
-    # This used to pass a single account id when the scope held exactly one and
-    # `None` otherwise, and `None` means every account. That was right while the
-    # only scopes were one destination or the whole service. An identity is
-    # neither: it holds several destinations, so scoping to a brand fell through
-    # to the `None` branch and counted the other identity's work as this one's.
-    # Invisible until there were two identities to leak between, which there
-    # were from 2026-09-11.
-    ids = [str(account["account_id"]) for account in scope["visible"]]
-
-    # Repos are unioned and posts are summed, which is the difference between
-    # the two kinds of number on this strip. One video committed to an identity
-    # is one repo on each of its destinations, so summing would report a single
-    # night's work as three or four; the same video published to them is
-    # genuinely that many posts.
-    covered: set[str] = set()
-    rendered: set[str] = set()
-    nights: set[str] = set()
-    published = 0
-    queued = 0
-    for account_id in ids:
-        for row in await db.covered_repos(conn, account_id, limit=10_000):
-            covered.add(str(row["repo_full_name"]))
-        for row in await db.rendered_repos_list(conn, account_id, limit=10_000):
-            # Guarded the way `covered_repos` guards its own, because the second
-            # niche's subjects are not repositories and an empty name counted as
-            # a repo would report an account that has covered none as covering
-            # one.
-            if name := str(row["repo_full_name"] or ""):
-                rendered.add(name)
-            if stamp := (row["rendered_at"] or ""):
-                nights.add(stamp[:10])
-        published += len(await db.published_media(conn, account_id, limit=10_000))
-        depth = await db.queue_depth(conn, account_id)
-        queued += sum(depth.get(state, 0) for state in db.QUEUE_LIVE_STATES)
-
-    return {
-        "covered": len(covered),
-        "rendered": len(rendered),
-        "queued": queued,
-        "published": published,
-        "destinations": len(ids),
-        # Nights that produced something, which is the closest honest reading of
-        # "how long has this run on its own". One night can render several.
-        "nights": len(nights),
-    }
-
-
-async def _retention(conn: Any, scope: dict[str, Any]) -> dict[str, Any] | None:
-    """The opening scores, and only Instagram's.
-
-    `skip_rate` is the one number the loop turns on and the only platform that
-    reports it is Instagram. Every other platform stores 0, which is an absence
-    rather than a perfect score, so a board mixing them in would report an
-    opening that was never measured as one nobody skipped.
-    """
-    rows = [
-        account for account in scope["visible"]
-        if (account["platform"] or db.PLATFORM_INSTAGRAM) == db.PLATFORM_INSTAGRAM
-    ]
-    if not rows:
-        return None
-
-    # The keys `skip_chart` reads, so the chart here and the chart on Insights
-    # are the same function over the same shape rather than two joins that agree
-    # until one of them is edited.
-    merged: list[dict[str, Any]] = []
-    for account in rows:
-        account_id = account["account_id"]
-        readings = await db.latest_insights(conn, account_id, platform=db.PLATFORM_INSTAGRAM)
-        for post in await db.published_media(conn, account_id, limit=10_000):
-            reading = readings.get(post["media_id"])
-            # A post with no hook is skipped for the reason the loop skips it:
-            # the opening is what the score is about, and a row without one
-            # cannot be attributed to anything.
-            if reading is None or not post["hook"] or not reading["skip_rate"]:
-                continue
-            merged.append(
-                {
-                    "hook": post["hook"],
-                    "repo_full_name": post["repo_full_name"],
-                    "published_at": post["published_at"],
-                    "skip_rate": float(reading["skip_rate"]),
-                    "views": int(reading["views"] or 0),
-                }
-            )
-    if not merged:
-        return None
-
-    return {
-        "best": sorted(merged, key=lambda post: post["skip_rate"])[:4],
-        "n": len(merged),
-        "chart": analysis.skip_chart(merged),
-        "median_skip": _median([post["skip_rate"] for post in merged]),
-        "median_views": _median([float(post["views"]) for post in merged]),
-        "threshold": analysis.SKIP_THRESHOLD,
-    }
-
-
-def _median(values: list[float]) -> float:
-    ordered = sorted(values)
-    return ordered[len(ordered) // 2]
-
-
-@router.get("/queue", response_class=HTMLResponse, name="queue_page")
-async def queue_page(request: Request) -> Any:
+@router.get("/calendar", response_class=HTMLResponse, name="calendar_page")
+async def calendar_page(request: Request) -> Any:
     conn, cfg = request.app.state.db, request.app.state.cfg
-    scope = await _scope(request)
-    moment = db.now()
-
-    boards = []
-    for account in scope["visible"]:
-        slots = await db.active_slots(conn, account["account_id"])
-        rows = await scheduler.upcoming(
-            conn, cfg, account["account_id"], moment=moment
-        )
-        recent = await db.queued_posts(
-            conn,
-            account_id=account["account_id"],
-            states=(db.QUEUE_PUBLISHED, db.QUEUE_FAILED, db.QUEUE_CLAIMED, db.QUEUE_CANCELLED),
-            limit=15,
-        )
-        boards.append(
-            {
-                "account": account,
-                "tz": _display_tz(cfg, slots),
-                "upcoming": rows,
-                "recent": list(reversed(recent)),
-                "made": await _rendered_at(conn, [row for row, _ in rows] + recent),
-                "has_slots": bool(slots),
-                # A claim nothing finished needs the same decision a failure
-                # does, so the row has to say so rather than looking ordinary.
-                "stale": {int(r["id"]) for r in recent if r["state"] == db.QUEUE_CLAIMED
-                          and _claim_is_stale(r, moment=moment)},
-            }
-        )
-
-    return templates.TemplateResponse(
-        request,
-        "queue.html",
-        {
-            "boards": boards,
-            "cfg": cfg,
-            "page": "queue",
-            "scope": scope,
-            "states": db,
-        },
+    shell, moment = await _shell(request)
+    days = await panel.calendar(
+        conn, cfg, shell["brands"], shell["destinations"], moment=moment
     )
+    return _render(request, "calendar.html", "calendar", shell, days=days)
 
 
-@router.get("/slots", response_class=HTMLResponse, name="slots_page")
-async def slots_page(request: Request) -> Any:
-    conn, cfg = request.app.state.db, request.app.state.cfg
-    scope = await _scope(request)
-    moment = db.now()
-    boards = []
-    for account in scope["visible"]:
-        rows = await db.all_slots(conn, account["account_id"])
-        boards.append(
-            {
-                "account": account,
-                "slots": [
-                    {
-                        "row": row,
-                        "slot": schedule.Slot.from_row(row),
-                        "next": schedule.next_fire(schedule.Slot.from_row(row), moment)
-                        if row["active"]
-                        else None,
-                    }
-                    for row in rows
-                ],
-            }
-        )
-    return templates.TemplateResponse(
-        request,
-        "slots.html",
-        {"boards": boards, "cfg": cfg, "page": "slots", "scope": scope},
-    )
-
-
-@router.get("/posts", response_class=HTMLResponse, name="posts_page")
-async def posts_page(request: Request) -> Any:
-    """How the published Reels are doing, and which of them converted.
-
-    Two sources joined by media id and neither of them new: Meta's numbers from
-    the insights sweep, and the DM funnel this service has been recording since
-    the first post. The funnel was only ever shown as an account-wide total,
-    which cannot answer the question worth asking, which is which video worked.
-    """
-    conn, cfg = request.app.state.db, request.app.state.cfg
-    scope = await _scope(request)
-
-    boards = []
-    for account in scope["visible"]:
-        account_id = account["account_id"]
-        rows = await db.published_media(conn, account_id)
-        readings = await db.latest_insights(conn, account_id)
-        funnels = await db.per_post_funnel(conn, account_id)
-
-        # Which numbers this platform actually has. A TikTok row rendered with
-        # Instagram's column set is a post that got zero reach and zero saves,
-        # which is a claim rather than an absence.
-        columns = analysis.measured_columns(account["platform"])
-        posts, totals = [], dict.fromkeys((*columns, "comments_seen", "links_sent"), 0)
-        for row in rows:
-            seen = funnels.get(row["media_id"], {})
-            reading = readings.get(row["media_id"])
-            posts.append(
-                {
-                    "row": row,
-                    "insights": reading,
-                    "funnel": seen,
-                    # Of the people who asked, how many got the link. The
-                    # denominator is comments we matched, not total comments,
-                    # because the rest were never asking for anything.
-                    "conversion": (
-                        seen.get("links_sent", 0) / seen["comments_seen"]
-                        if seen.get("comments_seen")
-                        else None
-                    ),
-                }
-            )
-            for key in columns:
-                totals[key] += int(reading[key]) if reading else 0
-            for key in ("comments_seen", "links_sent"):
-                totals[key] += seen.get(key, 0)
-
-        # Retention is averaged rather than summed, and only over the posts
-        # that have a reading. A total watch time would be a number that only
-        # goes up, and dividing by every post would report a hook getting
-        # better every time an unmeasured one drops off the window.
-        #
-        # Each figure over its own population rather than all of them over the
-        # posts that have a `skip_rate`. Only Instagram reports that one, so
-        # tying the watch time to it hid the number YouTube does report behind
-        # the one it does not.
-        scored: list[Any] = [p["insights"] for p in posts if p["insights"]]
-
-        def mean(key: str, rows: list[Any] = scored) -> float | None:
-            measured = [float(r[key]) for r in rows if r[key]]
-            return sum(measured) / len(measured) if measured else None
-
-        avg_watch_ms = mean("avg_watch_ms")
-        boards.append(
-            {
-                "account": account,
-                "posts": posts,
-                "totals": totals,
-                "columns": columns,
-                # Whether a DM funnel can exist here at all. The keyword
-                # mechanic is comments and private replies, which is one
-                # platform, so showing the row everywhere reported a mechanic
-                # that was never available as one that converted nobody.
-                "has_funnel": account["platform"] == db.PLATFORM_INSTAGRAM,
-                # An average is the only fair way to compare a Reel published
-                # this morning with one from last week.
-                "avg_views": totals["views"] // len(posts) if posts else 0,
-                "measured": sum(1 for p in posts if p["insights"]),
-                # The one number that scores the hook on its own. Educational
-                # Reels benchmark at 30 to 40 percent; the first seven here ran
-                # 64 to 80, which is why it is on the board rather than buried
-                # in a per post row.
-                "avg_skip": mean("skip_rate"),
-                # Milliseconds in the column and seconds on the page, the same
-                # conversion the per post tile makes.
-                "avg_watch_s": avg_watch_ms / 1000 if avg_watch_ms else None,
-                # YouTube's share of the video watched. Meta reports no such
-                # figure and TikTok reports nothing about watching at all, so
-                # this tile appears on one board of three.
-                "avg_viewed": mean("avg_view_pct"),
-            }
-        )
-
-    return templates.TemplateResponse(
-        request,
-        "posts.html",
-        {"boards": boards, "cfg": cfg, "page": "posts", "scope": scope},
-    )
-
-
-@router.get("/insights", response_class=HTMLResponse, name="insights_page")
-async def insights_page(request: Request) -> Any:
-    """The comparisons, as against the list of posts on the Posts page.
-
-    Listing is not comparing. Every number the account has acted on was worked
-    out by hand in a session and pasted into a notes file, which goes stale
-    silently, and the only place any of it could be recomputed was a terminal on
-    one laptop. This is the panel, which is what can be opened from a phone at
-    seven in the morning after the nightly did something at two.
-
-    Two cohort tables and one chart. The chart is skip rate because that is the
-    metric the whole pipeline is tuned on; the tables carry views, because views
-    are too skewed to plot honestly on the same axis and a median plus a count
-    of breakouts is what that distribution can support.
-    """
-    conn, cfg = request.app.state.db, request.app.state.cfg
-    scope = await _scope(request)
-
-    boards = []
-    for account in scope["visible"]:
-        # **Instagram only, and structurally.** Every comparison on this page
-        # is built on `skip_rate`, which is the share who scrolled past inside
-        # three seconds. YouTube's `averageViewPercentage` scores a whole video
-        # and TikTok exposes no retention metric at all, so a board for either
-        # would be a page of tables built on a column those platforms leave at
-        # zero. The filters below say so rather than relying on that zero, which
-        # is a rule that holds by accident. F5.
-        #
-        # It said so by rendering nothing at all until now, so selecting the
-        # YouTube account gave a page with a heading and empty space under it,
-        # which reads as a broken page rather than as a question this data
-        # cannot answer. The board is built either way and carries whether it
-        # can be compared; the template is where that becomes a sentence.
-        if account["platform"] != db.PLATFORM_INSTAGRAM:
-            boards.append({"account": account, "comparable": False})
-            continue
-        account_id = account["account_id"]
-        rows = await db.published_media(conn, account_id)
-        readings = await db.latest_insights(
-            conn, account_id, platform=db.PLATFORM_INSTAGRAM
-        )
-        # One flat row per post, so the analysis never has to know that the
-        # numbers and the hook arrive from two different tables.
-        merged = [
-            {**dict(row), **{k: reading[k] for k in ("views", "reach", "skip_rate")}}
-            for row in rows
-            if (reading := readings.get(row["media_id"]))
+@router.get("/destinations", response_class=HTMLResponse, name="destinations_page")
+async def destinations_page(request: Request) -> Any:
+    """Brands down, platforms across. The seven stacked Health boards, as one grid."""
+    shell, _ = await _shell(request)
+    show = request.query_params.get("show") or ""
+    states = list(shell["states"].values())
+    if show == "attention":
+        states = [
+            s for s in states if any(d.level in ("bad", "warn") for d in s.destinations)
         ]
-        measured = [r for r in merged if r["skip_rate"]]
-        # How long a Reel takes to stop moving, recomputed from this account's
-        # own history rather than asserted. It decides which posts the cohorts
-        # may count, so it is measured on the same page that applies it.
-        settling = analysis.maturity(
-            await db.insights_series(conn, account_id, platform=db.PLATFORM_INSTAGRAM)
-        )
-        by_slot = analysis.cohorts(
-            merged, key=analysis.slot_of, settled=settling["settled"]
-        )
-        by_recipe = analysis.cohorts(
-            merged, key=analysis.recipe_of, settled=settling["settled"]
-        )
-        boards.append(
-            {
-                "account": account,
-                "comparable": True,
-                "measured": len(measured),
-                "total": len(rows),
-                # The chart keeps every post. Skip rate settles at the second
-                # reading and drifts a median 1.3 points afterwards, so holding
-                # back the newest dots would hide the most recent evidence to
-                # avoid an error smaller than the marker.
-                "chart": analysis.skip_chart(merged),
-                "settling": settling,
-                "held_back": by_slot["held_back"],
-                # Slots read in time order, because the question is the shape of
-                # the day. Recipes have no order, so the biggest cohort leads.
-                "by_slot": sorted(by_slot["groups"], key=lambda c: c["name"]),
-                "by_recipe": sorted(
-                    by_recipe["groups"], key=lambda c: (-c["n"], c["name"])
-                ),
-                "threshold": analysis.SKIP_THRESHOLD,
-                "breakout": analysis.BREAKOUT_VIEWS,
-            }
-        )
-
-    return templates.TemplateResponse(
-        request,
-        "insights.html",
-        {"boards": boards, "cfg": cfg, "page": "insights", "scope": scope},
-    )
+    return _render(request, "destinations.html", "destinations", shell, states=states, show=show)
 
 
-@router.get("/repos", response_class=HTMLResponse, name="repos_page")
-async def repos_page(request: Request) -> Any:
-    """Which repos are spent, which are half spent, and which cost a render for
-    nothing.
+@router.get("/system", response_class=HTMLResponse, name="system_page")
+async def system_page(request: Request) -> Any:
+    """The process, labelled as the process.
 
-    This is the list that decides whether a video gets made tonight. Discovery
-    reads `data/used_repos.json` on the machine that renders, which is a single
-    JSON file on one laptop, outside git and outside every backup this project
-    has; these tables are the durable copy on a volume that gets `VACUUM INTO`
-    every six hours, and the Mac merges them back in before its first Search
-    call. Until now nothing displayed either, so "have we already done this one"
-    was a question you answered by running a command on the right machine.
+    Health led with counters that reset at every restart and read "4 published"
+    on a service holding 150 posts. Every number here says since when.
     """
-    conn, cfg = request.app.state.db, request.app.state.cfg
-    scope = await _scope(request)
-
-    boards = []
-    for account in scope["visible"]:
-        account_id = account["account_id"]
-        repos = analysis.repo_history(
-            covered=await db.covered_repos(conn, account_id),
-            rendered=await db.rendered_repos_list(conn, account_id),
-            published=await db.published_media(conn, account_id),
-            readings=await db.latest_insights(conn, account_id),
-        )
-        boards.append(
-            {
-                "account": account,
-                "repos": repos,
-                "blocked": sum(1 for r in repos if (r["days_left"] or 0) > 0),
-                "stranded": sum(1 for r in repos if r["stranded"]),
-                "cooldown": analysis.REPO_COOLDOWN_DAYS,
-            }
-        )
-
-    return templates.TemplateResponse(
+    conn = request.app.state.db
+    shell, _ = await _shell(request)
+    metrics = request.app.state.metrics
+    return _render(
         request,
-        "repos.html",
-        {"boards": boards, "cfg": cfg, "page": "repos", "scope": scope},
+        "system.html",
+        "system",
+        shell,
+        started_at=getattr(request.app.state, "started_at", None),
+        poller_last=_gauge_time(metrics.poller_last_success),
+        scheduler_last=_gauge_time(metrics.scheduler_last_success),
+        insights_last=_gauge_time(metrics.insights_last_success),
+        backup_last=_gauge_time(metrics.backup_last_success),
+        published=_by_label(metrics.posts_published),
+        failures=_by_label(metrics.publish_failures),
+        counters={
+            "published": _counter(metrics.posts_published),
+            "publish_failures": _counter(metrics.publish_failures),
+            "slots_starved": _counter(metrics.slots_starved),
+            "graph_errors": _counter(metrics.graph_errors),
+            "signature_failures": _counter(metrics.webhook_signature_failures),
+            "insights_fetched": _counter(metrics.insights_fetched),
+        },
+        stale=await db.stale_claims(conn),
+        funnel=await db.funnel(conn),
     )
+
+
+@router.get("/search", response_class=HTMLResponse, name="search_page")
+async def search_page(request: Request) -> Any:
+    shell, _ = await _shell(request)
+    query = (request.query_params.get("q") or "").strip()
+    results = await panel.search(request.app.state.db, shell["brands"], query)
+    return _render(request, "search.html", "search", shell, query=query, results=results)
 
 
 @router.get("/settings", response_class=HTMLResponse, name="settings_page")
@@ -944,11 +502,8 @@ async def settings_page(request: Request) -> Any:
     would be a second source of truth for the schedule. This holds preferences
     of whoever is looking, and nothing here reaches a post.
     """
-    return templates.TemplateResponse(
-        request,
-        "settings.html",
-        {"cfg": request.app.state.cfg, "page": "settings", "scope": await _scope(request)},
-    )
+    shell, _ = await _shell(request)
+    return _render(request, "settings.html", "settings", shell)
 
 
 @router.post("/settings/skin")
@@ -974,58 +529,197 @@ async def set_skin(request: Request) -> Any:
     return response
 
 
-@router.get("/health", response_class=HTMLResponse, name="health_page")
-async def health_page(request: Request) -> Any:
+# --------------------------------------------------------------------------
+# Brand pages
+# --------------------------------------------------------------------------
+
+
+@router.get("/b/{brand}/", response_class=HTMLResponse, name="brand_page")
+async def brand_page(request: Request, brand: str) -> Any:
     conn, cfg = request.app.state.db, request.app.state.cfg
-    scope = await _scope(request)
-    moment = db.now()
-
-    accounts = []
-    for account in scope["visible"]:
-        account_id = account["account_id"]
-        expires = db.parse_iso(account["token_expires_at"])
-        published = await db.published_media(conn, account_id, limit=1)
-        slots = await db.active_slots(conn, account_id)
-        depth = await db.queue_depth(conn, account_id)
-        # Days of posting the queue can still cover. The number that says
-        # whether to go and render, and the one a stacked board buried.
-        approved = depth.get(db.QUEUE_APPROVED, 0)
-        accounts.append(
-            {
-                "row": account,
-                "expires": expires,
-                "days_left": (expires - moment).total_seconds() / 86_400 if expires else None,
-                "depth": depth,
-                "funnel": await db.funnel(conn, account_id),
-                "last_published": published[0] if published else None,
-                "slots_per_day": len(slots),
-                "runway_days": (approved / len(slots)) if slots else None,
-                "insights_last": db.parse_iso(await db.last_insight_fetch(conn, account_id)),
-            }
-        )
-
-    metrics = request.app.state.metrics
-    return templates.TemplateResponse(
-        request,
-        "health.html",
-        {
-            "accounts": accounts,
-            "cfg": cfg,
-            "page": "health",
-            "scope": scope,
-            "poller_last": _gauge_time(metrics.poller_last_success),
-            "scheduler_last": _gauge_time(metrics.scheduler_last_success),
-            "insights_last": _gauge_time(metrics.insights_last_success),
-            "counters": {
-                "published": _counter(metrics.posts_published),
-                "publish_failures": _counter(metrics.publish_failures),
-                "slots_starved": _counter(metrics.slots_starved),
-                "graph_errors": _counter(metrics.graph_errors),
-                "signature_failures": _counter(metrics.webhook_signature_failures),
-                "insights_fetched": _counter(metrics.insights_fetched),
-            },
-        },
+    shell, moment = await _shell(request)
+    found = panel.find_brand(shell["brands"], brand)
+    if found is None:
+        return _home(request)
+    state = shell["states"][found.name]
+    everything = await panel.library(
+        conn, cfg, found, shell["destinations"], moment=moment, per_page=10_000
     )
+    coming = [
+        plan for plan in await panel.plans(conn, cfg, found, shell["destinations"], moment=moment)
+        if plan.first
+    ][:3]
+    return _render(
+        request,
+        "brand.html",
+        "overview",
+        shell,
+        brand=found,
+        state=state,
+        next=await panel.next_out(conn, cfg, state, moment=moment),
+        compare=panel.views_compare(everything["all"]),
+        coming=coming,
+        rules=await panel.slot_rules(conn, found),
+    )
+
+
+@router.get("/b/{brand}/schedule", response_class=HTMLResponse, name="schedule_page")
+async def schedule_page(request: Request, brand: str) -> Any:
+    """Queue and Slots in one page, one row per video."""
+    conn, cfg = request.app.state.db, request.app.state.cfg
+    shell, moment = await _shell(request)
+    found = panel.find_brand(shell["brands"], brand)
+    if found is None:
+        return _home(request)
+    platform = _platform_filter(request, found)
+    plans = await panel.plans(
+        conn, cfg, found, shell["destinations"], moment=moment, platform=platform
+    )
+    decisions = await panel.decisions(conn, found, shell["destinations"], moment=moment)
+    return _render(
+        request,
+        "schedule.html",
+        "schedule",
+        shell,
+        brand=found,
+        platform=platform,
+        days=panel.by_day(plans, moment),
+        plan_count=len(plans),
+        row_count=sum(len(p.chips) for p in plans),
+        decisions=[d for d in decisions if not platform or d["platform"] == platform],
+        rules=await panel.slot_rules(conn, found),
+    )
+
+
+@router.get("/b/{brand}/library", response_class=HTMLResponse, name="library_page")
+async def library_page(request: Request, brand: str) -> Any:
+    conn, cfg = request.app.state.db, request.app.state.cfg
+    shell, moment = await _shell(request)
+    found = panel.find_brand(shell["brands"], brand)
+    if found is None:
+        return _home(request)
+    platform = _platform_filter(request, found)
+    sort = "views" if request.query_params.get("sort") == "views" else "published"
+    try:
+        page = int(request.query_params.get("page") or 1)
+    except ValueError:
+        page = 1
+    lib = await panel.library(
+        conn, cfg, found, shell["destinations"], moment=moment,
+        platform=platform, sort=sort, page=page,
+    )
+    return _render(
+        request, "library.html", "library", shell,
+        brand=found, lib=lib, platform=platform, sort=sort,
+    )
+
+
+@router.get("/b/{brand}/performance", response_class=HTMLResponse, name="performance_page")
+async def performance_page(request: Request, brand: str) -> Any:
+    """Each platform in its own terms.
+
+    Insights refused every platform but Instagram, correctly, because every
+    table on it was built on skip rate. The rule is that skip rate never shares
+    a table with anything else, not that the others go unshown.
+    """
+    conn, cfg = request.app.state.db, request.app.state.cfg
+    shell, _ = await _shell(request)
+    found = panel.find_brand(shell["brands"], brand)
+    if found is None:
+        return _home(request)
+    sections = await panel.performance(conn, cfg, found, shell["destinations"])
+    return _render(
+        request, "performance.html", "performance", shell, brand=found, sections=sections
+    )
+
+
+@router.get("/b/{brand}/subjects", response_class=HTMLResponse, name="subjects_page")
+async def subjects_page(request: Request, brand: str) -> Any:
+    """The cooldown list, once per brand, which is whose list it is."""
+    shell, _ = await _shell(request)
+    found = panel.find_brand(shell["brands"], brand)
+    if found is None:
+        return _home(request)
+    status = request.query_params.get("status") or ""
+    data = await panel.subjects(request.app.state.db, found, owner=shell["owner"], status=status)
+    return _render(request, "subjects.html", "subjects", shell, brand=found, data=data)
+
+
+@router.get("/b/{brand}/setup", response_class=HTMLResponse, name="setup_page")
+async def setup_page(request: Request, brand: str) -> Any:
+    shell, _ = await _shell(request)
+    found = panel.find_brand(shell["brands"], brand)
+    if found is None:
+        return _home(request)
+    entries = await panel.setup(request.app.state.db, found, shell["destinations"])
+    return _render(request, "setup.html", "setup", shell, brand=found, entries=entries)
+
+
+# --------------------------------------------------------------------------
+# The old addresses
+# --------------------------------------------------------------------------
+#
+# Every page used to be `/admin/<table>?brand=` or `?account=`, and those links
+# are in bookmarks and in this repo's own notes. Each one lands on the page that
+# answers the same question now: inside the brand it named, narrowed to the
+# platform of the destination it named, or on the portfolio page when it named
+# neither.
+
+_LEGACY = {
+    "queue": ("schedule_page", "calendar_page"),
+    "posts": ("library_page", "dashboard_page"),
+    "insights": ("performance_page", "dashboard_page"),
+    "repos": ("subjects_page", "dashboard_page"),
+    "slots": ("setup_page", "destinations_page"),
+    "health": ("setup_page", "system_page"),
+}
+
+
+async def _legacy(request: Request, section: str) -> RedirectResponse:
+    target, fallback = _LEGACY[section]
+    brands = await panel.load_brands(request.app.state.db)
+    account = request.query_params.get("account") or ""
+    for brand in brands:
+        for row in brand.accounts:
+            if account and str(row["account_id"]) == account:
+                url = str(request.url_for(target, brand=brand.path))
+                if target in ("schedule_page", "library_page"):
+                    url += f"?platform={row['platform'] or db.PLATFORM_INSTAGRAM}"
+                return RedirectResponse(url, status_code=303)
+    found = panel.find_brand(brands, request.query_params.get("brand") or "")
+    if found is not None:
+        return RedirectResponse(str(request.url_for(target, brand=found.path)), status_code=303)
+    return RedirectResponse(str(request.url_for(fallback)), status_code=303)
+
+
+@router.get("/queue", name="queue_page")
+async def queue_page(request: Request) -> Any:
+    return await _legacy(request, "queue")
+
+
+@router.get("/posts", name="posts_page")
+async def posts_page(request: Request) -> Any:
+    return await _legacy(request, "posts")
+
+
+@router.get("/insights", name="insights_page")
+async def insights_page(request: Request) -> Any:
+    return await _legacy(request, "insights")
+
+
+@router.get("/repos", name="repos_page")
+async def repos_page(request: Request) -> Any:
+    return await _legacy(request, "repos")
+
+
+@router.get("/slots", name="slots_page")
+async def slots_page(request: Request) -> Any:
+    return await _legacy(request, "slots")
+
+
+@router.get("/health", name="health_page")
+async def health_page(request: Request) -> Any:
+    return await _legacy(request, "health")
 
 
 def _counter(metric: Any) -> int:
@@ -1045,6 +739,16 @@ def _counter(metric: Any) -> int:
         return int(metric._value.get())  # noqa: SLF001 - prometheus_client has no public read
     except (AttributeError, TypeError):
         return 0
+
+
+def _by_label(metric: Any) -> dict[str, int]:
+    """A labelled counter's children, keyed by the first label's value.
+
+    The platform label was added so a platform that stopped publishing could not
+    hide behind the others, and summing it back into one tile undid that.
+    """
+    children = getattr(metric, "_metrics", None) or {}  # noqa: SLF001 - no public read
+    return {str(key[0]): _counter(child) for key, child in list(children.items())}
 
 
 def _gauge_time(metric: Any) -> datetime | None:
@@ -1070,14 +774,19 @@ async def _require_row(request: Request, queued_id: int) -> Any:
     return row
 
 
-@router.post("/queue/{queued_id}/approve")
-async def approve(request: Request, queued_id: int) -> Any:
-    row = await _require_row(request, queued_id)
+async def _approve_row(conn: Any, row: Any, *, bulk: bool = False) -> None:
     if row["state"] not in (db.QUEUE_DRAFT, db.QUEUE_FAILED):
-        return _back(request)
-
+        return
+    queued_id = int(row["id"])
     retrying = row["state"] == db.QUEUE_FAILED
     if retrying and row["container_id"]:
+        if bulk:
+            # One click arming a whole video must not also make the decision a
+            # person makes only after reading a failure with a container behind
+            # it. That one stays on its own row.
+            log.info("Queue %d has container %s, so arming the video skipped it",
+                     queued_id, row["container_id"])
+            return
         # The scheduler refuses this case on its own, because a container that
         # existed may already have become a Reel. A person who has read the
         # failure and clicked anyway is making a different decision, so it is
@@ -1089,14 +798,36 @@ async def approve(request: Request, queued_id: int) -> Any:
         )
     # Arming a failed row clears the reason as well as the state, so the next
     # attempt is not read through the last one's error.
-    await db.set_queue_state(
-        request.app.state.db, queued_id, db.QUEUE_APPROVED, reset_attempts=retrying
-    )
+    await db.set_queue_state(conn, queued_id, db.QUEUE_APPROVED, reset_attempts=retrying)
     log.info("Queue %d armed from the admin UI", queued_id)
+
+
+async def _hold_row(conn: Any, row: Any, *, bulk: bool = False) -> None:
+    if row["state"] == db.QUEUE_APPROVED:
+        await db.set_queue_state(conn, int(row["id"]), db.QUEUE_DRAFT)
+
+
+async def _cancel_row(conn: Any, row: Any, *, bulk: bool = False) -> None:
+    if row["state"] == db.QUEUE_PUBLISHED:
+        # Cancelling a post that went out would only make the record wrong.
+        return
+    if row["state"] == db.QUEUE_CLAIMED and not panel.claim_is_stale(row):
+        # A fresh claim is mid-flight and cancelling it races the publish. An
+        # old one is a process that died holding it, and refusing that left
+        # row 55 stuck for nine days with no way to resolve it from here.
+        return
+    await db.set_queue_state(conn, int(row["id"]), db.QUEUE_CANCELLED)
+    log.info("Queue %d cancelled from the admin UI", row["id"])
+
+
+@router.post("/queue/{queued_id}/approve", name="approve")
+async def approve(request: Request, queued_id: int) -> Any:
+    row = await _require_row(request, queued_id)
+    await _approve_row(request.app.state.db, row)
     return _back(request)
 
 
-@router.post("/queue/{queued_id}/publish")
+@router.post("/queue/{queued_id}/publish", name="publish_now")
 async def publish_now(request: Request, queued_id: int) -> Any:
     """Send this post now, without waiting for its slot.
 
@@ -1174,7 +905,7 @@ async def publish_now(request: Request, queued_id: int) -> Any:
     return _back(request)
 
 
-@router.post("/queue/publish-all")
+@router.post("/queue/publish-all", name="publish_all_now")
 async def publish_all_now(request: Request) -> Any:
     """Publish what the next slot fire would publish, on every destination, now.
 
@@ -1194,14 +925,12 @@ async def publish_all_now(request: Request) -> Any:
     **It does not touch the slots**, exactly as `publish_now` does not, and here
     that is the feature rather than a caveat. Today's fire is still due, so the
     schedule still gets to prove itself on its own timetable while this proves
-    the publishing path immediately. The two questions are separate and this
-    answers only one of them.
+    the publishing path immediately.
 
-    **It refuses to run unscoped.** `_scope` falls back to every account when
-    no identity is chosen, which is right for a page and wrong for a button
-    that publishes: one misread click would fire every identity at once. A
-    brand or a destination has to be selected, which is also the state anyone
-    validating a new account is already in.
+    **It refuses to run unscoped.** It takes `?brand=` or `?account=` and
+    nothing else, because one misread click must not fire every identity at
+    once. The Schedule page is the only place it is offered, and that page is
+    always inside a brand.
 
     Every row is claimed before anything is sent, so a tick landing mid-flight
     finds nothing to take, and every row with a container is skipped, which is
@@ -1209,18 +938,27 @@ async def publish_all_now(request: Request) -> Any:
     exist, for the reason `publish_now` does: the rows' own states are the
     progress bar.
     """
-    scope = await _scope(request)
-    if not scope["selected"] and not scope["brand"]:
+    conn = request.app.state.db
+    brands = await panel.load_brands(conn)
+    account_id = request.query_params.get("account") or ""
+    visible = [
+        row for brand in brands for row in brand.accounts
+        if account_id and str(row["account_id"]) == account_id
+    ]
+    label = account_id
+    if not visible:
+        found = panel.find_brand(brands, request.query_params.get("brand") or "")
+        if found is not None:
+            visible, label = list(found.accounts), found.name
+    if not visible:
         log.warning("Publish all was refused because no identity is selected")
         return _back(request)
 
-    conn = request.app.state.db
     started: list[str] = []
-    for account in scope["visible"]:
-        account_id = str(account["account_id"])
-        row = await db.next_approved(conn, account_id)
+    for account in visible:
+        row = await db.next_approved(conn, str(account["account_id"]))
         if row is None:
-            log.info("Publish all: %s has nothing armed", account_id)
+            log.info("Publish all: %s has nothing armed", account["account_id"])
             continue
         if row["container_id"]:
             log.warning(
@@ -1251,50 +989,58 @@ async def publish_all_now(request: Request) -> Any:
 
     log.info(
         "Publish all for %r started %d of %d destination(s): %s",
-        scope["brand"] or scope["selected"]["account_id"],
-        len(started), len(scope["visible"]), ", ".join(started) or "none",
+        label, len(started), len(visible), ", ".join(started) or "none",
     )
     return _back(request)
 
 
-@router.post("/queue/{queued_id}/hold")
+@router.post("/queue/{queued_id}/hold", name="hold")
 async def hold(request: Request, queued_id: int) -> Any:
     row = await _require_row(request, queued_id)
-    if row["state"] == db.QUEUE_APPROVED:
-        await db.set_queue_state(request.app.state.db, queued_id, db.QUEUE_DRAFT)
+    await _hold_row(request.app.state.db, row)
     return _back(request)
 
 
-def _claim_is_stale(row: Any, *, moment: Any = None) -> bool:
-    """Whether a `claimed` row has been held past any real publish attempt.
-
-    Mirrors `db.stale_claims` so the button and the gauge agree about which
-    rows are abandoned. `claimed_at` is null before schema 18, so `created_at`
-    stands in, the same fallback and for the same reason.
-    """
-    held = db.parse_iso(row["claimed_at"] or row["created_at"])
-    if held is None:
-        return False
-    return (moment or db.now()) - held >= db.CLAIM_STALE_AFTER
-
-
-@router.post("/queue/{queued_id}/cancel")
+@router.post("/queue/{queued_id}/cancel", name="cancel")
 async def cancel(request: Request, queued_id: int) -> Any:
     row = await _require_row(request, queued_id)
-    if row["state"] == db.QUEUE_PUBLISHED:
-        # Cancelling a post that went out would only make the record wrong.
-        return _back(request)
-    if row["state"] == db.QUEUE_CLAIMED and not _claim_is_stale(row):
-        # A fresh claim is mid-flight and cancelling it races the publish. An
-        # old one is a process that died holding it, and refusing that left
-        # row 55 stuck for nine days with no way to resolve it from here.
-        return _back(request)
-    await db.set_queue_state(request.app.state.db, queued_id, db.QUEUE_CANCELLED)
-    log.info("Queue %d cancelled from the admin UI", queued_id)
+    await _cancel_row(request.app.state.db, row)
     return _back(request)
 
 
-@router.post("/queue/{queued_id}/move")
+_VIDEO_ACTIONS = {"approve": _approve_row, "hold": _hold_row, "cancel": _cancel_row}
+
+
+@router.post("/b/{brand}/videos/{action}", name="video_action")
+async def video_action(
+    request: Request,
+    brand: str,
+    action: str,
+    ids: Annotated[list[int] | None, Form()] = None,
+) -> Any:
+    """Approve, hold or cancel one video on every destination it is queued to.
+
+    A video is one render and a row per platform, so reviewing it used to mean
+    the same decision four times on four cards. Each row still goes through the
+    single-row rule, and only rows belonging to this brand are touched, so a
+    forged list of ids cannot reach another identity's queue.
+    """
+    if action not in _VIDEO_ACTIONS:
+        raise HTTPException(status_code=400, detail="unknown action")
+    conn = request.app.state.db
+    found = panel.find_brand(await panel.load_brands(conn), brand)
+    if found is None:
+        raise HTTPException(status_code=404, detail="no such brand")
+    allowed = {str(row["account_id"]) for row in found.accounts}
+    for queued_id in ids or []:
+        row = await db.get_queued(conn, queued_id)
+        if row is None or str(row["account_id"]) not in allowed:
+            continue
+        await _VIDEO_ACTIONS[action](conn, row, bulk=True)
+    return _back(request)
+
+
+@router.post("/queue/{queued_id}/move", name="move")
 async def move(request: Request, queued_id: int, direction: Annotated[str, Form()]) -> Any:
     """Swap this post with its neighbour in the line."""
     conn = request.app.state.db
@@ -1319,7 +1065,7 @@ async def move(request: Request, queued_id: int, direction: Annotated[str, Form(
     return _back(request)
 
 
-@router.post("/queue/{queued_id}/edit")
+@router.post("/queue/{queued_id}/edit", name="edit")
 async def edit(
     request: Request,
     queued_id: int,
@@ -1360,7 +1106,7 @@ async def edit(
 # --------------------------------------------------------------------------
 
 
-@router.post("/slots/add")
+@router.post("/slots/add", name="add_slot")
 async def add_slot(
     request: Request,
     account_id: Annotated[str, Form()],
@@ -1384,7 +1130,7 @@ async def add_slot(
     return _back(request)
 
 
-@router.post("/slots/{slot_id}/toggle")
+@router.post("/slots/{slot_id}/toggle", name="toggle_slot")
 async def toggle_slot(
     request: Request, slot_id: int, active: Annotated[str, Form()] = "0"
 ) -> Any:
@@ -1392,23 +1138,23 @@ async def toggle_slot(
     return _back(request)
 
 
-@router.post("/slots/{slot_id}/delete")
+@router.post("/slots/{slot_id}/delete", name="remove_slot")
 async def remove_slot(request: Request, slot_id: int) -> Any:
     await db.delete_slot(request.app.state.db, slot_id)
     return _back(request)
 
 
-@router.post("/accounts/{account_id}/flags")
+@router.post("/accounts/{account_id}/flags", name="set_flags")
 async def set_flags(
     request: Request,
     account_id: str,
     field: Annotated[str, Form()],
     value: Annotated[str, Form()] = "0",
 ) -> Any:
-    """The kill switch, and the poller's on/off.
+    """The per-destination kill switch, and the poller's on/off.
 
     `active` gates the comment poller and the scheduler both, which is what
-    makes it a real stop rather than a partial one: pausing an account that
+    makes it a real stop rather than a partial one: pausing a destination that
     keeps publishing would be a worse surprise than either behaviour alone.
     """
     if field not in ("active", "dm_enabled"):
