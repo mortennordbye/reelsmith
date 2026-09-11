@@ -146,7 +146,15 @@ declare -a REFUSED=(
 # so a key nobody has considered stays here rather than travelling because it
 # did not look like a secret. The render host layers this over the root .env,
 # so anything absent is inherited rather than missing.
+#
+# The rule for adding one: does the render host need it in order to do its
+# job, and is it something other than a credential. It renders, so it needs
+# the voice and the end card; it ranks, so it needs the thresholds it ranks
+# on; it enqueues, so it needs the destination ids. It never publishes to
+# Meta or Google, so no token ever belongs here.
 ENV_PROJECTED_KEYS=(
+  # Where a queued row is going. Without one the fan-out skips that
+  # destination silently and queues the rest.
   IG_USER_ID
   YOUTUBE_CHANNEL_ID
   TIKTOK_OPEN_ID
@@ -156,6 +164,31 @@ ENV_PROJECTED_KEYS=(
   # same on the render host as it does here, which is the machine somebody is
   # on when a night has published to three platforms instead of four.
   BRAND
+  # The voice. Added 2026-09-11, when the second account was registered and the
+  # dry run printed these as staying behind. `CHATTERBOX_REF` is a path, the
+  # other two are floats picked by ear from a four-preset sweep, and account 2
+  # sets all three because it speaks in account 1's cloned voice rather than
+  # its own recording. Without them the render host resolves the reference to
+  # `accounts/<name>/ref/voice.wav`, which for that account does not exist, and
+  # `tts.py` raises naming the missing file. That fails loudly, which is the
+  # better of the two below.
+  CHATTERBOX_REF
+  CHATTERBOX_EXAGGERATION
+  CHATTERBOX_CFG_WEIGHT
+  # The end card, and the reason this was worth fixing the same day. These
+  # default to the empty string, because the episode renderer is public
+  # machinery with no identity in it, so an account whose end card did not
+  # cross renders a finished video with a blank one. Nothing fails and nothing
+  # logs. A render that finishes wrong is the failure this repo keeps meeting.
+  ENDCARD_NAME
+  ENDCARD_HANDLE
+  ENDCARD_TAGLINE
+  # What discovery ranks on, where an account overrides the checkout. Nothing
+  # sets these yet and they are in the `--new-account` template, so the first
+  # account to use one would otherwise be ranked by the render host on the
+  # defaults, silently and with plausible results.
+  MIN_STARS_BREAKOUT
+  MIN_STARS_ESTABLISHED
 )
 
 log()  { printf '\033[0;34m==>\033[0m %s\n' "$*"; }

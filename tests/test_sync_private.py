@@ -46,6 +46,22 @@ IDS = {
     # is here rather than in a tidier fixture value.
     "TIKTOK_OPEN_ID": "-000y6NKYZ3EEbUGgXiyJ9nG66a_xqrF68Me",
     "FACEBOOK_PAGE_ID": "104739283746152",
+    "BRAND": "thewholequote",
+}
+
+# Not ids and not credentials: what the render host needs in order to render.
+# Separated from IDS because the argument for each group is different. An id
+# that does not cross costs a destination the fan-out skips, which is at least
+# visible as a platform missing from a feed. These are worse: the end card
+# defaults to the empty string, so an account whose copy stayed behind renders
+# a finished video with a blank one, and nothing fails or logs.
+RENDER_SIDE = {
+    "CHATTERBOX_REF": "accounts/other/ref/voice.wav",
+    "CHATTERBOX_EXAGGERATION": "0.52",
+    "CHATTERBOX_CFG_WEIGHT": "0.48",
+    "ENDCARD_NAME": "The Whole Quote",
+    "ENDCARD_HANDLE": "@thewholequote",
+    "ENDCARD_TAGLINE": "Self help with a citation",
 }
 
 
@@ -62,7 +78,7 @@ def world(tmp_path: Path) -> tuple[Path, Path]:
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
 
     (repo / "PROFILE.md").write_text("# The identity\n\nNot in git.\n")
-    lines = [f"{k}={v}" for k, v in {**SECRETS, **IDS}.items()]
+    lines = [f"{k}={v}" for k, v in {**SECRETS, **IDS, **RENDER_SIDE}.items()]
     (repo / "accounts" / "acct" / ".env").write_text(
         "# the per account half\n\n" + "\n".join(lines) + "\n"
     )
@@ -113,6 +129,24 @@ def test_the_ids_do_reach_it(world):
 
     body = far_env(share)
     for name, value in IDS.items():
+        assert f"{name}={value}" in body, f"{name} did not reach the share"
+
+
+def test_what_the_render_host_renders_with_reaches_it_too(world):
+    """Added 2026-09-11, when the second account was registered and the dry run
+    printed all six of these as staying behind.
+
+    The allowlist was written when an account's host-specific half was four
+    destination ids. A second account added a voice reference, two voice knobs
+    and three end card strings, and the render host is the thing that renders,
+    so it needs every one of them. None is a credential: a path, two floats and
+    three strings that appear on screen in the finished video.
+    """
+    repo, share = world
+    run(repo, share, "--push", "--yes")
+
+    body = far_env(share)
+    for name, value in RENDER_SIDE.items():
         assert f"{name}={value}" in body, f"{name} did not reach the share"
 
 
