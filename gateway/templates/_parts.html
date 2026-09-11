@@ -1,0 +1,55 @@
+{# Small pieces every page repeats, so a state reads the same on all of them.
+
+   Each macro imports what it needs itself rather than relying on the page
+   having imported it, because a macro called from another template does not
+   see that template's imports. #}
+
+{# The platform badge: mark and word, always both. Colour and shape are a
+   finding aid; the word is what makes it unambiguous and what a screen reader
+   gets. #}
+{% macro badge(platform) -%}
+  {%- from "_icons.html" import platform_icon, platform_name -%}
+  <span class="platform {{ platform }}">{{ platform_icon(platform) }} {{ platform_name(platform) }}</span>
+{%- endmacro %}
+
+{# A brand's destinations as four slots in a fixed order, so a platform an
+   identity is not on is a visible gap at any number of brands. Filled when
+   connected, hollow when not registered, faded when paused, ringed when it
+   needs attention. #}
+{% macro dots(state) -%}
+  {%- from "_icons.html" import platform_name -%}
+  <span class="dots">
+    {%- for p in platforms -%}
+      {%- set found = state.destinations | selectattr('platform', 'equalto', p) | list -%}
+      {%- if found -%}
+        {%- set d = found[0] -%}
+        <i class="{{ p }}{{ ' paused' if not d.active }}{{ ' alert' if d.level == 'bad' }}{{ ' check' if d.level == 'warn' }}"
+           title="{{ platform_name(p) }}: {{ 'paused' if not d.active else {'bad': 'needs attention', 'warn': 'worth a look', 'info': 'connected', 'ok': 'connected'}[d.level] }}"></i>
+      {%- else -%}
+        <i class="off" title="{{ platform_name(p) }}: not registered"></i>
+      {%- endif -%}
+    {%- endfor -%}
+  </span>
+{%- endmacro %}
+
+{% macro sev(level, text) -%}
+  <span class="sev {{ level }}">{{ text }}</span>
+{%- endmacro %}
+
+{% macro tile(brand) -%}
+  <span class="tile" aria-hidden="true">{{ brand.monogram }}</span>
+{%- endmacro %}
+
+{# One destination's row for one video. Time only for what is armed or sent,
+   because a draft has no time and saying one would be a claim. #}
+{% macro chip(c) -%}
+  {%- from "_icons.html" import platform_icon, platform_name -%}
+  <span class="chip {{ c.platform }} st-{{ c.state }}{{ ' stuck' if c.stale }}" title="{{ platform_name(c.platform) }}">
+    {{- platform_icon(c.platform, 12) -}}
+    <span class="st">
+      {%- if c.state == 'approved' %}armed{% elif c.state == 'published' %}sent{% elif c.state == 'claimed' %}{{ 'stuck' if c.stale else 'sending' }}{% else %}{{ c.state }}{% endif -%}
+    </span>
+    {%- if c.when and c.state in ('approved', 'published') %}<span class="t">{{ c.when | clock(c.tz) }}</span>{% endif -%}
+    {%- if c.row['slot_override'] %}<span class="pin">pinned</span>{% endif -%}
+  </span>
+{%- endmacro %}

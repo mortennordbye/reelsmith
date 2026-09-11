@@ -35,6 +35,7 @@ page-????-??-??T??-??-??-???Z.png
 PROFILE.md
 PLAN.md
 notes/*.md
+notes/*.html
 # Session state: what is live, what is queued, what to check next. Private
 # because it carries account performance numbers, and backed up because losing
 # it loses the thread.

@@ -362,7 +362,7 @@ delete its rows, and an unresolved line is an account this code could not
 name rather than an account nobody named. Those want opposite actions and the
 sweep cannot tell them apart, so it stops: an account whose lines really were
 deleted goes on posting until the config is fixed, which is recoverable and
-visible on the Queue page, where deleting a working schedule at boot is
+visible on the brand's Schedule page, where deleting a working schedule at boot is
 neither. The log says which happened, and a removal now says how many rows it
 took rather than reporting itself as `Applied 0 slot(s)`.
 
@@ -450,13 +450,14 @@ for one whose handle differs across platforms, which a Page usually does, since
 its name is prose rather than a handle. A re-authorisation that omits it keeps
 whatever grouping the row already had.
 
-The panel is built on that: the switcher is one chip per identity with a mark
-per platform, `?brand=` scopes to an identity and `?account=` to one of its
-destinations, and every page groups its boards the same way.
+The panel is built on that: every identity has its own pages under
+`/admin/b/<brand>/`, a destination is a `?platform=` filter inside them, and
+the portfolio pages (Today, Calendar, Destinations, System) list one row per
+identity or per destination.
 
 ## Insights
 
-`GET /admin/posts` answers the question the rest of the panel could not: did
+`GET /admin/b/<brand>/library` answers the question the rest of the panel could not: did
 that Reel work. It joins two things, neither of them new. Meta's numbers, which
 a sweep reads once every six hours and stores, and the DM funnel this service
 has recorded since the first post.

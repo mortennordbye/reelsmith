@@ -1,0 +1,75 @@
+{# Brands down, platforms across. One grid instead of a stack of boards per
+   destination, and the one place a broken connection is found at a glance. #}
+{% extends "base.html" %}
+{% from "_icons.html" import platform_icon, platform_name %}
+{% block title %}reelsmith destinations{% endblock %}
+{% block style %}
+    .cell { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--faint); min-width: 150px; }
+    .cell .top { display: flex; align-items: center; gap: 7px; font-weight: 600; font-size: 12.5px; color: var(--ink); }
+    .cell .top i { width: 8px; height: 8px; border-radius: 50%; background: var(--good); flex: none; }
+    .cell .top i.warn { background: var(--warn); } .cell .top i.bad { background: var(--bad); }
+    .cell .top i.off { background: transparent; box-shadow: inset 0 0 0 1.5px var(--line-2); }
+{% endblock %}
+
+{% block body %}
+<header class="ph">
+  <div>
+    <p class="crumb">Portfolio</p>
+    <h1>Destinations</h1>
+    <p class="quip">{{ quip_for(page) }}</p>
+  </div>
+  <nav class="filters" aria-label="Show">
+    <a href="{{ url_for('destinations_page') }}" class="{{ 'on' if not show }}">All</a>
+    <a href="{{ url_for('destinations_page') }}?show=attention" class="{{ 'on' if show == 'attention' }}">Needs attention ({{ shell.destinations_open }})</a>
+  </nav>
+</header>
+
+<section class="box">
+  <div class="scroll-x">
+    <table class="t">
+      <thead>
+        <tr>
+          <th>Brand</th>
+          {% for p in platforms %}<th>{{ platform_icon(p) }} {{ platform_name(p) }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in states %}
+          <tr>
+            <td>
+              <a class="brandcell" href="{{ url_for('setup_page', brand=s.brand.path) }}">
+                <span class="tile">{{ s.brand.monogram }}</span><span class="nm">{{ s.brand.name }}</span>
+              </a>
+            </td>
+            {% for p in platforms %}
+              {% set found = s.destinations | selectattr('platform', 'equalto', p) | list %}
+              <td>
+                {% if found %}
+                  {% set d = found[0] %}
+                  <div class="cell">
+                    <span class="top">
+                      <i class="{{ 'off' if not d.active else d.level }}"></i>
+                      {% if not d.active %}Paused{% elif d.issues %}{{ d.issues[0].tag }}{% else %}Connected{% endif %}
+                    </span>
+                    <span>
+                      {% if d.token_days is not none %}Token {{ d.token_days | round | int }} days
+                      {% elif not d.expires %}No token clock
+                      {% else %}Token expiry not recorded{% endif %}
+                    </span>
+                    <span>{{ d.published }} published · {% if d.last_reading %}read {{ d.last_reading | ago }}{% else %}no readings{% endif %}</span>
+                    {% if d.failed %}<span class="bad">{{ d.failed }} failed</span>{% endif %}
+                  </div>
+                {% else %}
+                  <div class="cell"><span class="top"><i class="off"></i>Not registered</span></div>
+                {% endif %}
+              </td>
+            {% endfor %}
+          </tr>
+        {% else %}
+          <tr><td colspan="5" class="empty">{{ 'Nothing needs attention.' if show else 'No accounts registered yet.' }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

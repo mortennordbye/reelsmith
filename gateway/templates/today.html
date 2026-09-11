@@ -1,0 +1,122 @@
+{# The landing page. What needs a person across every brand, then one row per
+   brand. At fifty identities that is a fifty row table, which is still a page;
+   stacking every destination's board was not. #}
+{% extends "base.html" %}
+{% from "_icons.html" import platform_name %}
+{% from "_parts.html" import dots, sev %}
+{% block title %}reelsmith today{% endblock %}
+
+{% block body %}
+{% if skin_of(request) == 'loud' %}
+  <div class="boss">
+    <span class="pfp" style="background-image:url('{{ url_for('asset', name='boss-avatar.jpg') }}')"></span>
+    <div>
+      <span class="role">Manager · AI Slopengine</span>
+      <p class="line">Hi Boss. {{ greeting }}</p>
+    </div>
+  </div>
+{% endif %}
+
+<header class="ph">
+  <div>
+    <p class="crumb">Portfolio</p>
+    <h1>Today</h1>
+    <p class="quip">{{ quip_for(page) }}</p>
+  </div>
+</header>
+
+<div class="pills">
+  <span class="pill"><i class="{{ '' if cfg.scheduler_enabled else 'bad' }}"></i>Scheduler <b>{{ 'armed' if cfg.scheduler_enabled else 'off' }}</b></span>
+  <span class="pill"><i class="{{ '' if scheduler_last else 'warn' }}"></i>Last tick <b>{{ scheduler_last | ago }}</b></span>
+  <span class="pill"><i class="{{ '' if poller_last else 'warn' }}"></i>Comment poller <b>{{ poller_last | ago }}</b></span>
+  <span class="pill"><i class="{{ '' if insights_last else 'warn' }}"></i>Insights sweep <b>{{ insights_last | ago }}</b></span>
+  <span class="pill"><i class="{{ 'bad' if stuck else '' }}"></i>Stuck claims <b>{{ stuck }}</b></span>
+</div>
+
+<section class="box">
+  <header>
+    <h2>Needs a decision</h2>
+    <span class="hint">
+      {% set brands_with = issues | map(attribute='brands') | sum(start=[]) | unique | list %}
+      {{ issues | length }} item{{ '' if issues | length == 1 else 's' }}{% if issues %} across {{ brands_with | length }} brand{{ '' if brands_with | length == 1 else 's' }}, most urgent first{% endif %}
+    </span>
+  </header>
+  {% if issues %}
+    <div class="scroll-x">
+      <table class="t">
+        <tbody>
+          {% for entry in issues %}
+            {% set issue = entry.issue %}
+            {% set route = issue_routes[issue.page] %}
+            <tr>
+              <td style="width:92px">{{ sev(issue.level, issue.tag) }}</td>
+              <td><strong>{{ issue.headline }}</strong> <span class="muted">{{ issue.rest }}</span></td>
+              <td class="small">
+                {% for name in entry.brands[:5] %}<a href="{{ url_for(route, brand=shell.states[name].brand.path) }}">{{ name }}</a>{{ ', ' if not loop.last }}{% endfor %}
+                {% if entry.brands | length > 5 %}<span class="muted"> and {{ entry.brands | length - 5 }} more</span>{% endif %}
+              </td>
+              <td class="r">
+                {% if entry.brands | length == 1 %}
+                  <a class="btn" href="{{ url_for(route, brand=shell.states[entry.brands[0]].brand.path) }}">Open</a>
+                {% else %}
+                  <span class="faint small">{{ entry.brands | length }} brands</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="empty">Nothing needs a decision. Every destination is armed, connected and reading.</p>
+  {% endif %}
+</section>
+
+<section class="box">
+  <header>
+    <h2>Brands</h2>
+    <span class="hint">{{ states | length }} brand{{ '' if states | length == 1 else 's' }}, what needs attention first</span>
+  </header>
+  {% if states %}
+    <div class="scroll-x">
+      <table class="t">
+        <thead>
+          <tr>
+            <th>Brand</th><th>Destinations</th><th class="r">Armed</th><th class="r">Runway</th>
+            <th>Next out</th><th class="r">Published</th><th>Last render</th><th class="r">Open</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in states %}
+            {% set n = next_outs[s.brand.name] %}
+            <tr>
+              <td>
+                <a class="brandcell" href="{{ url_for('brand_page', brand=s.brand.path) }}">
+                  <span class="tile">{{ s.brand.monogram }}</span>
+                  <span class="nm">{{ s.brand.name }}<small>{{ s.destinations | length }} destination{{ '' if s.destinations | length == 1 else 's' }}</small></span>
+                </a>
+              </td>
+              <td>{{ dots(s) }}</td>
+              <td class="r">{{ s.armed }}</td>
+              <td class="r {{ 'warn' if s.runway is not none and s.runway <= 1 }}">
+                {% if s.runway is not none %}{{ '%.1f' | format(s.runway) }} d{% else %}<span class="faint">no slot</span>{% endif %}
+              </td>
+              <td>
+                {% if n %}
+                  <span class="mono">{{ n.when | clock(n.tz) }}</span>
+                  <span class="muted small">{{ n.when | until }} · {{ platform_name(n.platform) }}</span>
+                {% else %}<span class="faint">nothing armed</span>{% endif %}
+              </td>
+              <td class="r">{{ s.published }}</td>
+              <td>{% if s.last_render %}<span class="mono">{{ s.last_render | ago }}</span>{% else %}<span class="faint">none recorded</span>{% endif %}</td>
+              <td class="r">{% if s.open %}{{ sev(s.level, s.open) }}{% else %}<span class="faint">0</span>{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="empty">No accounts registered yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

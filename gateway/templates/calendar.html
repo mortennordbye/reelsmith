@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% from "_parts.html" import chip %}
+{% block title %}reelsmith calendar{% endblock %}
+
+{% block body %}
+<header class="ph">
+  <div>
+    <p class="crumb">Portfolio</p>
+    <h1>Calendar</h1>
+    <p class="quip">{{ quip_for(page) }}</p>
+  </div>
+  <span class="hint">Every brand's armed videos for the next seven days, at the time each slot will fire, jitter included.</span>
+</header>
+
+{% for label, entries in days %}
+  <section class="box">
+    <header><h2>{{ label }}</h2><span class="hint">{{ entries | length }} video{{ '' if entries | length == 1 else 's' }}</span></header>
+    {% for owner, plan in entries %}
+      <div class="vrow with-brand">
+        <a class="brandcell" href="{{ url_for('schedule_page', brand=owner.path) }}">
+          <span class="tile">{{ owner.monogram }}</span><span class="nm">{{ owner.name }}</span>
+        </a>
+        <div>
+          {% if plan.hook %}<p class="hook">{{ plan.hook }}</p>{% endif %}
+          <span class="meta mono faint">{{ plan.subject }}</span>
+        </div>
+        <div class="chips">{% for c in plan.chips %}{{ chip(c) }}{% endfor %}</div>
+      </div>
+    {% endfor %}
+  </section>
+{% else %}
+  <section class="box"><p class="empty">Nothing armed in the next seven days on any brand.</p></section>
+{% endfor %}
+{% endblock %}

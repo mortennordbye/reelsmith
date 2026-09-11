@@ -1,0 +1,169 @@
+{# A brand's home: whose feed, what is next, what needs a decision, and where
+   the views came from. The last one is the comparison no page could make while
+   one video's numbers lived on four boards. #}
+{% extends "base.html" %}
+{% from "_icons.html" import platform_name %}
+{% from "_parts.html" import badge, sev, chip %}
+{% block title %}{{ brand.name }}{% endblock %}
+{% block style %}
+    .big.warn { color: var(--warn); }
+    .big .unit { font-size: 15px; letter-spacing: 0; font-weight: 600; }
+{% endblock %}
+
+{% block body %}
+<header class="ph">
+  <div class="brandcell">
+    <span class="tile lg">{{ brand.monogram }}</span>
+    <div>
+      <p class="crumb">
+        {{ platform_list(brand.platforms) }}
+        {% if rules %} · {% for r in rules %}{{ '%02d:%02d' | format(r.slot.hour, r.slot.minute) }}{{ ', ' if not loop.last }}{% endfor %} {{ rules[0].slot.tz }}{% endif %}
+      </p>
+      <h1>{{ brand.name }}</h1>
+    </div>
+  </div>
+</header>
+
+<div class="grid3">
+  <section class="box lit pad">
+    <p class="kicker">Next out</p>
+    {% if next %}
+      <div class="big gold">{{ next.when | clock(next.tz) }}</div>
+      <p class="cap">{{ next.when | until }} · {{ platform_name(next.platform) }} · {{ next.tz }}, jitter included</p>
+      {% if next.row['hook'] %}<p class="hook" style="margin-top:12px">{{ next.row['hook'] }}</p>{% endif %}
+      <p class="mono faint" style="margin:6px 0 0">{{ next.subject }}</p>
+    {% else %}
+      <p class="cap">Nothing armed on a destination with an active slot.</p>
+    {% endif %}
+  </section>
+
+  <section class="box pad">
+    <p class="kicker">Runway</p>
+    {% if state.runway is not none %}
+      <div class="big {{ 'warn' if state.runway <= 1 }}">{{ '%.1f' | format(state.runway) }} <span class="unit">days</span></div>
+      <p class="cap">
+        Thinnest on {{ platform_list(state.thinnest) }}, with {{ state.armed }} armed across
+        {{ state.destinations | length }} destination{{ '' if state.destinations | length == 1 else 's' }}.
+      </p>
+    {% else %}
+      <div class="big faint">none</div>
+      <p class="cap">No active slot, so nothing drains the queue.</p>
+    {% endif %}
+  </section>
+
+  <section class="box pad">
+    <p class="kicker">Last render</p>
+    {% if state.last_render %}
+      <div class="big">{{ state.last_render | ago }}</div>
+      <p class="cap">{{ state.last_render | fmt(cfg.default_timezone) }}. The only trace the render host leaves on this side.</p>
+    {% else %}
+      <div class="big faint">none</div>
+      <p class="cap">No render recorded for this brand.</p>
+    {% endif %}
+  </section>
+</div>
+
+{% if state.issues %}
+  <section class="box">
+    <header><h2>Needs a decision</h2><span class="hint">{{ state.issues | length }}</span></header>
+    <table class="t">
+      <tbody>
+        {% for issue in state.issues %}
+          <tr>
+            <td style="width:92px">{{ sev(issue.level, issue.tag) }}</td>
+            <td><strong>{{ issue.headline }}</strong> <span class="muted">{{ issue.rest }}</span></td>
+            <td class="r"><a class="btn" href="{{ url_for(issue_routes[issue.page], brand=brand.path) }}">Open</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endif %}
+
+<section class="box">
+  <header><h2>Destinations</h2><a class="hint" href="{{ url_for('setup_page', brand=brand.path) }}">Setup</a></header>
+  <div class="scroll-x">
+    <table class="t">
+      <thead>
+        <tr><th>Platform</th><th>Account</th><th class="r">Armed</th><th class="r">Runway</th><th>Last publish</th><th>Last reading</th><th>Token</th><th>State</th></tr>
+      </thead>
+      <tbody>
+        {% for d in state.destinations %}
+          <tr>
+            <td>{{ badge(d.platform) }}</td>
+            <td class="mono">{{ d.handle }}</td>
+            <td class="r">{{ d.armed }}</td>
+            <td class="r">{% if d.runway is not none %}{{ '%.1f' | format(d.runway) }} d{% else %}<span class="faint">no slot</span>{% endif %}</td>
+            <td>{{ d.last_published | ago }}</td>
+            <td>
+              {% if d.last_reading %}{{ d.last_reading | ago }}
+              {% elif d.published %}<span class="warn">none stored</span>
+              {% else %}<span class="faint">nothing to read</span>{% endif %}
+            </td>
+            <td>
+              {% if d.token_days is not none %}
+                <span class="{{ 'bad' if d.token_days < 15 else ('warn' if d.token_days < 21 else '') }}">{{ d.token_days | round | int }} days</span>
+              {% elif not d.expires %}<span class="faint">does not expire</span>
+              {% else %}<span class="faint">not recorded</span>{% endif %}
+            </td>
+            <td>
+              {% if not d.active %}{{ sev('info', 'Paused') }}
+              {% elif d.issues %}{{ sev(d.level, d.issues[0].tag) }}
+              {% else %}{{ sev('good', 'OK') }}{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% if compare %}
+  {% set hue = {'instagram': 'ig', 'youtube': 'yt', 'tiktok': 'tt', 'facebook': 'fb'} %}
+  <section class="box">
+    <header><h2>Where the views came from</h2><span class="hint">The same renders, latest reading</span></header>
+    <div class="pad">
+      <div class="legend">
+        {% for p in compare.platforms %}
+          <span><i style="background:var(--{{ hue[p] }})"></i>{{ platform_name(p) }} · {{ compare.totals[p] }} views</span>
+        {% endfor %}
+      </div>
+      <div class="bars">
+        {% for row in compare.rows %}
+          <div class="brow">
+            <span class="bl mono" title="{{ row.subject }}">{{ row.subject }}</span>
+            <div class="bt">
+              {% for bar in row.bars %}
+                <div class="bar {{ bar.platform }}" title="{{ platform_name(bar.platform) }}: {{ bar.views }} views">
+                  <i style="width:{{ '%.1f' | format(bar.pct * 0.85) }}%"></i><span>{{ bar.views }}</span>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+      <p class="cap">
+        Views compare across platforms because every platform counts them. The
+        retention measures do not mean the same thing twice, so they stay on
+        Performance and never share a bar.
+      </p>
+    </div>
+  </section>
+{% endif %}
+
+<section class="box">
+  <header><h2>Coming up</h2><a class="hint" href="{{ url_for('schedule_page', brand=brand.path) }}">Full schedule</a></header>
+  {% for plan in coming %}
+    <div class="vrow">
+      <div>
+        {% if plan.hook %}<p class="hook">{{ plan.hook }}</p>{% endif %}
+        <span class="meta mono faint">{{ plan.subject }}</span>
+      </div>
+      <div class="chips">{% for c in plan.chips %}{{ chip(c) }}{% endfor %}</div>
+      <div></div>
+    </div>
+  {% else %}
+    <p class="empty">Nothing armed.</p>
+  {% endfor %}
+</section>
+{% endblock %}

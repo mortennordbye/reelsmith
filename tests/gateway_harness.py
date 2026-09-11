@@ -10,6 +10,7 @@ send exactly one of these".
 from __future__ import annotations
 
 import json
+import re
 import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any
@@ -315,6 +316,11 @@ class FakeFacebook:
     insights: dict[str, dict[str, Any]] = field(default_factory=dict)
     comment_counts: dict[str, int] = field(default_factory=dict)
     no_insights_key: set[str] = field(default_factory=set)
+    # Metric names Meta refuses as invalid. A request naming any of them fails
+    # whole with code 100, which is how a retired metric arrives.
+    rejected_metrics: set[str] = field(default_factory=set)
+    # Every metric list the insights reads asked for, in order.
+    metric_requests: list[list[str]] = field(default_factory=list)
     # Every phase, in order, so a test can assert the sequence rather than only
     # the outcome.
     phases: list[str] = field(default_factory=list)
@@ -367,6 +373,16 @@ class FakeFacebook:
             self.phases.append("insights")
             if self.insights_error:
                 return httpx.Response(400, json={"error": self.insights_error})
+            asked_match = re.search(r"video_insights\.metric\(([^)]*)\)", fields)
+            asked = asked_match.group(1).split(",") if asked_match else []
+            self.metric_requests.append(asked)
+            if any(name in self.rejected_metrics for name in asked):
+                return httpx.Response(
+                    400,
+                    json={"error": {"code": 100, "message": (
+                        "(#100) The value must be a valid insights metric"
+                    )}},
+                )
             payload: dict[str, Any] = {"permalink_url": self.permalink}
             if node in self.comment_counts:
                 payload["comments"] = {
@@ -377,6 +393,7 @@ class FakeFacebook:
                     "data": [
                         {"name": name, "values": [{"value": value}]}
                         for name, value in (self.insights.get(node) or {}).items()
+                        if not asked or name in asked
                     ]
                 }
             return httpx.Response(200, json=payload)

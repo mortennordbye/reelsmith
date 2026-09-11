@@ -1,375 +1,315 @@
-{# The whole design system. One file, no build step, no external requests:
-   this page has to render inside a cluster that cannot reach a CDN, and a
-   control panel that fails to style itself is a control panel nobody trusts.
+{# The whole design system and the shell every page sits in. One file, no build
+   step, no external requests: this page has to render inside a cluster that
+   cannot reach a CDN, and a control panel that fails to style itself is a
+   control panel nobody trusts.
 
-   **The room is the page.** The backdrop is the photograph of the Manager at
-   his desk, dimmed hard so it never fights a number, and the panels are solid
-   rather than translucent for the same reason. It is served from
-   `/admin/assets/`, behind the same login as everything else here, which is why
-   the login page gets the plain ground instead.
+   **Built on the plain look.** The tokens on `body` are the plain ones, and
+   the structure, spacing and components are designed against them. The loud
+   look is a layer: it swaps tokens and adds the wall, the framed wordmark and
+   the quips, and it may never change where anything is.
 
-   **This is deliberately not the video's palette, and not the public pages'
-   either.** `CLAUDE.md` keeps the Reels GitHub-dark-adjacent because the
-   audience there stares at that scheme all day and it has to read as native.
-   `public_base.html` stays sober because four platforms have those URLs on file
-   and a reviewer reads them. This page has an audience of one.
+   **A sidebar rather than a row of tabs.** The brand is the first choice on
+   every page and it sits at the top of the sidebar, with that brand's pages
+   under it and the portfolio pages under those. A header row of chips grew
+   sideways by about 220 pixels a brand and cut off the eighth.
 
-   Nothing here is fetched. The stacks name a face and fall back to a system
-   one, so a machine that has it gets it and the cluster never asks anyone. #}
+   Deliberately not the video's palette, and not the public pages' either.
+   `CLAUDE.md` keeps the Reels GitHub-dark-adjacent because the audience there
+   stares at that scheme all day. `public_base.html` stays sober because four
+   platforms have those URLs on file. This page has an audience of one. #}
 {% from "_icons.html" import platform_icon, platform_name %}
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  {# reelsmith first, so a bookmark still says what the service is. #}
   <title>{% block title %}reelsmith{% endblock %}</title>
   {% block head %}{% endblock %}
   <style>
-    :root {
-      --bg: #141220; --panel: #15131c; --panel-2: #1e1b28;
-      --line: #332e44; --line-2: #443d5c;
-      --ink: #f4f2f8; --dim: #b8b2c9; --faint: #847d99;
-      /* Gold, lifted off the frame the sign hangs in. It collides with none of
-         the four platform hues, which cyan would: TikTok is already teal, and
-         an accent one step from a destination badge is an accent that gets read
-         as one. Warn shares it the way `--good` used to share the old green,
-         because "waiting" is what amber means anywhere else. */
-      --accent: #f0b429; --accent-soft: #ffd76e;
-      --good: #56d364; --warn: #f0b429; --bad: #ef6055;
-      /* Used once, on the wordmark inside its frame. A single flourish, not a
-         second accent, so it never has to be told apart from anything. */
+    :root { color-scheme: dark; }
+    body {
+      --bg: #14161a; --panel: #171a1f; --panel-2: #1d2128;
+      --line: #2a2f38; --line-2: #39404c;
+      --ink: #e8eaed; --dim: #a8afba; --faint: #79808c;
+      --accent: #c9a227; --accent-soft: #e0bf5a;
+      --good: #56d364; --warn: #d4a72c; --bad: #ef6055;
       --neon: #2ee6d6;
-      --r-sm: 6px; --r-md: 10px; --r-lg: 18px;
+      --ig: #c98ae0; --yt: #ff6b5e; --tt: #4fd1c5; --fb: #7aa2f7;
+      --r-sm: 6px; --r-md: 10px;
       --serif: Fraunces, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
       --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
       --sans: "Avenir Next", Inter, ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
     }
-    /* The plain look: the same panel with the joke taken out.
-       Only tokens and a handful of `display: none`, so a component is never
-       written twice and a new one is plain without being told. Neutral slate
-       rather than a light ground, because every platform badge is a light
-       glyph on a dark tint and inverting the page would mean restating all
-       four, which is the one set of colours this file argues hardest about. */
-    body.skin-plain {
-      --bg: #14161a; --panel: #171a1f; --panel-2: #1d2128;
-      --line: #2a2f38; --line-2: #39404c;
-      --ink: #e8eaed; --dim: #a8afba; --faint: #79808c;
-      /* Held at the same hue rather than retuned. Gold was picked because it
-         collides with none of the four platform hues, and that reasoning does
-         not change because the wallpaper came off. Muted, not replaced. */
-      --accent: #c9a227; --accent-soft: #e0bf5a;
-      --warn: #c9a227;
-      --r-lg: 10px;
-    }
-    /* The joke, in four parts. Hidden here rather than branched on inside six
-       templates, so a page that grows a quip tomorrow is covered already. */
-    body.skin-plain .wall,
-    body.skin-plain .quip,
-    body.skin-plain .boss { display: none; }
-    /* Matched at the same depth as the rules further down, because `header
-       .brand` is two selectors and `body.skin-plain .brand` loses to it. The
-       frame and the neon are the two things that make this a sign rather than
-       a wordmark, so both have to go or neither does. */
-    body.skin-plain header .brand {
-      border: 0; box-shadow: none; padding: 5px 0 6px;
-    }
-    body.skin-plain header .brand .wm {
-      color: var(--ink); font-size: 17px; letter-spacing: .02em;
+    /* The loud look: tokens plus decoration, never layout. */
+    body.skin-loud {
+      --bg: #141220; --panel: #15131c; --panel-2: #1e1b28;
+      --line: #332e44; --line-2: #443d5c;
+      --ink: #f4f2f8; --dim: #b8b2c9; --faint: #847d99;
+      --accent: #f0b429; --accent-soft: #ffd76e; --warn: #f0b429;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0; background: var(--bg); color: var(--ink);
-      font: 15px/1.6 var(--sans);
-      /* Explicit, because the wall behind is a fixed layer and a transparent
-         body would let the page floor show through the gaps at the bottom of a
-         short page. */
-      min-height: 100vh;
+      font: 14.5px/1.55 var(--sans); min-height: 100vh;
     }
-    /* The room. Fixed, so it stays put while a long queue scrolls over it, and
-       under everything at z-index 0. The gradient does the work: light enough
-       at the top that the desk reads, opaque enough by the fold that no panel
-       is ever set on a busy ground. */
+    a { color: var(--accent-soft); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .wall {
-      position: fixed; inset: 0; z-index: 0;
-      background-position: center top; background-size: cover;
-      background-repeat: no-repeat;
+      position: fixed; inset: 0; z-index: 0; background-position: center top;
+      background-size: cover; background-repeat: no-repeat;
     }
     .wall::after {
       content: ""; position: absolute; inset: 0;
-      background: linear-gradient(180deg,
-        #141220bf 0%, #141220e0 38%, #141220e8 70%, #141220f7 100%);
+      background: linear-gradient(180deg, #141220c7 0%, #141220e6 38%, #141220f2 70%, #141220fa 100%);
     }
-    header, main { position: relative; z-index: 1; }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-    header {
-      border-bottom: 1px solid var(--line-2); padding: 0 20px;
-      display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
-      background: #141220d9; position: sticky; top: 0; z-index: 5;
+
+    /* The shell */
+    .app { position: relative; z-index: 1; display: grid; grid-template-columns: 236px minmax(0, 1fr); min-height: 100vh; }
+    .app.solo { display: block; }
+    .side {
+      position: sticky; top: 0; height: 100vh; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 12px; padding: 14px 12px;
+      border-right: 1px solid var(--line); background: color-mix(in srgb, var(--panel) 94%, transparent);
     }
-    /* The sign on the wall, frame and all. The word reelsmith rides under it
-       rather than beside it, so the service still names itself on every page. */
-    header .brand {
-      display: inline-block; padding: 5px 13px 6px; margin: 9px 6px 9px 0;
-      border: 3px solid var(--accent);
-      box-shadow: inset 0 0 0 2px var(--bg), 0 0 0 2px #8a6410;
+    main { padding: 22px 28px 64px; min-width: 0; max-width: 1320px; width: 100%; }
+    .app.solo main { max-width: 420px; margin: 12vh auto 0; }
+
+    .wm { display: flex; flex-direction: column; align-self: flex-start; color: var(--ink); padding: 2px 6px; }
+    .wm:hover { text-decoration: none; }
+    .wm .name { font: 700 15px/1 var(--sans); letter-spacing: .02em; }
+    .wm .loud, .wm small { display: none; }
+    .skin-loud .wm { border: 3px solid var(--accent); box-shadow: inset 0 0 0 2px var(--bg), 0 0 0 2px #8a6410; padding: 5px 11px 5px; margin: 2px 0 2px 4px; }
+    .skin-loud .wm .plain { display: none; }
+    .skin-loud .wm .loud { display: inline; color: var(--neon); letter-spacing: .06em; }
+    .skin-loud .wm small { display: block; font: 7.5px/1 var(--mono); letter-spacing: .22em; text-transform: uppercase; color: var(--faint); margin-top: 4px; }
+
+    details.picker { position: relative; }
+    details.picker > summary {
+      list-style: none; cursor: pointer; display: grid; grid-template-columns: 30px minmax(0, 1fr) 12px;
+      align-items: center; gap: 9px; padding: 7px 9px; border-radius: 9px;
+      background: var(--panel-2); border: 1px solid var(--line-2);
     }
-    header .brand .wm {
-      display: block; font-family: var(--sans); font-weight: 700; font-size: 19px;
-      letter-spacing: .05em; color: var(--neon); line-height: 1.05;
+    details.picker > summary::-webkit-details-marker { display: none; }
+    .pk { min-width: 0; font-weight: 600; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pk small { display: block; font-weight: 400; font-size: 11px; color: var(--faint); margin-top: 2px; }
+    .chev { width: 12px; height: 12px; color: var(--faint); }
+    .picklist {
+      position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 20; padding: 6px;
+      background: var(--panel); border: 1px solid var(--line-2); border-radius: 10px;
+      box-shadow: 0 18px 40px -12px #000; max-height: 70vh; overflow-y: auto;
     }
-    header .brand .sub {
-      display: block; font-family: var(--mono); font-size: 8.5px;
-      letter-spacing: .22em; text-transform: uppercase; color: var(--faint);
-      margin-top: 3px;
+    .picklist a { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 6px; border-radius: 7px; color: var(--ink); }
+    .picklist a:hover, .picklist a.on { background: var(--panel-2); text-decoration: none; }
+    .picklist .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .picklist .more { display: block; color: var(--dim); font-size: 12.5px; padding: 8px 6px 4px; }
+
+    .tile {
+      width: 30px; height: 30px; border-radius: 7px; display: inline-grid; place-items: center; flex: none;
+      background: var(--bg); border: 1px solid var(--line-2); font: 700 11px/1 var(--mono); color: var(--ink);
     }
-    header nav a {
-      display: inline-block; padding: 14px 2px; color: var(--dim);
-      border-bottom: 2px solid transparent; margin-right: 16px;
-    }
-    header nav a.on { color: var(--ink); border-bottom-color: var(--accent); }
-    header nav a:hover { color: var(--ink); text-decoration: none; }
-    main { padding: 20px; max-width: 1100px; margin: 0 auto; }
-    h1 {
-      font-family: var(--serif); font-size: 26px; font-weight: 600;
-      margin: 0 0 6px; letter-spacing: .01em; text-wrap: balance;
-    }
-    h2 {
-      font-family: var(--serif); font-size: 19px; font-weight: 600;
-      margin: 30px 0 12px; letter-spacing: .01em;
-    }
-    /* The original account, above the boards for the platforms it posts to.
-       Only rendered when there is more than one, for the same reason the
-       switcher only appears then: a heading naming the only identity there is
-       is furniture. */
-    h2.identity {
-      font-size: 17px; margin: 34px 0 10px; color: var(--dim);
-      text-transform: lowercase; letter-spacing: .02em;
-    }
-    h2.identity::before { content: "@"; opacity: .5; }
-    h3.board {
-      font-family: var(--serif); font-size: 17px; font-weight: 600;
-      margin: 20px 0 12px; letter-spacing: .01em;
-    }
-    .sub { color: var(--dim); font-size: 13px; margin: 0 0 20px; }
-    /* One dry line per page, under its heading, where the reader already is.
-       The text lives in `_QUIPS` in `admin.py` and arrives through
-       `quip_for(page)`, so a page gains one by being named in one dict rather
-       than by six templates each carrying their own. */
-    .quip {
-      color: var(--faint); font-size: 12.5px; font-style: italic;
-      margin: 0 0 18px; max-width: 62ch;
-    }
-    .card {
-      background: var(--panel); border: 1px solid var(--line);
-      border-radius: var(--r-md); padding: 15px 17px; margin-bottom: 14px;
-    }
-    .row { display: flex; gap: 14px; align-items: flex-start; }
-    .row > .grow { flex: 1; min-width: 0; }
-    .muted { color: var(--dim); }
-    .small { font-size: 13px; }
-    .mono { font-family: var(--mono); font-size: 12px; }
-    .tag {
-      display: inline-block; font-size: 11px; text-transform: uppercase;
-      letter-spacing: .04em; padding: 2px 7px; border-radius: 999px;
-      border: 1px solid var(--line-2); color: var(--dim);
-    }
-    .tag.approved { color: var(--good); border-color: #2f6b39; }
-    .tag.draft { color: var(--warn); border-color: #6b5320; }
-    .tag.failed, .tag.cancelled { color: var(--bad); border-color: #71332c; }
-    .tag.published { color: var(--accent-soft); border-color: #6b5320; }
-    .tag.claimed { color: var(--warn); border-color: #6b5320; }
-    /* Which surface a board describes. Instagram, YouTube, TikTok and Facebook
-       are separate account rows publishing on different schedules under
-       different rules, and until this existed the only thing telling two boards
-       apart was a username. Colour alone would not be enough, so the word is
-       always there and the colour only makes it findable at a glance. */
-    .platform {
-      display: inline-flex; align-items: center; gap: 5px;
-      font-size: 11px; text-transform: uppercase;
-      letter-spacing: .06em; font-weight: 600; padding: 3px 9px;
-      border-radius: var(--r-sm); vertical-align: middle; margin-right: 4px;
-    }
-    /* Violet, red, teal and blue rather than anything from the palette above:
-       gold, green and coral already mean waiting, approved and failed, and a
-       badge that borrows a state colour is a badge that gets misread as a
-       state. Four hues from four parts of the wheel, so they stay separable
-       when two boards sit next to each other and when neither is read in
-       colour. Unchanged by the retheme, which is the point of having written
-       down why they were picked. */
-    .platform.instagram { color: #c98ae0; background: #241a2b; border: 1px solid #4d3a63; }
-    .platform.youtube { color: #ff6b5e; background: #2b1310; border: 1px solid #6b2b24; }
-    .platform.tiktok { color: #4fd1c5; background: #10262b; border: 1px solid #24575e; }
-    .platform.facebook { color: #7aa2f7; background: #101827; border: 1px solid #29406b; }
-    /* The stripe repeats the badge down the left edge, so scrolling past a
-       heading does not lose which surface you are looking at. */
-    .board { display: flex; align-items: center; gap: 8px; padding-left: 10px; }
-    .board.instagram { border-left: 3px solid #4d3a63; }
-    .board.youtube { border-left: 3px solid #6b2b24; }
-    .board.tiktok { border-left: 3px solid #24575e; }
-    .board.facebook { border-left: 3px solid #29406b; }
-    button, .btn {
-      font: inherit; font-size: 13px; padding: 5px 11px; border-radius: var(--r-sm);
-      border: 1px solid var(--line-2); background: var(--panel-2); color: var(--ink);
-      cursor: pointer;
-    }
-    button:hover { border-color: var(--accent); color: #fff; }
-    button.primary { background: #5c4413; border-color: var(--accent); color: #fff; }
-    button.danger { background: #3a1c18; border-color: #71332c; }
-    button.link { background: none; border: none; color: var(--dim); padding: 5px 4px; }
-    form.inline { display: inline; }
-    input, select, textarea {
-      font: inherit; font-size: 13px; background: #0d0b14; color: var(--ink);
-      border: 1px solid var(--line); border-radius: var(--r-sm); padding: 5px 8px;
-    }
-    textarea { width: 100%; font-family: var(--mono); }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
-    th { color: var(--dim); font-weight: 500; font-size: 12px; text-transform: uppercase; }
-    tr:last-child td { border-bottom: none; }
+    .tile.all { color: var(--accent-soft); font-size: 13px; }
+    .tile.lg { width: 44px; height: 44px; font-size: 14px; border-radius: 10px; }
+
+    form.find input { width: 100%; }
+    .snav { display: flex; flex-direction: column; gap: 1px; }
+    .snav .grp { font: 600 9.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--faint); margin: 12px 8px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .snav a { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 9px; border-radius: 7px; color: var(--dim); }
+    .snav a:hover { color: var(--ink); text-decoration: none; background: var(--panel-2); }
+    .snav a.on { color: var(--ink); background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--line-2); }
+    .ct { font: 600 11px/1 var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; }
+    .ct.bad { color: #1b0c0a; background: var(--bad); border-radius: 999px; padding: 3px 6px; }
+    .ct.warn { color: var(--warn); }
+    .sidefoot { margin-top: auto; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px; font-size: 12.5px; }
+    .sidefoot a { color: var(--dim); }
+
+    /* Page header */
+    .ph { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+    .crumb { font: 11.5px/1.4 var(--mono); color: var(--faint); margin: 0 0 4px; }
+    h1 { font: 700 23px/1.15 var(--sans); letter-spacing: -.01em; margin: 0; text-wrap: balance; }
+    h2 { font: 700 10.5px/1.2 var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--faint); margin: 0; }
+    h3 { font: 600 14px/1.3 var(--sans); margin: 16px 0 8px; }
+    .quip { display: none; }
+    .skin-loud .quip { display: block; color: var(--faint); font-size: 12.5px; font-style: italic; margin: 5px 0 0; max-width: 62ch; }
+    .filters { display: flex; flex-wrap: wrap; gap: 6px; }
+    .filters a { font-size: 12.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--dim); }
+    .filters a.on { color: var(--ink); background: var(--panel-2); }
+    .filters a:hover { text-decoration: none; color: var(--ink); }
+
+    /* Surfaces */
+    .box { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); margin-bottom: 16px; }
+    .box > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+    .box > header h2 { display: flex; align-items: center; gap: 8px; }
+    .box.lit { border-color: var(--accent); }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); padding: 16px 18px; margin-bottom: 16px; }
+    .hint { font-size: 12px; color: var(--faint); }
+    .pad { padding: 14px; }
+    .grid2, .grid3, .grid4 { display: grid; gap: 14px; margin-bottom: 16px; }
+    .grid2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .grid2 > .box, .grid3 > .box, .grid4 > .box { margin-bottom: 0; }
+    .kicker { font: 700 10px/1 var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--faint); margin: 0 0 10px; }
+    .big { font: 700 32px/1 var(--sans); letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+    .big.gold { color: var(--accent-soft); }
+    .cap { font-size: 12.5px; color: var(--dim); margin: 7px 0 0; }
     .stat { display: flex; gap: 26px; flex-wrap: wrap; }
     .stat div span { display: block; }
-    .stat .n { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .stat .n { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
     .stat .l { font-size: 12px; color: var(--dim); }
-    /* The account switcher. Sits at the far right of the header so the nav
-       keeps its place when a second account appears and the row grows. */
-    .switcher { margin-left: auto; display: flex; gap: 4px; align-items: center; }
-    .switcher a {
-      color: var(--dim); padding: 3px 9px; border-radius: 999px;
-      border: 1px solid transparent;
-    }
-    .switcher a:hover { text-decoration: none; color: var(--ink); }
-    .switcher a.on { color: var(--ink); border-color: var(--line-2); background: var(--panel-2); }
-    /* Same four hues as the board badges, so the picker and the heading it
-       selects agree without the header growing a second word. */
-    .switcher .mark.instagram { color: #c98ae0; }
-    .switcher .mark.youtube { color: #ff6b5e; }
-    .switcher .mark.tiktok { color: #4fd1c5; }
-    .switcher .mark.facebook { color: #7aa2f7; }
-    /* One chip per original account, holding its name and one mark per
-       platform. The chip is the group; the border is what says the page is
-       inside it, so picking a single destination still shows which identity it
-       belongs to. */
-    .switcher .group {
-      display: inline-flex; align-items: center; gap: 2px;
-      padding: 2px 4px 2px 0; border-radius: 999px;
-      /* Faint even when unselected, so a name and the four marks beside it
-         read as one identity rather than as five separate choices. */
-      border: 1px solid var(--line);
-    }
-    .switcher .group.on { border-color: var(--line-2); background: var(--panel); }
-    .switcher .group .name { padding: 3px 8px; }
-    .switcher .group .name.on { background: var(--panel-2); }
-    /* Square-ish rather than pill, so a mark never reads as a second name. */
-    .switcher .mark {
-      display: inline-flex; padding: 4px 5px; border-radius: var(--r-sm);
-      border: 1px solid transparent; line-height: 0;
-    }
-    .switcher .mark:hover { background: var(--panel-2); }
-    .switcher .mark.on { background: var(--panel-2); border-color: var(--line-2); }
-    /* A paused destination stays visible and stops asking to be clicked. Not
-       hidden: a board that vanished would read as a bug rather than a pause. */
-    .switcher .mark.off { opacity: .4; }
-    /* Per-post numbers. A fixed grid rather than a table, because the row has
-       a thumbnail beside it and a table would fight the video element. */
-    .metrics { display: flex; gap: 20px; flex-wrap: wrap; margin: 8px 0 0; }
-    .metrics div { min-width: 54px; }
-    .metrics .n {
-      font-size: 17px; font-weight: 600; display: block;
-      font-variant-numeric: tabular-nums;
-    }
-    .metrics .l {
-      font-size: 11px; color: var(--dim); text-transform: uppercase;
-      letter-spacing: .04em;
-    }
-    .metrics .none { color: var(--dim); font-weight: 400; }
-    /* The hook. Set in the serif at the size of a heading, because on the queue
-       page it is the thing being reviewed and everything else on the row is
-       metadata about it. Quoted rather than styled as a title, so it reads as
-       words that will be on screen rather than as a label for the card. */
-    .hook {
-      font-family: var(--serif); font-size: 17px; line-height: 1.35;
-      color: var(--ink); margin: 8px 0 2px; max-width: 46ch;
-    }
+    .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+    .pill { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--dim); background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 4px 10px 4px 8px; }
+    .pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
+    .pill i.warn { background: var(--warn); } .pill i.bad { background: var(--bad); } .pill i.idle { background: var(--faint); }
+    .pill b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+    .banner { border: 1px solid #71332c; background: #2a1512; color: #f0a79f; border-radius: var(--r-md); padding: 10px 14px; margin-bottom: 16px; }
+    .empty { color: var(--dim); padding: 18px 14px; margin: 0; }
+    .muted { color: var(--dim); } .faint { color: var(--faint); }
+    .small { font-size: 12.5px; }
+    .mono { font-family: var(--mono); font-size: 12px; }
+    .sub { color: var(--dim); font-size: 13px; margin: 0 0 12px; max-width: 72ch; }
+    .hook { font: 15px/1.35 var(--serif); color: var(--ink); margin: 0; }
     .hook::before, .hook::after { content: '"'; color: var(--faint); }
-    .empty { color: var(--dim); padding: 18px 0; text-align: center; }
-    /* The chart scales to its card rather than being measured, so there is no
-       JavaScript between the page loading and the page having content. */
-    .chart { width: 100%; height: auto; display: block; margin: 4px 0 2px; }
-    .chart .axis {
-      font-size: 10px; fill: var(--faint); font-family: var(--mono);
+    .scroll-x { overflow-x: auto; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; }
+    table.t { font-size: 13px; }
+    table.t th { text-align: left; font: 600 10px/1.2 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+    table.t td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    table.t tr:last-child td { border-bottom: 0; }
+    .r { text-align: right; font-variant-numeric: tabular-nums; }
+    td.warn, span.warn { color: var(--warn); } td.bad, span.bad { color: var(--bad); } td.good, span.good { color: var(--good); }
+    table.kv th { width: 150px; }
+
+    /* State */
+    .sev { display: inline-flex; align-items: center; gap: 6px; font: 600 11px/1 var(--sans); padding: 4px 8px; border-radius: 6px; white-space: nowrap; }
+    .sev.bad { color: #ffb3ab; background: #3a1c18; }
+    .sev.warn { color: var(--accent-soft); background: #33290f; }
+    .sev.info, .sev.ok { color: var(--dim); background: var(--panel-2); }
+    .sev.good { color: #9be8a4; background: #13301a; }
+    .tag { display: inline-block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--dim); }
+    .tag.draft, .tag.claimed { color: var(--warn); border-color: #6b5320; }
+    .tag.published { color: var(--accent-soft); border-color: #6b5320; }
+    .tag.failed, .tag.cancelled { color: var(--bad); border-color: #71332c; }
+
+    /* Platforms. Violet, red, teal and blue, from four parts of the wheel and
+       away from the state colours, so a badge is never read as a state. */
+    .platform { display: inline-flex; align-items: center; gap: 5px; font: 600 10.5px/1 var(--sans); letter-spacing: .05em; text-transform: uppercase; padding: 4px 7px; border-radius: 5px; vertical-align: middle; }
+    .platform.instagram { color: var(--ig); background: #241a2b; border: 1px solid #4d3a63; }
+    .platform.youtube { color: var(--yt); background: #2b1310; border: 1px solid #6b2b24; }
+    .platform.tiktok { color: var(--tt); background: #10262b; border: 1px solid #24575e; }
+    .platform.facebook { color: var(--fb); background: #101827; border: 1px solid #29406b; }
+    .dots { display: inline-flex; gap: 4px; vertical-align: middle; }
+    .dots i { width: 10px; height: 10px; border-radius: 3px; display: block; }
+    .dots i.instagram { background: var(--ig); } .dots i.youtube { background: var(--yt); }
+    .dots i.tiktok { background: var(--tt); } .dots i.facebook { background: var(--fb); }
+    .dots i.off { background: transparent; box-shadow: inset 0 0 0 1.5px var(--line-2); }
+    .dots i.paused { opacity: .3; }
+    .dots i.check { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--warn); }
+    .dots i.alert { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--bad); }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip { display: inline-flex; align-items: center; gap: 6px; font: 12px/1 var(--mono); padding: 5px 8px 5px 7px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--bg); color: var(--ink); white-space: nowrap; }
+    .chip.instagram svg { color: var(--ig); } .chip.youtube svg { color: var(--yt); }
+    .chip.tiktok svg { color: var(--tt); } .chip.facebook svg { color: var(--fb); }
+    .chip .st { font: 600 10px/1 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--dim); }
+    .chip.st-approved .st { color: var(--good); }
+    .chip.st-draft .st { color: var(--warn); }
+    .chip.st-published { color: var(--dim); }
+    .chip.st-failed, .chip.stuck { border-color: #71332c; background: #231210; }
+    .chip.st-failed .st, .chip.stuck .st { color: var(--bad); }
+    .chip .pin { color: var(--faint); font-size: 10.5px; }
+
+    /* Controls */
+    button, .btn {
+      font: 600 12.5px/1.3 var(--sans); padding: 6px 11px; border-radius: var(--r-sm);
+      border: 1px solid var(--line-2); background: var(--panel-2); color: var(--ink); cursor: pointer; white-space: nowrap; display: inline-block;
     }
-    /* Text wears text tokens. The one exception is the threshold label, which
-       names the line beside it and would otherwise be a caption floating free
-       of the thing it captions. */
+    button:hover, .btn:hover { border-color: var(--accent); text-decoration: none; }
+    button.primary { background: #4a3810; border-color: var(--accent); color: #fff; }
+    button.danger { background: #2c1512; border-color: #71332c; }
+    button.link { background: none; border: none; color: var(--dim); padding: 5px 4px; }
+    form.inline { display: inline; }
+    input, select, textarea { font: inherit; font-size: 13px; background: #0d0b14; color: var(--ink); border: 1px solid var(--line-2); border-radius: var(--r-sm); padding: 6px 9px; }
+    textarea { width: 100%; font-family: var(--mono); }
+    details > summary { cursor: pointer; }
+    .acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+    /* Rows of videos */
+    .day { font: 600 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); padding: 14px 14px 6px; margin: 0; }
+    .vrow { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.6fr) auto; gap: 14px; align-items: center; padding: 11px 14px; border-top: 1px solid var(--line); }
+    .vrow.with-brand { grid-template-columns: 180px minmax(0, 1fr) minmax(0, 1.4fr); }
+    .vrow .meta { display: block; margin-top: 4px; }
+    details.chipmenu { position: relative; }
+    details.chipmenu > summary { list-style: none; }
+    details.chipmenu > summary::-webkit-details-marker { display: none; }
+    details.chipmenu .menu {
+      position: absolute; z-index: 15; top: calc(100% + 6px); left: 0; min-width: 260px;
+      display: flex; flex-direction: column; gap: 6px; padding: 10px;
+      background: var(--panel); border: 1px solid var(--line-2); border-radius: 9px; box-shadow: 0 18px 40px -12px #000;
+    }
+    details.chipmenu .menu form { display: block; }
+    details.chipmenu .menu button { width: 100%; text-align: left; }
+    .brandcell { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); }
+    .brandcell:hover { text-decoration: none; }
+    .brandcell .nm { font-weight: 600; }
+    .brandcell .nm small { display: block; font-weight: 400; font-size: 11.5px; color: var(--faint); }
+
+    /* Charts. Server rendered, fixed viewBox, scaled by the container. */
+    .chart { width: 100%; height: auto; display: block; }
+    .chart .axis { font-size: 10px; fill: var(--faint); font-family: var(--mono); }
     .chart .accent { fill: var(--accent-soft); }
-    .chart circle[r="11"] { cursor: default; }
-    /* Cohort tables. A real table here, unlike the per-post metrics, because
-       every row holds the same eight numbers and comparing down a column is the
-       entire reason the page exists. */
-    table.cohorts { width: 100%; border-collapse: collapse; font-size: 13px; }
-    table.cohorts th {
-      text-align: left; font-weight: 500; color: var(--dim); font-size: 11px;
-      text-transform: uppercase; letter-spacing: .04em;
-      padding: 0 10px 7px 0; border-bottom: 1px solid var(--line);
-    }
+    .bars { display: flex; flex-direction: column; gap: 10px; }
+    .brow { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 12px; align-items: center; }
+    .brow .bl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); text-align: right; }
+    .bt { display: flex; flex-direction: column; gap: 2px; }
+    .bar { display: flex; align-items: center; gap: 6px; font: 11px/1 var(--mono); color: var(--dim); }
+    .bar i { display: block; height: 10px; border-radius: 0 3px 3px 0; min-width: 2px; }
+    .bar.instagram i { background: var(--ig); } .bar.youtube i { background: var(--yt); }
+    .bar.tiktok i { background: var(--tt); } .bar.facebook i { background: var(--fb); }
+    .legend { display: flex; gap: 16px; font-size: 12px; color: var(--dim); margin-bottom: 10px; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .legend i { width: 10px; height: 10px; border-radius: 3px; }
+    table.cohorts { font-size: 13px; }
+    table.cohorts th { text-align: left; font-weight: 500; color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 0 10px 7px 0; border-bottom: 1px solid var(--line); }
     table.cohorts td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--line); }
     table.cohorts tr:last-child td { border-bottom: 0; }
     table.cohorts .num { text-align: right; font-variant-numeric: tabular-nums; }
     table.cohorts td.good { color: var(--accent-soft); }
-    table.cohorts th.num { padding-right: 10px; }
-    /* The hook under a repo name. Small and dim, because the row is about the
-       repo and this is what was said about it, not a second heading. */
-    .sub-hook {
-      display: block; color: var(--dim); font-size: 12px; margin-top: 3px;
-      max-width: 44ch;
-    }
-    /* Why the scorer picked a repo, as small chips under its name. Chips rather
-       than a bar chart: the components are on different scales and what a
-       reader wants is which one won, not a shape to compare across rows. */
+    .sub-hook { display: block; color: var(--dim); font-size: 12px; margin-top: 3px; max-width: 48ch; }
     .breakdown { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
-    .breakdown .part {
-      font-family: var(--mono);
-      font-size: 10px; color: var(--faint); border: 1px solid var(--line);
-      border-radius: var(--r-sm); padding: 1px 5px; white-space: nowrap;
-    }
+    .breakdown .part { font: 10px/1.4 var(--mono); color: var(--faint); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 1px 5px; white-space: nowrap; }
     .breakdown .part.dim { color: var(--warn); border-color: #6b5320; }
-    /* Something the panel still stores and no longer acts on. Dimmer than
-       muted, so it reads as a footnote rather than as a current instruction. */
-    .dormant {
-      color: var(--faint); font-size: 11px; margin-left: 8px;
-      border: 1px solid var(--line); border-radius: var(--r-sm);
-      padding: 1px 6px; white-space: nowrap;
-    }
+    .metrics { display: flex; gap: 18px; flex-wrap: wrap; margin: 8px 0 0; }
+    .metrics div { min-width: 54px; }
+    .metrics .n { font-size: 16px; font-weight: 600; display: block; font-variant-numeric: tabular-nums; }
+    .metrics .l { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
     video { width: 150px; border-radius: var(--r-sm); border: 1px solid var(--line); display: block; }
-    details summary { cursor: pointer; color: var(--dim); font-size: 13px; }
-    .banner {
-      border: 1px solid #71332c; background: #2a1512; color: #f0a79f;
-      border-radius: var(--r-md); padding: 10px 14px; margin-bottom: 16px; font-size: 14px;
-    }
-    /* The queue is the reason to open this, so it stays readable on a phone:
-       the kill switch and the cancel button are the two things most likely to
-       be wanted from somewhere other than a desk. */
-    /* Anything that cannot shrink without losing meaning scrolls sideways
-       inside its card rather than being cropped by it. */
-    .scroll-x { overflow-x: auto; }
-    @media (max-width: 700px) {
-      .row { flex-direction: column; }
-      video { width: 100%; }
-      th:nth-child(n+4), td:nth-child(n+4) { display: none; }
-      /* The cohort tables opt out of that. Dropping columns four and up takes
-         the breakout count, which is the column the page tells you to read
-         before the median, so on a phone the table would have hidden the
-         answer and shown the thing it warns against reading alone. They scroll
-         instead. */
-      table.cohorts th:nth-child(n+4), table.cohorts td:nth-child(n+4) {
-        display: table-cell;
-      }
+
+    /* The manager, loud only */
+    .boss { display: flex; gap: 16px; align-items: center; background: var(--panel); border: 2px solid var(--accent); border-radius: 12px; padding: 12px 16px; margin-bottom: 16px; }
+    .boss .pfp { width: 64px; height: 64px; flex: none; border-radius: 9px; border: 2px solid var(--line-2); background-size: cover; background-position: center; }
+    .boss .role { font: 700 9.5px/1 var(--mono); letter-spacing: .15em; text-transform: uppercase; color: var(--accent); }
+    .boss .line { font: 700 19px/1.25 var(--sans); margin: 6px 0 0; }
+
+    @media (max-width: 860px) {
+      .app { grid-template-columns: 1fr; }
+      .side { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; border-right: 0; border-bottom: 1px solid var(--line); padding: 10px 12px; gap: 8px; }
+      .side .wm { order: 0; }
+      details.picker { order: 1; flex: 1 1 200px; }
+      form.find { order: 3; flex: 1 1 100%; }
+      .snav { order: 2; flex-direction: row; overflow-x: auto; width: 100%; gap: 4px; padding-bottom: 2px; }
+      .snav .grp, .sidefoot { display: none; }
+      .snav a { white-space: nowrap; }
+      main { padding: 16px; }
+      .grid2, .grid3, .grid4 { grid-template-columns: 1fr; }
+      .vrow, .vrow.with-brand { grid-template-columns: 1fr; }
+      .acts { justify-content: flex-start; }
+      details.chipmenu .menu { max-width: calc(100vw - 32px); }
+      .brow { grid-template-columns: 1fr; }
+      .brow .bl { text-align: left; }
+      .boss { display: none; }
       table.cohorts { min-width: 560px; }
-      /* A chart squashed to a phone's width keeps its aspect ratio, so 58 dots
-         land inside 120 pixels of height and stop being separable. */
       .chart { min-width: 520px; }
     }
     @media (prefers-reduced-motion: reduce) {
@@ -382,80 +322,85 @@
 <body class="skin-{{ skin }}">
   {# Behind the login, like everything else on `router`, so the login page gets
      the plain ground rather than a broken image request. Not requested at all
-     in the plain look: hiding it with CSS would still cost the download, and
-     the room photograph is the largest asset the panel has. #}
+     in the plain look, since hiding it with CSS would still cost the download. #}
   {% if page != 'login' and skin == 'loud' %}
     <div class="wall" style="background-image:url('{{ url_for('asset', name='boss-room.jpg') }}')"></div>
   {% endif %}
-  <header>
-    <span class="brand">
-      <span class="wm">{{ 'SLOPENGINE' if skin == 'loud' else 'reelsmith' }}</span>
-      {% if skin == 'loud' %}<span class="sub">reelsmith</span>{% endif %}
-    </span>
-    {% if page != 'login' %}
-      {# The account choice rides on every link, or navigating away from an
-         account silently widens the page back to all of them. #}
-      {% set q = scope.query if scope else '' %}
-      <nav>
-        <a href="{{ url_for('dashboard_page') }}{{ q }}" class="{{ 'on' if page == 'dashboard' }}">Dashboard</a>
-        <a href="{{ url_for('queue_page') }}{{ q }}" class="{{ 'on' if page == 'queue' }}">Queue</a>
-        <a href="{{ url_for('posts_page') }}{{ q }}" class="{{ 'on' if page == 'posts' }}">Posts</a>
-        <a href="{{ url_for('insights_page') }}{{ q }}" class="{{ 'on' if page == 'insights' }}">Insights</a>
-        <a href="{{ url_for('repos_page') }}{{ q }}" class="{{ 'on' if page == 'repos' }}">Repos</a>
-        <a href="{{ url_for('slots_page') }}{{ q }}" class="{{ 'on' if page == 'slots' }}">Slots</a>
-        <a href="{{ url_for('health_page') }}{{ q }}" class="{{ 'on' if page == 'health' }}">Health</a>
-        <a href="{{ url_for('settings_page') }}{{ q }}" class="{{ 'on' if page == 'settings' }}">Settings</a>
-      </nav>
+  <div class="app{{ ' solo' if page == 'login' or not shell }}">
+    {% if page != 'login' and shell %}
+      <aside class="side">
+        <a class="wm" href="{{ url_for('dashboard_page') }}">
+          <span class="name plain">reelsmith</span><span class="name loud">SLOPENGINE</span>
+          <small>reelsmith</small>
+        </a>
 
-      {# Only worth screen space once there is a choice to make. At one account
-         a switcher offering one option is furniture.
+        {# The brand picker. A list that grows downwards, attention first, then
+           by name. Past twelve the rest are on Today, which lists every brand. #}
+        <details class="picker">
+          <summary>
+            {% if brand %}
+              <span class="tile">{{ brand.monogram }}</span>
+              <span class="pk">{{ brand.name }}<small>{{ brand.accounts | length }} destination{{ '' if brand.accounts | length == 1 else 's' }}</small></span>
+            {% else %}
+              <span class="tile all">*</span>
+              <span class="pk">All brands<small>{{ shell.brands | length }} brand{{ '' if shell.brands | length == 1 else 's' }} · {{ shell.destinations | length }} destinations</small></span>
+            {% endif %}
+            <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </summary>
+          <div class="picklist">
+            <a href="{{ url_for('dashboard_page') }}" class="{{ 'on' if not brand }}"><span class="tile all">*</span><span class="nm">All brands</span><span></span></a>
+            {% for state in shell.picker[:12] %}
+              <a href="{{ url_for('brand_page', brand=state.brand.path) }}" class="{{ 'on' if brand and brand.name == state.brand.name }}">
+                <span class="tile">{{ state.brand.monogram }}</span>
+                <span class="nm">{{ state.brand.name }}</span>
+                {% if state.open %}<b class="ct {{ state.level }}">{{ state.open }}</b>{% else %}<span></span>{% endif %}
+              </a>
+            {% endfor %}
+            {% if shell.brands | length > 12 %}
+              <a class="more" href="{{ url_for('dashboard_page') }}">All {{ shell.brands | length }} brands on Today</a>
+            {% endif %}
+          </div>
+        </details>
 
-         Two levels, because an identity is not a destination. One original
-         account posts to four platforms and is four `accounts` rows, so the
-         flat version of this listed `thenightlybuild` four times, told apart
-         by a twelve pixel icon, and a second identity would have made it eight.
-         The name selects the identity across every platform; a mark selects
-         one of them. #}
-      {% if scope and scope.accounts | length > 1 %}
-        <span class="switcher small">
-          <a href="?" class="all {{ 'on' if not scope.selected and not scope.brand }}">All</a>
-          {% for b in scope.brands %}
-            <span class="group {{ 'on' if scope.brand == b.name }}">
-              <a href="?brand={{ b.name | urlencode }}"
-                 class="name {{ 'on' if scope.brand == b.name and not scope.selected }}">{{
-                 b.name }}</a>
-              {% for a in b.accounts %}
-                {# Icon only, and a title on every one, because four marks in a
-                   row is the whole point of the compact form and the label is
-                   what a screen reader and a hover get instead. #}
-                <a href="?account={{ a['account_id'] }}"
-                   class="mark {{ a['platform'] or 'instagram' }}
-                          {{ 'on' if scope.selected and scope.selected['account_id'] == a['account_id'] }}
-                          {{ 'off' if not a['active'] }}"
-                   title="{{ platform_name(a['platform']) }}
-                          {{ a['username'] or a['account_id'] }}{{ ' (paused)' if not a['active'] }}">
-                  {{ platform_icon(a['platform'] or 'instagram', 12) }}
-                </a>
-              {% endfor %}
-            </span>
-          {% endfor %}
-        </span>
-      {% endif %}
-      {% if not cfg.admin_trust_proxy_auth %}
-        <form method="post" action="{{ url_for('logout') }}" style="margin-left:auto">
-          <button class="link">Sign out</button>
+        <form class="find" method="get" action="{{ url_for('search_page') }}" role="search">
+          <input id="find" name="q" placeholder="Search hooks and subjects" aria-label="Search hooks and subjects" value="{{ query if query is defined else '' }}">
         </form>
+
+        <nav class="snav" aria-label="Pages">
+          {% if brand %}
+            {% set st = shell.states[brand.name] %}
+            <p class="grp">{{ brand.name }}</p>
+            <a href="{{ url_for('brand_page', brand=brand.path) }}" class="{{ 'on' if page == 'overview' }}">Overview {% if st.open %}<b class="ct {{ st.level }}">{{ st.open }}</b>{% endif %}</a>
+            <a href="{{ url_for('schedule_page', brand=brand.path) }}" class="{{ 'on' if page == 'schedule' }}">Schedule {% if st.schedule_badge %}<b class="ct bad">{{ st.schedule_badge }}</b>{% endif %}</a>
+            <a href="{{ url_for('library_page', brand=brand.path) }}" class="{{ 'on' if page == 'library' }}">Library <b class="ct">{{ st.published }}</b></a>
+            <a href="{{ url_for('performance_page', brand=brand.path) }}" class="{{ 'on' if page == 'performance' }}">Performance</a>
+            <a href="{{ url_for('subjects_page', brand=brand.path) }}" class="{{ 'on' if page == 'subjects' }}">Subjects</a>
+            <a href="{{ url_for('setup_page', brand=brand.path) }}" class="{{ 'on' if page == 'setup' }}">Setup</a>
+          {% endif %}
+          <p class="grp">Portfolio</p>
+          <a href="{{ url_for('dashboard_page') }}" class="{{ 'on' if page == 'today' }}">Today {% if shell.open %}<b class="ct bad">{{ shell.open }}</b>{% endif %}</a>
+          <a href="{{ url_for('calendar_page') }}" class="{{ 'on' if page == 'calendar' }}">Calendar</a>
+          <a href="{{ url_for('destinations_page') }}" class="{{ 'on' if page == 'destinations' }}">Destinations {% if shell.destinations_open %}<b class="ct warn">{{ shell.destinations_open }}</b>{% endif %}</a>
+          <a href="{{ url_for('system_page') }}" class="{{ 'on' if page == 'system' }}">System</a>
+        </nav>
+
+        <div class="sidefoot">
+          <a href="{{ url_for('settings_page') }}">Settings</a>
+          {% if not cfg.admin_trust_proxy_auth %}
+            <form method="post" action="{{ url_for('logout') }}"><button class="link">Sign out</button></form>
+          {% endif %}
+        </div>
+      </aside>
+    {% endif %}
+    <main>
+      {% if page != 'login' and not cfg.scheduler_enabled %}
+        <div class="banner">
+          The scheduler is off, so nothing in the queue will publish itself.
+          Set <span class="mono">GATEWAY_SCHEDULER_ENABLED=true</span> to arm it.
+        </div>
       {% endif %}
-    {% endif %}
-  </header>
-  <main>
-    {% if page != 'login' and not cfg.scheduler_enabled %}
-      <div class="banner">
-        The scheduler is off, so nothing in the queue will publish itself.
-        Set <span class="mono">GATEWAY_SCHEDULER_ENABLED=true</span> to arm it.
-      </div>
-    {% endif %}
-    {% block body %}{% endblock %}
-  </main>
+      {% block body %}{% endblock %}
+    </main>
+  </div>
 </body>
 </html>

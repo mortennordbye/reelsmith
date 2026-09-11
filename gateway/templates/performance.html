@@ -1,0 +1,227 @@
+{# Each platform in its own terms, in its own section.
+
+   Instagram's is the skip chart and the cohorts, because skip rate is the one
+   number the feedback loop turns on. YouTube's average view percentage and
+   Facebook's play time are shown too, and never in the same table as a skip
+   rate, which was the rule; hiding them was not. #}
+{% extends "base.html" %}
+{% from "_parts.html" import badge %}
+{% block title %}{{ brand.name }} performance{% endblock %}
+
+{% block body %}
+<header class="ph">
+  <div>
+    <p class="crumb">{{ brand.name }}</p>
+    <h1>Performance</h1>
+    <p class="quip">{{ quip_for(page) }}</p>
+  </div>
+</header>
+
+{% macro cohort_table(title, blurb, rows, breakout, threshold) %}
+  <section class="box">
+    <header><h2>{{ title }}</h2></header>
+    <div class="pad">
+      <p class="sub">{{ blurb }}</p>
+      <div class="scroll-x">
+        <table class="cohorts">
+          <thead>
+            <tr>
+              <th>{{ title.split(' ')[-1] | capitalize }}</th>
+              <th class="num">n</th>
+              <th class="num">Skip</th>
+              <th class="num">Views</th>
+              <th class="num">Best</th>
+              <th class="num">Over {{ breakout }}</th>
+              <th class="num">Under {{ '%.0f' | format(threshold) }}%</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for c in rows %}
+              <tr>
+                <td class="mono">{{ c.name }}</td>
+                <td class="num">{{ c.n }}</td>
+                <td class="num {{ 'good' if c.skip < threshold }}">{{ '%.1f' | format(c.skip) }}%</td>
+                <td class="num">{{ '{:,}'.format(c.views | int) }}</td>
+                <td class="num">{{ '{:,}'.format(c.best) }}</td>
+                <td class="num">{{ c.breakouts }} ({{ '%.0f' | format(c.breakout_share) }}%)</td>
+                <td class="num">{{ c.under_threshold }} ({{ '%.0f' | format(c.under_share) }}%)</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+{% endmacro %}
+
+{% for s in sections %}
+  {% if s.platform == 'instagram' %}
+    <section class="box">
+      <header><h2>{{ badge('instagram') }} The opening</h2><span class="hint">{{ s.dest.handle }}</span></header>
+      {% if not s.chart %}
+        <p class="empty">
+          Nothing to compare yet. {{ s.total }} published, {{ s.measured }} with a retention
+          reading, and a reading takes a few hours to arrive.
+        </p>
+      {% else %}
+        {% set c = s.chart %}
+        <div class="pad">
+          <p class="sub">
+            The share who scrolled past inside the first three seconds, so it scores the
+            opening and nothing after it. Lower is better, and the shaded band is under
+            {{ '%.0f' | format(s.threshold) }} percent. One dot per post; the line is the
+            median of the last {{ c.window }}.
+          </p>
+          <div class="scroll-x">
+            <svg class="chart" viewBox="0 0 {{ c.w }} {{ c.h }}" role="img"
+                 aria-label="Skip rate per published Reel over time, with a {{ c.window }} post trailing median.">
+              <rect x="{{ c.left }}" y="{{ c.threshold_y }}" width="{{ c.w - c.left - c.right }}"
+                    height="{{ c.baseline_y - c.threshold_y }}" fill="var(--accent)" opacity="0.06"></rect>
+              {% for line in c.grid %}
+                <line x1="{{ c.left }}" y1="{{ line.y }}" x2="{{ c.w - c.right }}" y2="{{ line.y }}" stroke="var(--line)" stroke-width="1"></line>
+                <text x="{{ c.left - 6 }}" y="{{ line.y + 3.5 }}" text-anchor="end" class="axis">{{ line.label }}</text>
+              {% endfor %}
+              <line x1="{{ c.left }}" y1="{{ c.threshold_y }}" x2="{{ c.w - c.right }}" y2="{{ c.threshold_y }}"
+                    stroke="var(--accent-soft)" stroke-width="1" stroke-dasharray="4 4" opacity="0.7"></line>
+              {% for tick in c.x_ticks %}
+                <text x="{{ tick.x }}" y="{{ c.h - 7 }}" text-anchor="{{ tick.anchor }}" class="axis">{{ tick.label }}</text>
+              {% endfor %}
+              {% for dot in c.dots %}
+                <circle cx="{{ dot.x }}" cy="{{ dot.y }}" r="11" fill="transparent">
+                  <title>{{ '%.1f' | format(dot.skip) }}% skipped · {{ dot.views }} views
+{{ dot.repo }} · {{ dot.on }}{% if dot.hook %}
+"{{ dot.hook }}"{% endif %}</title>
+                </circle>
+                <circle cx="{{ dot.x }}" cy="{{ dot.y }}" r="3.5" fill="var(--accent)" opacity="{{ '0.95' if dot.good else '0.45' }}"
+                        {% if dot.good %}stroke="var(--panel)" stroke-width="2"{% endif %} pointer-events="none"></circle>
+              {% endfor %}
+              {% if c.trend %}
+                <polyline points="{{ c.trend }}" fill="none" stroke="var(--accent)" stroke-width="2"
+                          stroke-linecap="round" stroke-linejoin="round" pointer-events="none"></polyline>
+              {% endif %}
+              <rect x="{{ c.left + 4 }}" y="{{ c.threshold_y - 16 }}" width="{{ c.threshold_label_w }}" height="13" rx="3"
+                    fill="var(--panel)" opacity="0.92" pointer-events="none"></rect>
+              <text x="{{ c.left + 9 }}" y="{{ c.threshold_y - 6 }}" text-anchor="start" class="axis accent" pointer-events="none">{{ c.threshold_label }}</text>
+            </svg>
+          </div>
+          <div class="stat" style="margin-top:12px">
+            <div><span class="n">{{ '%.1f' | format(s.median_skip) }}%</span><span class="l">median skip, {{ s.measured }} measured</span></div>
+          </div>
+        </div>
+      {% endif %}
+    </section>
+
+    {% if s.chart and (s.settling.curve or s.held_back) %}
+      <section class="box">
+        <header><h2>When a reading can be trusted</h2></header>
+        <div class="pad">
+          {% if s.settling.curve %}
+            <div class="stat">
+              {% for point in s.settling.curve %}
+                <div><span class="n">{{ '%.0f' | format(point.share) }}%</span><span class="l">by reading {{ point.reading + 1 }}</span></div>
+              {% endfor %}
+            </div>
+            <p class="small muted" style="margin:10px 0 0">
+              Share of a Reel's final views already counted, median over {{ s.settling.n }} posts
+              with enough history, measured from this account's own daily readings.
+          {% else %}
+            <p class="small muted" style="margin:0">
+              Not enough history yet to measure how long a Reel takes to stop moving, so the
+              rule below is the default rather than something this account has shown.
+          {% endif %}
+              A post counts once it has {{ s.settling.settled_after }} readings.
+              {% if s.held_back %}
+                <strong>{{ s.held_back }}</strong> {{ 'post is' if s.held_back == 1 else 'posts are' }} held back right now.
+              {% endif %}
+              The chart above keeps every post.
+            </p>
+        </div>
+      </section>
+    {% endif %}
+
+    {% if s.chart %}
+      {{ cohort_table("Cohorts by slot",
+          "Which slot a post lands in comes from its queue position rather than from anything about the video, so these groups are close to randomly assigned with respect to content. The hour, not the minute, because the scheduler jitters every slot.",
+          s.by_slot, s.breakout, s.threshold) }}
+      {{ cohort_table("Cohorts by recipe",
+          "The checkout and the settings that wrote the script. Two rows are comparable when their recipes match and not when they do not. Read the breakout column before the median.",
+          s.by_recipe, s.breakout, s.threshold) }}
+    {% endif %}
+
+  {% else %}
+    <section class="box">
+      <header>
+        <h2>{{ badge(s.platform) }}
+          {% if s.platform == 'youtube' %}The whole video{% elif s.platform == 'facebook' %}Play time{% else %}Counts only{% endif %}
+        </h2>
+        <span class="hint">{{ s.dest.handle }}</span>
+      </header>
+      <div class="pad">
+        {% if s.platform == 'youtube' %}
+          <p class="sub">
+            YouTube reports average view percentage, the share of the whole video watched, so it
+            scores the video rather than the opening and never shares a table with a skip rate.
+            Over 100 percent means the Short looped.
+          </p>
+        {% elif s.platform == 'facebook' %}
+          <p class="sub">
+            Facebook reports reach and the average time a Reel played, replays included, so its
+            watch time scores the whole video and is not Instagram's.
+          </p>
+        {% else %}
+          <p class="sub">
+            TikTok reports views, likes, comments and shares. There is no retention, watch time or
+            completion metric of any kind, so nothing here scores an opening.
+          </p>
+        {% endif %}
+
+        {% if s.posts %}
+          <div class="stat" style="margin-bottom:12px">
+            {% if s.median_views is not none %}<div><span class="n">{{ s.median_views | round | int }}</span><span class="l">median views</span></div>{% endif %}
+            {% if s.platform == 'youtube' and s.median_viewed is not none %}<div><span class="n">{{ '%.1f' | format(s.median_viewed) }}%</span><span class="l">median viewed</span></div>{% endif %}
+            {% if s.platform != 'tiktok' and s.median_watch_ms is not none %}<div><span class="n">{{ '%.0f' | format(s.median_watch_ms / 1000) }} s</span><span class="l">median watch</span></div>{% endif %}
+            {% if s.platform == 'facebook' and s.median_reach is not none %}<div><span class="n">{{ s.median_reach | round | int }}</span><span class="l">median reach</span></div>{% endif %}
+          </div>
+          <div class="scroll-x">
+            <table class="t">
+              <thead>
+                <tr>
+                  <th>Video</th><th class="r">Views</th>
+                  {% if s.platform == 'youtube' %}<th class="r">Viewed</th><th class="r">Watch</th>
+                  {% elif s.platform == 'facebook' %}<th class="r">Reach</th><th class="r">Watch</th>
+                  {% else %}<th class="r">Likes</th><th class="r">Comments</th><th class="r">Shares</th>{% endif %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for post in s.posts %}
+                  {% set r = post.reading %}
+                  <tr>
+                    <td>
+                      {% if post.row['hook'] %}<span class="hook">{{ post.row['hook'] }}</span><br>{% endif %}
+                      <span class="mono faint">{{ post.subject }}</span>
+                    </td>
+                    <td class="r">{{ r['views'] }}</td>
+                    {% if s.platform == 'youtube' %}
+                      <td class="r">{{ '%.1f' | format(r['avg_view_pct']) }}%</td><td class="r">{{ '%.0f' | format(r['avg_watch_ms'] / 1000) }} s</td>
+                    {% elif s.platform == 'facebook' %}
+                      <td class="r">{{ r['reach'] }}</td><td class="r">{{ '%.0f' | format(r['avg_watch_ms'] / 1000) }} s</td>
+                    {% else %}
+                      <td class="r">{{ r['likes'] }}</td><td class="r">{{ r['comments'] }}</td><td class="r">{{ r['shares'] }}</td>
+                    {% endif %}
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% elif s.reason %}
+          <p class="small"><span class="sev warn">No readings</span> {{ s.dest.published }} published and nothing stored. {{ s.reason }}</p>
+        {% else %}
+          <p class="empty" style="padding:0">No readings yet.</p>
+        {% endif %}
+      </div>
+    </section>
+  {% endif %}
+{% else %}
+  <section class="box"><p class="empty">No destinations registered for this brand.</p></section>
+{% endfor %}
+{% endblock %}
