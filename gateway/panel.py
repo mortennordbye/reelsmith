@@ -685,6 +685,10 @@ class Plan:
     video_name: str
     chips: list[Chip] = field(default_factory=list)
     made: datetime | None = None
+    # Checked on disk, like the Library's player, so a row whose file is gone
+    # gets a line saying so rather than a dead control.
+    media: bool = False
+    cover: str = ""
 
     @property
     def first(self) -> datetime | None:
@@ -754,9 +758,13 @@ async def plans(
                 )
 
     made = await db.rendered_at_for(conn, [p.repo for p in grouped.values()])
+    covers = Path(cfg.covers_dir)
     for plan in grouped.values():
         plan.chips.sort(key=lambda c: _rank(c.platform))
         plan.made = db.parse_iso(made.get(plan.repo))
+        plan.media = bool(plan.video_name) and (covers / plan.video_name).is_file()
+        names = (str(c.row["cover_name"] or "") for c in plan.chips)
+        plan.cover = next((n for n in names if n and (covers / n).is_file()), "")
     far = datetime.max.replace(tzinfo=moment.tzinfo)
     return sorted(grouped.values(), key=lambda p: (p.first or far, p.key))
 
