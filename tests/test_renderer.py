@@ -163,18 +163,86 @@ def test_the_tall_page_capture_is_pruned_like_every_other_staged_asset():
     assert not renderer.STAGED_ASSET_RE.fullmatch("cv-tree.png")
 
 
-def test_pruning_keeps_this_run_and_drops_the_others(tmp_path):
+DAY = renderer.STAGING_TTL_S
+
+
+def _staged_run(video_dir, account, slug, *, age_s=0):
+    """A run directory as `stage_asset` leaves it, aged by its mtime."""
+    import os
+
+    source = video_dir / f"{slug}.wav"
+    source.write_bytes(b"x")
+    key = renderer.staging_key(account, slug)
+    renderer.stage_asset(source, video_dir, key)
+    run = video_dir / "public" / key
+    if age_s:
+        stamp = run.stat().st_mtime - age_s
+        os.utime(run, (stamp, stamp))
+    return key
+
+
+def test_a_run_stages_into_a_directory_of_its_own(tmp_path):
+    """Two accounts rendering the same slug no longer share a filename."""
+    source = tmp_path / "voice.wav"
+    source.write_bytes(b"audio")
+
+    one = renderer.stage_asset(source, tmp_path, renderer.staging_key("a", "same-slug"))
+    two = renderer.stage_asset(source, tmp_path, renderer.staging_key("b", "same-slug"))
+
+    assert one == "staged/a/same-slug/voice.wav"
+    assert two == "staged/b/same-slug/voice.wav"
+    assert (tmp_path / "public" / one).read_bytes() == b"audio"
+
+
+def test_a_run_in_flight_elsewhere_is_never_pruned(tmp_path):
+    """Remotion symlinks public/ into its bundle, so deleting another run's
+    files mid render takes them out from under it. Young means in flight."""
+    theirs = _staged_run(tmp_path, "b", "theirs", age_s=60)
+    mine = _staged_run(tmp_path, "a", "mine")
+
+    assert renderer.prune_staged_assets(tmp_path, mine) == 0
+    assert (tmp_path / "public" / theirs).is_dir()
+
+
+def test_a_dead_runs_directory_is_pruned_once_a_day_old(tmp_path):
+    dead = _staged_run(tmp_path, "b", "dead", age_s=DAY + 60)
+    mine = _staged_run(tmp_path, "a", "mine", age_s=DAY + 60)
+
+    assert renderer.prune_staged_assets(tmp_path, mine) == 1
+    assert not (tmp_path / "public" / dead).exists()
+    assert (tmp_path / "public" / mine).is_dir()
+
+
+def test_old_flat_files_are_pruned_but_never_the_prototypes_or_strangers(tmp_path):
+    """The layout before per run staging left `<slug>-voice.wav` at the root.
+    Those go once they are old; the `cv-` scans and anything a person put
+    there stay."""
+    import os
+    import time
+
     public = tmp_path / "public"
     public.mkdir()
-    for name in (
-        "mine-repo.png", "mine-repo-page.png", "mine-voice.wav",
-        "theirs-repo.png", "theirs-repo-page.png",
-    ):
+    for name in ("old-repo-voice.wav", "old-repo-repo-page.png", "cv-voice-art1.jpg",
+                 "unrelated.txt", "fresh-voice.wav"):
         (public / name).write_bytes(b"x")
-    (public / "unrelated.txt").write_bytes(b"x")
+    old = time.time() - DAY - 60
+    for name in ("old-repo-voice.wav", "old-repo-repo-page.png", "cv-voice-art1.jpg",
+                 "unrelated.txt"):
+        os.utime(public / name, (old, old))
 
-    removed = renderer.prune_staged_assets(tmp_path, "mine")
+    removed = renderer.prune_staged_assets(tmp_path, renderer.staging_key("a", "x"))
 
     assert removed == 2
-    left = {p.name for p in public.iterdir()}
-    assert left == {"mine-repo.png", "mine-repo-page.png", "mine-voice.wav", "unrelated.txt"}
+    assert {p.name for p in public.iterdir()} == {
+        "cv-voice-art1.jpg", "unrelated.txt", "fresh-voice.wav",
+    }
+
+
+def test_releasing_deletes_only_this_runs_directory(tmp_path):
+    mine = _staged_run(tmp_path, "a", "mine")
+    theirs = _staged_run(tmp_path, "a", "theirs")
+
+    renderer.release_staged(tmp_path, mine)
+
+    assert not (tmp_path / "public" / mine).exists()
+    assert (tmp_path / "public" / theirs).is_dir()

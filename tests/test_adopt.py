@@ -152,11 +152,13 @@ def test_a_generated_episode_is_an_ordinary_run_folder(cfg, tmp_path, monkeypatc
     subject = SubjectCandidate(qid="Q1", name="Joseph Moxon", article="Joseph Moxon", died=1691)
     run_dir = cfg.build_dir / "2026-09-10" / subject.slug
     run_dir.mkdir(parents=True)
+    # Staging writes under video/public/, which must not be the checkout's own.
+    monkeypatch.setattr(Settings, "video_dir", property(lambda self: tmp_path / "video"))
 
     monkeypatch.setattr(
         "pipeline.artefacts.stage",
-        lambda subject, video_dir, prefer="", client=None: [
-            {"src": "a.jpg", "w": 2000, "h": 1342}
+        lambda subject, video_dir, run_key, keep_dir=None, prefer="", client=None: [
+            {"src": f"{run_key}/a.jpg", "w": 2000, "h": 1342}
         ],
     )
     monkeypatch.setattr(

@@ -614,10 +614,12 @@ def _render_one(
     # ---- 5. Render ------------------------------------------------------
     console.rule("[bold]5/5  Rendering")
 
-    # public/ is a staging area, not a store. Clear out other runs' copies
-    # before adding ours, so it doesn't grow an audio file and a screenshot per
-    # video forever.
-    renderer.prune_staged_assets(cfg.video_dir, repo.slug)
+    # public/ is a staging area, not a store. Each run stages into a directory
+    # of its own and deletes it once its covers exist; the prune only clears
+    # what a run that died left behind, and only once it is a day old, because
+    # another process may be rendering from its files right now.
+    run_key = renderer.staging_key(cfg.account, repo.slug)
+    renderer.prune_staged_assets(cfg.video_dir, run_key)
 
     # Opening shot: the real GitHub page. Cached across re-runs, and entirely
     # optional -- a capture failure just means the video opens on a card.
@@ -633,7 +635,7 @@ def _render_one(
         if capture and capture.page_aspect:
             aspect_path.write_text(json.dumps({"aspect": capture.page_aspect}))
     screenshot_src = (
-        renderer.stage_asset(shot_path, cfg.video_dir, repo.slug)
+        renderer.stage_asset(shot_path, cfg.video_dir, run_key)
         if shot_path.exists()
         else None
     )
@@ -644,7 +646,7 @@ def _render_one(
         except Exception:  # noqa: BLE001 - a bad cache is not a reason to fail a render
             page_aspect = None
     page_src = (
-        renderer.stage_asset(page_path, cfg.video_dir, repo.slug)
+        renderer.stage_asset(page_path, cfg.video_dir, run_key)
         if page_path.exists() and page_aspect
         else None
     )
@@ -653,7 +655,7 @@ def _render_one(
         f"{', page scrolls' if page_src else ''}[/]"
     )
 
-    audio_src = renderer.stage_asset(audio_path, cfg.video_dir, repo.slug)
+    audio_src = renderer.stage_asset(audio_path, cfg.video_dir, run_key)
     video_spec: VideoSpec = spec_mod.build_spec(
         repo, script, caps, duration, audio_src, cfg,
         screenshot_src=screenshot_src,
@@ -688,6 +690,9 @@ def _render_one(
 
     with console.status("Rendering cover stills..."):
         covers = renderer.render_covers(video_spec, run_dir, cfg)
+    # The video and both stills exist, so nothing reads this run's staging
+    # again. A re-render stages afresh from the run folder.
+    renderer.release_staged(cfg.video_dir, run_key)
 
     console.rule("[bold green]Done")
     console.print(f"  [bold]{out_path}[/]")
@@ -1635,13 +1640,27 @@ def _render_episode(cfg: Settings, run_dir: Path, subject, script) -> Path:
     from pipeline import artefacts as artefacts_mod
     from pipeline import episodespec, renderer, tts
 
+    # Staged per run, and deleted once the cover exists, so a resumed episode
+    # has to put its pictures back rather than trusting `artefacts.json`. The
+    # prune only removes other runs' directories once they are a day old.
+    run_key = renderer.staging_key(cfg.account, subject.slug)
+    renderer.prune_staged_assets(cfg.video_dir, run_key)
+    keep_dir = run_dir / "artefacts"
+
     staged_path = run_dir / "artefacts.json"
+    staged = None
     if staged_path.exists():
-        staged = json.loads(staged_path.read_text())
-    else:
+        staged = artefacts_mod.restage(
+            json.loads(staged_path.read_text()), cfg.video_dir, run_key=run_key, keep_dir=keep_dir
+        )
+        if staged is None:
+            console.print("[dim]Kept pictures are missing; staging them again.[/]")
+    if staged is None:
         with console.status("Staging the pictures..."):
-            staged = artefacts_mod.stage(subject, cfg.video_dir, prefer=script.source)
-        staged_path.write_text(json.dumps(staged, indent=2) + "\n")
+            staged = artefacts_mod.stage(
+                subject, cfg.video_dir, run_key=run_key, keep_dir=keep_dir, prefer=script.source
+            )
+    staged_path.write_text(json.dumps(staged, indent=2) + "\n")
     if not staged:
         console.print(
             "[bold red]No usable artefacts.[/] [dim]Every picture Commons holds for "
@@ -1660,12 +1679,9 @@ def _render_episode(cfg: Settings, run_dir: Path, subject, script) -> Path:
         timing_path.write_text(json.dumps(timing, indent=2) + "\n")
     console.print(f"[dim]{timing['seconds']:.1f}s of voiceover[/]")
 
-    public = cfg.video_dir / "public"
-    public.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(voice_dir / "voice.wav", public / f"{subject.slug}-voice.wav")
-    renderer.prune_staged_assets(cfg.video_dir, subject.slug)
+    audio_src = renderer.stage_asset(voice_dir / "voice.wav", cfg.video_dir, run_key)
 
-    spec = episodespec.build(script, subject, staged, timing, cfg)
+    spec = episodespec.build(script, subject, staged, timing, cfg, audio_src=audio_src)
     (run_dir / "spec.json").write_text(spec.model_dump_json(indent=2) + "\n")
 
     out_path = run_dir / "out.mp4"
@@ -1675,6 +1691,9 @@ def _render_episode(cfg: Settings, run_dir: Path, subject, script) -> Path:
 
     if renderer.render_episode_cover(spec, run_dir / "cover.png", cfg):
         console.print("[dim]Cover still written[/]")
+    # The video and its cover exist. The pictures stay in `artefacts/` in the
+    # run folder, which is what a resumed render restages from.
+    renderer.release_staged(cfg.video_dir, run_key)
 
     # **The queue reads `script.json`, not `episode.json`.** Everything after a
     # render is written about account 1's script: `_enqueue_run` takes the hook

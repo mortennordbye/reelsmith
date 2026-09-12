@@ -154,10 +154,17 @@ caption left a dead band between the last readable line and the words, which is
 the same wasted frame the full-bleed shot exists to recover, moved to the other
 end.
 
-**`repo-page.png` has to be named in `STAGED_ASSET_RE`.** The slug pattern is
-greedy over hyphens, so a rule written for `repo.png` does not cover it, and an
-asset the prune does not recognise is one that is never deleted. It is the
-largest file the pipeline stages.
+**Every run stages into `video/public/staged/<account>/<slug>/`**, since
+2026-09-12, and deletes that directory once its covers exist. Remotion symlinks
+`video/public` into its bundle rather than copying it, so the old rule, where a
+run pruned every other slug's files on its way in, deleted files out from under
+a render already in flight in another process. The prune now removes only run
+directories and old flat files that are a day old (`STAGING_TTL_S`), which is
+far past any render. `staged/` is a directory of its own so the prune never has
+to guess whether a directory somebody made by hand is a run.
+`STAGED_ASSET_RE` and `PROTECTED_PREFIXES` survive only for the flat
+`<slug>-voice.wav` files the layout before this left at the root; `repo-page.png`
+is named there because the slug pattern is greedy over hyphens.
 
 ## Cover stills
 
@@ -1068,7 +1075,13 @@ mp4 appeared:
 - **The prune took a prototype's asset with it.** `cv-voice.wav` matched
   `STAGED_ASSET_RE` and the first generated render deleted it.
   `PROTECTED_PREFIXES` is what stops that; the prototypes' scans are the only
-  copy outside a backup.
+  copy outside a backup. Runs stage under `staged/` now, so the root sweep
+  that could reach them exists only for the old flat files, and the guard
+  stays until that sweep does not.
+- **A resumed episode restages its pictures.** `artefacts.json` outlives the
+  staging it describes, so `_render_episode` copies each file back from
+  `artefacts/` in the run folder, and stages from Commons again for a folder
+  written before those copies were kept.
 
 **What is still a judgement rather than a rule** is the shot kit itself. The
 crops step through a fixed ladder of scales and anchors, deterministically, so
@@ -1142,9 +1155,11 @@ section is.
   and still read by `Reel.tsx`, so the video half of it is intact; nothing sets
   `showFollowCta` false today.
 
-  It also took a footgun with it. `video/public/` is staging and a run prunes
-  every other slug on its way in, so a spec's assets survive exactly until the
-  next video renders, and a second render at enqueue time found them gone. That
+  It also took a footgun with it. `video/public/` is staging and a run used to
+  prune every other slug on its way in, so a spec's assets survived exactly
+  until the next video rendered, and a second render at enqueue time found them
+  gone. Since 2026-09-12 a run deletes its own staging when it finishes, which
+  leaves a finished `video.json` pointing at nothing just the same. That
   failed silently and shaped like a partial success, a `RenderError` reading as
   "no trimmed version" and the caller falling back to the full video, which is
   how the first two Shorts of a three video batch went out with the Instagram

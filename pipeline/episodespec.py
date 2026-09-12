@@ -78,8 +78,15 @@ def build(
     artefacts: list[dict],
     timing: dict,
     cfg: Settings,
+    *,
+    audio_src: str,
 ) -> EpisodeSpec:
-    """The spec, from the pieces every earlier stage left in the run folder."""
+    """The spec, from the pieces every earlier stage left in the run folder.
+
+    `audio_src` is the voice's path under `video/public/`, as
+    `renderer.stage_asset` returned it, because staging is per run and only
+    the stage that copied the file knows where it went.
+    """
     staged = [SpecArtefact.model_validate(a) for a in artefacts]
     if not staged:
         raise ValueError(
@@ -141,7 +148,7 @@ def build(
         fps=fps,
         durationInFrames=spoken_frames + ENDCARD_FRAMES,
         hook=script.hook,
-        audioSrc=f"{subject.slug}-voice.wav",
+        audioSrc=audio_src,
         subject=subject.name,
         lived=_lived(subject),
         source=script.source,
