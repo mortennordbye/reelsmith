@@ -63,6 +63,33 @@ def _account(account_id: str | None, ig_user_id: str | None) -> str | None:
     """
     return account_id or ig_user_id
 
+
+async def _scope_ids(
+    request: Request, account_id: str | None, ig_user_id: str | None, brand: str | None
+) -> list[str | None]:
+    """The account ids a read answers for, with `?brand=` taken into account.
+
+    `[None]` is the unscoped read every route answered before brands existed.
+    `?brand=` resolves to every destination that identity holds, inactive ones
+    included, so a render host asking as a brand sees the whole identity's
+    queue and history rather than whichever platform its `.env` named first.
+    That matters for an account with no Instagram, which sent no scope at all
+    and so read every account's lists (F8).
+
+    A brand naming no account answers for nothing, never for everything: an
+    empty list rather than `[None]`, because a misspelt brand that returned the
+    whole database would hand one identity every other identity's cooldowns.
+
+    **Given together with an account id, the brand wins.** A render host sends
+    both so that a gateway older than this, which ignores `brand`, still scopes
+    by the account id rather than answering for everyone. If the brand narrowed
+    to that one account instead, an up to date host would get exactly the old
+    single destination answer and brand scoping would never take effect.
+    """
+    if brand is None:
+        return [_account(account_id, ig_user_id)]
+    return list(await db.accounts_for_brand(request.app.state.db, brand))
+
 # Anything outside this cannot become part of a path on disk.
 _SAFE_NAME = re.compile(r"[^a-z0-9-]+")
 _MAX_COVER_BYTES = 8 * 1024 * 1024
@@ -520,10 +547,22 @@ async def enqueue(request: Request, body: QueueSubmission) -> Queued:
 
 @router.get("/api/queue", dependencies=[Depends(require_token)])
 async def list_queue(
-    request: Request, account_id: str | None = None, ig_user_id: str | None = None
+    request: Request,
+    account_id: str | None = None,
+    ig_user_id: str | None = None,
+    brand: str | None = None,
 ) -> dict:
-    """The queue as the Mac sees it, so `--enqueue` can refuse a duplicate."""
-    rows = await db.queued_posts(request.app.state.db, account_id=_account(account_id, ig_user_id))
+    """The queue as the Mac sees it, so `--enqueue` can refuse a duplicate.
+
+    `?brand=` is also what the pending count for `--max-queue` reads, so an
+    identity's ceiling counts its own queue rather than everyone's.
+    """
+    rows: list = []
+    ids = await _scope_ids(request, account_id, ig_user_id, brand)
+    for one in ids:
+        rows += await db.queued_posts(request.app.state.db, account_id=one)
+    if len(ids) > 1:
+        rows.sort(key=lambda row: (row["position"], row["id"]))
     return {
         "queue": [
             {
@@ -546,7 +585,10 @@ async def list_queue(
 
 @router.get("/api/covered", dependencies=[Depends(require_token)])
 async def list_covered(
-    request: Request, account_id: str | None = None, ig_user_id: str | None = None
+    request: Request,
+    account_id: str | None = None,
+    ig_user_id: str | None = None,
+    brand: str | None = None,
 ) -> dict:
     """Every repo already committed to, so the Mac can skip it before scraping.
 
@@ -556,8 +598,14 @@ async def list_covered(
     `--posted` marks repos this service never hears about, and a merge that
     replaced would quietly un-cover them.
     """
-    rows = await db.covered_repos(request.app.state.db, _account(account_id, ig_user_id))
-    return {"covered": rows}
+    ids = await _scope_ids(request, account_id, ig_user_id, brand)
+    earliest: dict[str, dict] = {}
+    for one in ids:
+        for row in await db.covered_repos(request.app.state.db, one):
+            seen = earliest.get(row["repo_full_name"])
+            if seen is None or row["covered_at"] < seen["covered_at"]:
+                earliest[row["repo_full_name"]] = row
+    return {"covered": sorted(earliest.values(), key=lambda r: r["covered_at"])}
 
 
 @router.post("/api/covered", response_model=Registered, dependencies=[Depends(require_token)])
@@ -611,7 +659,10 @@ async def forget_covered(request: Request, subject_key: str, brand: str) -> Regi
 
 @router.get("/api/rendered", dependencies=[Depends(require_token)])
 async def list_rendered(
-    request: Request, account_id: str | None = None, ig_user_id: str | None = None
+    request: Request,
+    account_id: str | None = None,
+    ig_user_id: str | None = None,
+    brand: str | None = None,
 ) -> dict:
     """Every repo a Reel has already been built for, so the Mac skips rebuilding.
 
@@ -620,7 +671,13 @@ async def list_rendered(
     counted from. This is reversible, costs no cooldown, and exists only to
     stop a batch spending a script and a render on a video already on disk.
     """
-    rows = await db.rendered_repos_list(request.app.state.db, _account(account_id, ig_user_id))
+    first: dict[str, Any] = {}
+    for one in await _scope_ids(request, account_id, ig_user_id, brand):
+        for row in await db.rendered_repos_list(request.app.state.db, one):
+            seen = first.get(row["repo_full_name"])
+            if seen is None or row["rendered_at"] < seen["rendered_at"]:
+                first[row["repo_full_name"]] = row
+    rows = sorted(first.values(), key=lambda row: row["rendered_at"])
     return {
         "rendered": [
             {
@@ -689,7 +746,10 @@ async def forget_rendered(
 
 @router.get("/api/results", dependencies=[Depends(require_token)])
 async def list_results(
-    request: Request, account_id: str | None = None, ig_user_id: str | None = None
+    request: Request,
+    account_id: str | None = None,
+    ig_user_id: str | None = None,
+    brand: str | None = None,
 ) -> dict:
     """How the published Reels did, for the machine that writes the next one.
 
@@ -721,10 +781,13 @@ async def list_results(
     which would be a rule holding by accident.
     """
     conn = request.app.state.db
-    account_id = _account(account_id, ig_user_id)
-    rows = await db.published_media(conn, account_id)
-    readings = await db.latest_insights(conn, account_id, platform=db.PLATFORM_INSTAGRAM)
-    counts = await db.reading_counts(conn, account_id, platform=db.PLATFORM_INSTAGRAM)
+    rows: list = []
+    readings: dict = {}
+    counts: dict = {}
+    for one in await _scope_ids(request, account_id, ig_user_id, brand):
+        rows += await db.published_media(conn, one)
+        readings.update(await db.latest_insights(conn, one, platform=db.PLATFORM_INSTAGRAM))
+        counts.update(await db.reading_counts(conn, one, platform=db.PLATFORM_INSTAGRAM))
 
     results = []
     for row in rows:
