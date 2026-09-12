@@ -120,13 +120,15 @@ async def test_the_old_parameters_are_unchanged(client):
     assert unscoped == {"a/ig", "a/yt"}
 
 
-async def test_a_brand_with_an_account_id_narrows_to_that_account(client):
+async def test_a_brand_sent_with_an_account_id_wins(client):
+    """A render host sends both, so a gateway that predates `brand` still
+    scopes by account. If the brand narrowed to that account instead, an up to
+    date host would never see its other destinations."""
     http, app = client
     await db.record_rendered(app.state.db, repo_full_name="a/ig", account_id=IG_ONE)
     await db.record_rendered(app.state.db, repo_full_name="a/yt", account_id=YT_ONE)
+    await db.record_rendered(app.state.db, repo_full_name="b/ig", account_id=IG_TWO)
 
-    rows = (await get(http, "/api/rendered", brand="one", account_id=YT_ONE))["rendered"]
-    stranger = (await get(http, "/api/rendered", brand="two", account_id=YT_ONE))["rendered"]
+    rows = (await get(http, "/api/rendered", brand="one", account_id=IG_ONE))["rendered"]
 
-    assert [r["repo_full_name"] for r in rows] == ["a/yt"]
-    assert stranger == []
+    assert {r["repo_full_name"] for r in rows} == {"a/ig", "a/yt"}

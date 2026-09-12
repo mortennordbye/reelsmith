@@ -79,13 +79,16 @@ async def _scope_ids(
     A brand naming no account answers for nothing, never for everything: an
     empty list rather than `[None]`, because a misspelt brand that returned the
     whole database would hand one identity every other identity's cooldowns.
-    Given together with an account id, the brand narrows to that account.
+
+    **Given together with an account id, the brand wins.** A render host sends
+    both so that a gateway older than this, which ignores `brand`, still scopes
+    by the account id rather than answering for everyone. If the brand narrowed
+    to that one account instead, an up to date host would get exactly the old
+    single destination answer and brand scoping would never take effect.
     """
-    one = _account(account_id, ig_user_id)
     if brand is None:
-        return [one]
-    ids = await db.accounts_for_brand(request.app.state.db, brand)
-    return [i for i in ids if i == one] if one else list(ids)
+        return [_account(account_id, ig_user_id)]
+    return list(await db.accounts_for_brand(request.app.state.db, brand))
 
 # Anything outside this cannot become part of a path on disk.
 _SAFE_NAME = re.compile(r"[^a-z0-9-]+")
