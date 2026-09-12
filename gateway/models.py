@@ -399,3 +399,27 @@ class BrandUpdate(BaseModel):
 
     settings: BrandSettings
     if_version: int | None = Field(default=None, ge=0)
+
+
+# `repo:owner/name` or `person:Q12345`. Anything else is a kind nothing reads.
+SUBJECT_KEY = r"^(repo:[A-Za-z0-9._-]+/[A-Za-z0-9._-]+|person:Q[0-9]+)$"
+
+
+class CoveredSubject(BaseModel):
+    """A commitment to a subject, so a brand does not pick it again for a while.
+
+    Merged rather than replaced: the earlier `committed_at` wins, because a
+    later one would extend the cooldown by however long the two records
+    disagree. That is the rule `used_repos.json` already follows on the render
+    host, and the two have to agree.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    brand: str = Field(pattern=BRAND_NAME)
+    subject_key: str = Field(pattern=SUBJECT_KEY)
+    # Left out means now. A date alone is accepted, because `used_repos.json`
+    # stores dates rather than times.
+    committed_at: datetime | None = None
+    # Who said so: `queue`, `posted`, `episode`, `import`. Free text, short.
+    source: str = Field(default="", max_length=32)

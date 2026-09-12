@@ -29,7 +29,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -586,6 +586,41 @@ _MIGRATIONS: tuple[str, ...] = (
         version    INTEGER NOT NULL DEFAULT 1,
         updated_at TEXT NOT NULL
     );
+    """,
+    # 23. The cooldown as a table of its own, per brand, keyed on a subject.
+    #
+    # Until now "covered" was derived from the queue and from `posts`, keyed on
+    # `repo_full_name`, which cannot say two things that now matter. An episode
+    # has no repo, so nothing stopped a subject being picked twice. And
+    # `--posted` marks a repo this service never heard about, so the only
+    # complete list was `used_repos.json` on the render host's share, outside
+    # every backup here.
+    #
+    # `subject_key` is `repo:<owner>/<name>` or `person:<wikidata id>`, so one
+    # table serves both niches without a column per kind. Per brand rather than
+    # per destination, because a cooldown is a fact about an audience, and one
+    # identity posting to four platforms is one audience.
+    #
+    # Backfilled from every non-cancelled queue row with a repo, mapped to its
+    # brand through `accounts`, earliest commitment per brand and repo. The
+    # derived list keeps being served beside this, so nothing the old readers
+    # returned goes missing if the backfill missed a row.
+    """
+    CREATE TABLE covered_subjects (
+        brand        TEXT NOT NULL,
+        subject_key  TEXT NOT NULL,
+        committed_at TEXT NOT NULL,
+        source       TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (brand, subject_key)
+    );
+
+    INSERT INTO covered_subjects (brand, subject_key, committed_at, source)
+    SELECT a.brand, 'repo:' || q.repo_full_name, MIN(q.created_at), 'queue'
+    FROM queued_posts q
+    JOIN accounts a ON a.account_id = q.account_id
+    WHERE q.state <> 'cancelled' AND q.repo_full_name IS NOT NULL
+      AND q.repo_full_name <> '' AND a.brand <> ''
+    GROUP BY a.brand, q.repo_full_name;
     """,
 )
 
@@ -2562,21 +2597,97 @@ async def covered_repos(
         [*queue_args, *direct_args, limit],
     )
 
+    # The table from v23 holds what the queue cannot: `--posted` repos and the
+    # render host's imported list. Read for the brand this account belongs to,
+    # or for every brand when unscoped, and folded in under the same rule.
+    brands: list[str] = []
+    if account_id:
+        owner = await _one(conn, "SELECT brand FROM accounts WHERE account_id = ?", (account_id,))
+        brands = [owner["brand"]] if owner and owner["brand"] else []
+    table_sql = (
+        "SELECT substr(subject_key, 6) AS repo_full_name, committed_at, source "
+        "FROM covered_subjects WHERE subject_key LIKE 'repo:%'"
+    )
+    table_args: list[Any] = []
+    if account_id:
+        if not brands:
+            table_sql += " AND 0"
+        else:
+            table_sql += " AND brand = ?"
+            table_args.append(brands[0])
+    table_rows = await _all(conn, table_sql, table_args)
+
     # Earliest wins: a repo queued once and published later is one commitment,
     # and the cooldown turned on at the first of the two.
     earliest: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        name = row["repo_full_name"] or _repo_from_link(row["link"])
-        if not name or not row["covered_at"]:
+    candidates = [
+        (row["repo_full_name"] or _repo_from_link(row["link"]), row["covered_at"], row["source"])
+        for row in rows
+    ] + [(row["repo_full_name"], row["committed_at"], row["source"]) for row in table_rows]
+    for name, covered_at, source in candidates:
+        if not name or not covered_at:
             continue
         seen = earliest.get(name)
-        if seen is None or row["covered_at"] < seen["covered_at"]:
+        if seen is None or covered_at < seen["covered_at"]:
             earliest[name] = {
                 "repo_full_name": name,
-                "covered_at": row["covered_at"],
-                "source": row["source"],
+                "covered_at": covered_at,
+                "source": source,
             }
-    return sorted(earliest.values(), key=lambda r: r["covered_at"])
+    return sorted(earliest.values(), key=lambda r: r["covered_at"])[:limit]
+
+
+async def record_covered(
+    conn: aiosqlite.Connection,
+    *,
+    brand: str,
+    subject_key: str,
+    committed_at: str,
+    source: str = "",
+) -> bool:
+    """Merge one commitment. Returns whether anything changed.
+
+    The earlier date wins and a later one is ignored, because taking the later
+    one extends the cooldown by however long the two records disagree.
+    """
+    cur = await conn.execute(
+        """
+        INSERT INTO covered_subjects (brand, subject_key, committed_at, source)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT (brand, subject_key) DO UPDATE SET
+            committed_at = excluded.committed_at,
+            source = excluded.source
+        WHERE excluded.committed_at < covered_subjects.committed_at
+        """,
+        (brand, subject_key, committed_at, source),
+    )
+    await conn.commit()
+    return bool(cur.rowcount)
+
+
+async def forget_covered(conn: aiosqlite.Connection, *, brand: str, subject_key: str) -> int:
+    """Delete one brand's commitment to a subject, for `--unmark`.
+
+    Only the table row. A queue row still in the line keeps the repo covered
+    through the derived half of `covered_repos`, which is the same rule as
+    before: cancelling the post is what un-commits it there.
+    """
+    cur = await conn.execute(
+        "DELETE FROM covered_subjects WHERE brand = ? AND subject_key = ?",
+        (brand, subject_key),
+    )
+    await conn.commit()
+    return cur.rowcount or 0
+
+
+async def covered_subjects(conn: aiosqlite.Connection, brand: str) -> list[Any]:
+    """Every subject one brand has committed to, any kind, earliest first."""
+    return await _all(
+        conn,
+        "SELECT subject_key, committed_at, source FROM covered_subjects "
+        "WHERE brand = ? ORDER BY committed_at",
+        (brand,),
+    )
 
 
 async def published_media(
