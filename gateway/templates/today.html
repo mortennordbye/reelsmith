@@ -108,7 +108,10 @@
                 {% else %}<span class="faint">nothing armed</span>{% endif %}
               </td>
               <td class="r">{{ s.published }}</td>
-              <td>{% if s.last_render %}<span class="mono">{{ s.last_render | ago }}</span>{% else %}<span class="faint">none recorded</span>{% endif %}</td>
+              <td>
+                {% if s.last_render %}<span class="mono">{{ s.last_render | ago }}</span>{% else %}<span class="faint">none recorded</span>{% endif %}
+                {% if s.last_run_at %}<br><span class="muted small">run {{ s.last_run_at | ago }} · {{ s.last_run_outcome }}</span>{% endif %}
+              </td>
               <td class="r">{% if s.open %}{{ sev(s.level, s.open) }}{% else %}<span class="faint">0</span>{% endif %}</td>
             </tr>
           {% endfor %}

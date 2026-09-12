@@ -39,6 +39,7 @@ from gateway.models import (
     QueueSubmission,
     Registered,
     RenderedRepo,
+    RunReport,
     TikTokAccountRegistration,
     YouTubeAccountRegistration,
 )
@@ -179,6 +180,58 @@ async def _refresh_queue_depth(conn: Any, metrics: Any) -> None:
                 depth.get((account, state), 0)
             )
         metrics.stale_claims.labels(account=account).set(stale.get(account, 0))
+
+    # The last finished run per brand, for every brand an account or a run
+    # names, at zero when there has never been one.
+    finished = {
+        run["brand"]: run for run in await db.latest_runs(conn) if run["finished_at"]
+    }
+    brands = {str(row["brand"]) for row in await db.all_accounts(conn, platform=None)}
+    brands |= set(finished)
+    for brand in sorted(b for b in brands if b):
+        when = db.parse_iso(finished[brand]["finished_at"]) if brand in finished else None
+        metrics.last_run.labels(brand=brand).set(when.timestamp() if when else 0)
+
+
+@router.post("/api/runs", dependencies=[Depends(require_token)])
+async def report_run(request: Request, body: RunReport) -> dict:
+    """A render host saying a night started, or how it ended.
+
+    Without `run_id` this opens a run and returns its id; with one it finishes
+    that run. A start that is never finished stays `running`, which is the
+    shape a host that died mid batch leaves, and the panel shows it as such.
+    """
+    conn = request.app.state.db
+
+    def stamp(when: datetime | None) -> str:
+        moment = when or db.now()
+        return (moment if moment.tzinfo else moment.replace(tzinfo=UTC)).isoformat()
+
+    results = json.dumps([video.model_dump() for video in body.results])
+    if body.run_id is None:
+        run_id = await db.record_run(
+            conn,
+            brand=body.brand,
+            kind=body.kind,
+            host=body.host,
+            started_at=stamp(body.started_at),
+            finished_at=stamp(body.finished_at) if body.finished_at else None,
+            outcome=body.outcome,
+            results=results,
+        )
+    else:
+        run_id = body.run_id
+        found = await db.finish_run(
+            conn,
+            run_id,
+            finished_at=stamp(body.finished_at),
+            outcome=body.outcome,
+            results=results,
+        )
+        if not found:
+            raise HTTPException(status_code=404, detail=f"no run {run_id}")
+    log.info("Run %d for %s (%s): %s", run_id, body.brand, body.kind, body.outcome)
+    return {"id": run_id, "brand": body.brand, "outcome": body.outcome}
 
 
 @router.post("/api/posts", response_model=Registered, dependencies=[Depends(require_token)])

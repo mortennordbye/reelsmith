@@ -24,6 +24,9 @@
         <tr><td>Insights sweep</td><td class="mono">{{ insights_last | ago }}</td><td class="r">{{ 'on' if cfg.insights_enabled else 'off' }}</td></tr>
         <tr><td>State backup</td><td class="mono">{{ backup_last | ago }}</td><td></td></tr>
         <tr><td>Stuck claims</td><td class="mono {{ 'bad' if stale }}">{{ stale | length }}</td><td></td></tr>
+        {% for run in runs %}
+          <tr><td>Last run, {{ run.brand }}</td><td class="mono">{{ run.at | ago }}</td><td class="r {{ 'bad' if run.outcome == 'failed' else ('warn' if run.outcome in ('attention', 'running') else '') }}">{{ run.kind }} · {{ run.outcome }}</td></tr>
+        {% endfor %}
       </tbody>
     </table>
   </section>

@@ -550,6 +550,11 @@ class BrandState:
     destinations: list[Destination]
     issues: list[Issue]
     last_render: datetime | None = None
+    # The render host's own report of its last run for this brand. Beside the
+    # render time rather than instead of it: a run that rendered nothing
+    # because the queue was full is a healthy night with no render.
+    last_run_at: datetime | None = None
+    last_run_outcome: str = ""
     next_out: dict[str, Any] | None = None
 
     @property
@@ -596,6 +601,10 @@ async def brand_state(
             conn, [d.account_id for d in mine], include_unowned=brand.name == owner
         )
     )
+    run = await db.latest_run(conn, brand.name)
+    if run:
+        state.last_run_at = db.parse_iso(run["finished_at"] or run["started_at"])
+        state.last_run_outcome = run["outcome"]
     issues = [issue for d in mine for issue in d.issues]
     runway = state.runway
     if (

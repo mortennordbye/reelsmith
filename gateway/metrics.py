@@ -137,6 +137,14 @@ class Metrics:
             "Unix time of the last state backup copied off the state volume",
             registry=reg,
         )
+        # Filled at scrape time from the runs table, for every brand, zero
+        # included, so an alert on a render host that stopped reporting can
+        # resolve once it reports again.
+        self.last_run = Gauge(
+            "reelsmith_last_run_timestamp",
+            "Unix time the render host last finished a run for this brand",
+            ["brand"], registry=reg,
+        )
 
         # A labelled counter does not exist until it is first incremented, so a
         # platform that has never published has no series at all and a rule
