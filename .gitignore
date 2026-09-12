@@ -36,6 +36,12 @@ PROFILE.md
 PLAN.md
 notes/*.md
 notes/*.html
+# Point in time copies of identity data (gateway account rows with brands,
+# per account ids, slot lines) taken before a restructure. Not secret, but both
+# identities side by side is the link PROFILE.md exists to keep out of public.
+notes/snapshots-*/
+notes/snapshots-*/*.json
+notes/snapshots-*/*.txt
 # Session state: what is live, what is queued, what to check next. Private
 # because it carries account performance numbers, and backed up because losing
 # it loses the thread.
@@ -99,6 +105,14 @@ tools/spinoff/*.py
 notes/spinoffs/*.mp4
 notes/spinoffs/tools/*.py
 notes/spinoffs/tools/*.html
+# Account 2's launch kit, the cover frames it was picked from, and the images
+# the spinoff tools build pages out of. Each sat one directory below a glob
+# above and so was in no backup: backup-secrets.sh expands globs with
+# compgen -G, which does not recurse, so every subdirectory needs its own line.
+notes/spinoffs/launch-ep1/*
+notes/spinoffs/covers/*.png
+notes/spinoffs/tools/assets/*
+notes/spinoffs/tools/assets/small/*
 # The artefacts and voice tracks the episodes render from. Scans and public
 # domain images, fetched once and not trivially re-fetchable now that Darwin
 # Online sits behind a frameset and gutendex has started answering 503.
