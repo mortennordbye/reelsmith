@@ -76,10 +76,11 @@ class Settings(BaseSettings):
 
     # --- Which account this run belongs to ---------------------------------
     # Empty is the checkout with no account selected: the global half of these
-    # settings is still correct, and every per account path falls back to the
-    # single account layout this repo had before `accounts/` existed. That is
-    # what keeps `pipeline/models.py` importable, since it reads the validator
-    # limits at import time, long before a CLI flag has been parsed.
+    # settings is still correct, and every per account path (`account_dir`,
+    # `data_dir` and what hangs off them) raises `ConfigError` rather than
+    # guessing. That is what keeps `pipeline/models.py` importable, since it
+    # reads the validator limits at import time, long before a CLI flag has
+    # been parsed.
     #
     # It is *not* a default account. `main.py` refuses to do per account work
     # without one, and says which accounts it can see.
