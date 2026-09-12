@@ -21,8 +21,8 @@
 #     deliberately not among them; the gateway owns publishing and refreshes
 #     its own token, so a render host never needs an Instagram credential.
 #   - populate PRIVATE_DIR. Copy PROFILE.md and one accounts/<name>/ directory
-#     there by hand, once. `python main.py --migrate-account <name>` builds that
-#     directory out of the single account layout this repo used before.
+#     there by hand, once. `python main.py --new-account <name>` makes an empty
+#     one to fill in.
 #   - set REELSMITH_ACCOUNT=<name> in .env. There is no default and a run
 #     without one fails at startup rather than guessing.
 
@@ -219,10 +219,8 @@ if [[ -d "$PRIVATE_DIR" ]]; then
     grep -qxF "/accounts" .git/info/exclude 2>/dev/null ||
       echo "/accounts" >> .git/info/exclude
   else
-    printf '  %s/accounts is empty. Run\n' "$PRIVATE_DIR"
-    printf '    python main.py --migrate-account <name>\n'
-    printf '  on the machine that has the single account layout, then copy the\n'
-    printf '  resulting accounts/<name>/ onto the share.\n'
+    printf '  %s/accounts is empty. Copy an accounts/<name>/ directory onto the\n' "$PRIVATE_DIR"
+    printf '  share, or make one with python main.py --new-account <name>.\n'
   fi
 
   # The pre-accounts layout is gone. Every host now keeps its identity under

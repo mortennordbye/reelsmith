@@ -24,8 +24,6 @@ def accounts(tmp_path, monkeypatch):
     root.mkdir()
     monkeypatch.setattr(config, "ACCOUNTS_DIR", root)
     monkeypatch.setattr(config, "ROOT", tmp_path)
-    monkeypatch.setattr(config, "LEGACY_DATA_DIR", tmp_path / "data")
-    monkeypatch.setattr(config, "LEGACY_VOICE_REF", tmp_path / "ref" / "morten.wav")
     monkeypatch.setattr(config, "_selected_account", "")
     config.get_settings.cache_clear()
     yield root
@@ -193,21 +191,30 @@ def test_an_explicitly_set_voice_is_never_second_guessed(accounts, tmp_path):
     assert cfg.chatterbox_ref == elsewhere
 
 
-def test_a_checkout_mid_migration_reads_the_store_it_already_has(accounts):
-    """The account directory exists but nothing has been moved into it yet.
+def test_an_account_with_no_data_dir_gets_its_own_not_the_root_one(accounts, tmp_path):
+    """The render host's second account had only an `.env`, and while a root
+    `data/` existed the old fallback handed it that directory, so its subject
+    pool would have landed in a store any account without its own could read.
+    F9. A root `data/` existing must change nothing."""
+    root_data = tmp_path / "data"
+    root_data.mkdir()
+    (root_data / ".gitkeep").touch()
+    make(accounts, "thewholequote")
 
-    Falling back rather than starting an empty store, because an empty
-    `used_repos.json` means every repo ever covered becomes eligible again on
-    the same night.
-    """
-    legacy = config.LEGACY_DATA_DIR
-    legacy.mkdir()
-    (legacy / "used_repos.json").write_text("{}")
-    make(accounts, "nightlybuild")
+    cfg = Settings(account="thewholequote", _env_file=None)
 
-    cfg = Settings(account="nightlybuild", _env_file=None)
+    assert cfg.data_dir == accounts / "thewholequote" / "data"
+    assert cfg.data_dir.is_dir()
+    assert [p.name for p in root_data.iterdir()] == [".gitkeep"]
 
-    assert cfg.data_dir == legacy
+
+def test_no_account_selected_has_no_data_dir(accounts):
+    """Every file under it belongs to one account, so there is nothing an
+    account-less process could honestly read or write there."""
+    cfg = Settings(_env_file=None)
+
+    with pytest.raises(ConfigError):
+        _ = cfg.data_dir
 
 
 def test_no_account_selected_still_reads_the_global_half(accounts):

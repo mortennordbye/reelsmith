@@ -52,12 +52,6 @@ log = logging.getLogger(__name__)
 ROOT = Path(__file__).parent.resolve()
 ACCOUNTS_DIR = ROOT / "accounts"
 
-# Where the single account layout kept things, and where an account that has
-# not been migrated yet still has them. Both are read only fallbacks: nothing
-# writes to either once an account is selected and its directory exists.
-LEGACY_DATA_DIR = ROOT / "data"
-LEGACY_VOICE_REF = ROOT / "tools/chatterbox/ref/morten.wav"
-
 
 def _default_torch_device() -> str:
     """The torch backend this machine actually has.
@@ -363,8 +357,9 @@ class Settings(BaseSettings):
     # Left unset it resolves to the selected account's own `ref/voice.wav`,
     # because PROFILE.md is explicit that sharing one cloned voice across two
     # accounts meant to look unrelated is the strongest link between them.
-    # See `_resolve_account_paths`.
-    chatterbox_ref: Path = Field(default=LEGACY_VOICE_REF)
+    # See `_resolve_account_paths`. With no account selected there is no voice,
+    # and the placeholder is a path that cannot exist so the TTS check names it.
+    chatterbox_ref: Path = Field(default=ACCOUNTS_DIR / "<account>" / "ref" / "voice.wav")
 
     # --- Captions ----------------------------------------------------------
     whisper_model: str = "small.en"
@@ -396,30 +391,14 @@ class Settings(BaseSettings):
         """Point the voice reference at the selected account, unless told not to.
 
         Done here rather than as a property because `chatterbox_ref` is a
-        settable field that `tools/chatterbox/synth.py` is handed directly, and
-        a machine with one account and an existing recording should keep
-        working while `accounts/` is still being populated.
+        settable field that `tools/chatterbox/synth.py` is handed directly.
 
         `model_fields_set` is what makes "unless told not to" honest: a value
         that arrived from `CHATTERBOX_REF` in either `.env` counts as chosen
         and is never second guessed.
         """
         if self.account and "chatterbox_ref" not in self.model_fields_set:
-            own = self.account_dir / "ref" / "voice.wav"
-            if own.exists():
-                self.chatterbox_ref = own
-            elif LEGACY_VOICE_REF.exists():
-                # The migration has not been run yet. Loud enough to notice,
-                # quiet enough that a batch still speaks tonight. Two accounts
-                # sharing one voice is a real problem and it is the operator's
-                # to fix, not this function's to fail over.
-                log.info(
-                    "No voice recording at %s; falling back to %s. "
-                    "python main.py --migrate-account <name> moves it into place.",
-                    own, LEGACY_VOICE_REF,
-                )
-            else:
-                self.chatterbox_ref = own
+            self.chatterbox_ref = self.account_dir / "ref" / "voice.wav"
         return self
 
     # --- Derived paths -----------------------------------------------------
@@ -447,22 +426,18 @@ class Settings(BaseSettings):
         cooldown per repo, and a second account pointed at the same file
         inherits every repo the first one ever covered. F9.
 
-        Falls back to the pre `accounts/` location while an account directory
-        has no `data/` yet, so a checkout mid migration reads the store it
-        already has rather than starting an empty one. `data` has to stay a
-        *directory* symlink on a host that keeps it on a share, because
-        `StarHistory.save()` renames a temp file over the target and that
-        rename replaces a file symlink with a real file.
+        Always `accounts/<name>/data/`, created on first use, and never the
+        root `data/`. That fallback existed for checkouts mid migration, and it
+        handed an account with no `data/` of its own the store every such
+        account would share. With no account selected this raises, like
+        `account_dir`, because nothing under it belongs to nobody. `data` has
+        to stay a *directory* symlink on a host that keeps it on a share,
+        because `StarHistory.save()` renames a temp file over the target and
+        that rename replaces a file symlink with a real file.
         """
-        if self.account:
-            own = self.account_dir / "data"
-            if own.exists() or not LEGACY_DATA_DIR.exists():
-                own.mkdir(parents=True, exist_ok=True)
-                return own
-            return LEGACY_DATA_DIR
-        p = LEGACY_DATA_DIR
-        p.mkdir(exist_ok=True)
-        return p
+        own = self.account_dir / "data"
+        own.mkdir(parents=True, exist_ok=True)
+        return own
 
     @property
     def build_dir(self) -> Path:
@@ -583,8 +558,7 @@ def resolve_account(explicit: str | None = None) -> str:
         raise ConfigError(
             f"No account directory at accounts/{name}/ with an .env in it.\n"
             f"{_accounts_line(known)}\n"
-            "python main.py --migrate-account <name> builds one from the "
-            "single account layout this repo used before."
+            "python main.py --new-account <name> makes an empty one."
         )
     return name
 

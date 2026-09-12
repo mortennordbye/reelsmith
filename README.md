@@ -54,9 +54,7 @@ and an `.env` of commented out lines, and prints what is left to do by hand.
 There is no default account and no resolving one by counting. Without
 `REELSMITH_ACCOUNT` or `--account <name>`, every run fails at startup naming the
 accounts it can see. Guessing wrong publishes to the wrong audience and nothing
-later undoes it. Upgrading a checkout that predates this is
-`python main.py --migrate-account <name>`, which prints the plan and moves
-nothing until it is given `--yes`.
+later undoes it.
 
 A classic GitHub PAT with **no scopes** is enough for public repos:
 <https://github.com/settings/tokens>. Without one you get 10 search requests
