@@ -743,8 +743,8 @@ no stage signature changes.
 and build subtree. It does not give it a different **subject**, and the
 distance between those two is worth knowing before anything is promised.
 
-`python main.py --new-account <name>` makes the directory, a `data/`, a `ref/`
-and an `.env` of commented out lines. Every line is commented out on purpose: a
+`python main.py --new-account <name>` makes the directory, a `data/`, a `ref/`,
+a `brand/` for the avatar and an `.env` of commented out lines. Every line is commented out on purpose: a
 profile with a blank `IG_USER_ID` looks configured and fails at the first
 publish, where one with nothing set fails at `require_instagram`, which says
 what is missing and where to set it. It fills nothing in, because the voice

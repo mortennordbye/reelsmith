@@ -9,13 +9,14 @@ from __future__ import annotations
 from pipeline import migrate
 
 
-def test_a_new_account_gets_the_three_directories_and_a_template(tmp_path):
+def test_a_new_account_gets_its_directories_and_a_template(tmp_path):
     home, made = migrate.create("chapterverse", root=tmp_path)
 
     assert (home / "data").is_dir()
     assert (home / "ref").is_dir()
+    assert (home / "brand").is_dir()
     assert (home / ".env").is_file()
-    assert len(made) == 4
+    assert len(made) == 5
 
 
 def test_every_line_of_the_template_is_commented_out(tmp_path):
@@ -59,7 +60,7 @@ def test_creating_it_twice_changes_nothing(tmp_path):
 
 
 def test_a_created_account_is_one_config_resolve_can_see(tmp_path, monkeypatch):
-    """The whole point: `--account` finds it, which is what turns three
+    """The whole point: `--account` finds it, which is what turns a few
     directories into a profile."""
     import config
 
