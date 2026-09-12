@@ -373,8 +373,19 @@ def _scope(cfg: Settings) -> dict[str, str]:
     Empty when no account is selected, which sends no parameter and asks the
     same question this code asked before, so a checkout mid migration is not a
     third behaviour to reason about.
+
+    **`brand` goes alongside, not instead.** A gateway that knows `?brand=`
+    answers for every destination the identity holds and lets the brand win
+    over the account id; one older than that ignores the unknown parameter and
+    scopes by the account id exactly as before. Sending only the brand would
+    make an older gateway answer for everyone, which is F8 again. An account
+    with no Instagram id used to send nothing at all; with a brand it is
+    scoped on any gateway new enough to know what a brand is.
     """
-    return {"account_id": cfg.ig_user_id} if cfg.ig_user_id else {}
+    scope = {"account_id": cfg.ig_user_id} if cfg.ig_user_id else {}
+    if cfg.brand:
+        scope["brand"] = cfg.brand
+    return scope
 
 
 def _borrow(existing: httpx.Client | None) -> AbstractContextManager[httpx.Client]:
@@ -625,24 +636,28 @@ def fetch_pending_count(cfg: Settings, *, client: httpx.Client | None = None) ->
     None rather than 0 when the gateway cannot be reached, because the two mean
     opposite things to the caller: 0 invites a batch, and unknown must not.
 
-    **Only the Instagram queue counts**, and that is the whole point of the
-    filter. One render now makes two rows, so counting every destination would
-    halve the ceiling the nightly was calibrated against. Worse, YouTube drains
-    one a day against Instagram's three, so its queue grows on purpose and by
-    design: counted here it would climb past `--max-queue` on its own and pin
-    the batch at zero renders, permanently and with every component reporting
-    healthy.
+    **One destination's queue counts, never the brand's**, and that is the
+    whole point of the filter. One render makes a row per destination, so
+    counting every destination would divide the ceiling the nightly was
+    calibrated against by the number of platforms. So this sends an account id
+    and deliberately no `brand`, unlike every other read here.
 
-    The ceiling asks "is the feed stocked far enough ahead", and the feed is
-    Instagram. A second destination running deliberately deep behind it is not
-    a reason to stop making videos.
+    The destination is Instagram when the account has one, which is the feed
+    the ceiling was calibrated on, and otherwise the first destination the
+    account does have. Before that, an account with no Instagram id sent no
+    parameter at all and counted every account's queue, which is how a second
+    identity's batch would have been stopped by the first one's backlog.
     """
     if not _configured(cfg):
         return None
+    destination = (
+        cfg.ig_user_id or cfg.youtube_channel_id or cfg.facebook_page_id or cfg.tiktok_open_id
+    )
+    params = {"account_id": destination} if destination else {}
     url = f"{cfg.gateway_url.rstrip('/')}/api/queue"
     try:
         with client or httpx.Client(timeout=_TIMEOUT) as http:
-            response = http.get(url, headers=_headers(cfg), params=_scope(cfg))
+            response = http.get(url, headers=_headers(cfg), params=params)
             response.raise_for_status()
             rows = response.json().get("queue") or []
     except (httpx.HTTPError, ValueError) as exc:
@@ -791,6 +806,150 @@ def forget_rendered(
         )
         return False
     return True
+
+
+def record_covered(
+    cfg: Settings,
+    subject_key: str,
+    *,
+    committed_at: str | None = None,
+    source: str = "",
+    client: httpx.Client | None = None,
+) -> bool:
+    """Put one commitment on the gateway's cooldown table. True if it took.
+
+    `subject_key` is `repo:<owner>/<name>` or `person:<wikidata id>`. The
+    gateway keeps the earlier date when the subject is already covered, so
+    sending an old date is safe and sending a new one never extends a
+    cooldown. Needs `BRAND`, because the table is per identity.
+
+    Best effort: the local store still has it, and a gateway that predates the
+    table answers 405, which reads here as "not recorded".
+    """
+    if not _configured(cfg) or not cfg.brand:
+        return False
+    payload = {"brand": cfg.brand, "subject_key": subject_key, "source": source}
+    if committed_at:
+        payload["committed_at"] = committed_at
+    try:
+        with _borrow(client) as http:
+            response = http.post(
+                f"{cfg.gateway_url.rstrip('/')}/api/covered", headers=_headers(cfg), json=payload
+            )
+            response.raise_for_status()
+    except (httpx.HTTPError, ValueError) as exc:
+        log.debug("Could not record %s as covered on the gateway: %s", subject_key, exc)
+        return False
+    return True
+
+
+def forget_covered(
+    cfg: Settings, subject_key: str, *, client: httpx.Client | None = None
+) -> bool:
+    """Take one brand's commitment back off the gateway's cooldown table."""
+    if not _configured(cfg) or not cfg.brand:
+        return False
+    url = f"{cfg.gateway_url.rstrip('/')}/api/covered/{subject_key}"
+    try:
+        with _borrow(client) as http:
+            response = http.delete(url, headers=_headers(cfg), params={"brand": cfg.brand})
+            response.raise_for_status()
+    except (httpx.HTTPError, ValueError) as exc:
+        log.warning(
+            "Could not clear %s from the gateway's cooldown table: %s. "
+            "Discovery may keep skipping it; clear it by hand.",
+            subject_key,
+            exc,
+        )
+        return False
+    return True
+
+
+def fetch_brand_settings(cfg: Settings, *, client: httpx.Client | None = None) -> dict | None:
+    """This brand's settings row on the gateway, or None if there is none to read.
+
+    None covers "no row", "no gateway" and "could not reach it" alike, and the
+    caller treats all three as a reason not to run per brand work: an identity
+    rendering on defaults because its row was never seeded is the soft failure
+    this read exists to prevent.
+    """
+    if not _configured(cfg) or not cfg.brand:
+        return None
+    url = f"{cfg.gateway_url.rstrip('/')}/api/brands/{cfg.brand}"
+    try:
+        with _borrow(client) as http:
+            response = http.get(url, headers=_headers(cfg))
+            response.raise_for_status()
+            body = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        log.debug("Could not read the gateway's settings for %s: %s", cfg.brand, exc)
+        return None
+    return body if isinstance(body, dict) and isinstance(body.get("settings"), dict) else None
+
+
+def put_brand_settings(
+    cfg: Settings,
+    settings: dict,
+    *,
+    if_version: int,
+    client: httpx.Client | None = None,
+) -> dict:
+    """Replace this brand's settings, pinned to the version last read.
+
+    **Raises rather than returning**, unlike the rest of this module. It is only
+    called by a person running `--brand-settings push`, and a refused write
+    (a stale version, a key outside the allowlist) is exactly what they need to
+    see, with the gateway's own reason.
+    """
+    if not _configured(cfg) or not cfg.brand:
+        raise RuntimeError("Set GATEWAY_URL, GATEWAY_TOKEN and BRAND to write brand settings.")
+    url = f"{cfg.gateway_url.rstrip('/')}/api/brands/{cfg.brand}"
+    with _borrow(client) as http:
+        response = http.put(
+            url, headers=_headers(cfg), json={"settings": settings, "if_version": if_version}
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"The gateway refused {cfg.brand}'s settings ({response.status_code}): "
+                f"{response.text[:300]}"
+            )
+        return response.json()
+
+
+def report_run(
+    cfg: Settings,
+    kind: str,
+    *,
+    outcome: str = "running",
+    run_id: int | None = None,
+    results: list[dict] | None = None,
+    host: str = "",
+    client: httpx.Client | None = None,
+) -> int | None:
+    """Tell the gateway a run started, or how it ended. Returns the run id.
+
+    Without `run_id` it opens a run; with one it finishes it. Best effort, and
+    None on failure: a night that renders must never fail because the report
+    about it did not land.
+    """
+    if not _configured(cfg) or not cfg.brand:
+        return None
+    payload: dict = {
+        "brand": cfg.brand, "kind": kind, "outcome": outcome, "host": host,
+        "results": results or [],
+    }
+    if run_id is not None:
+        payload["run_id"] = run_id
+    try:
+        with _borrow(client) as http:
+            response = http.post(
+                f"{cfg.gateway_url.rstrip('/')}/api/runs", headers=_headers(cfg), json=payload
+            )
+            response.raise_for_status()
+            return int(response.json()["id"])
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        log.debug("Could not report the %s run to the gateway: %s", kind, exc)
+        return None
 
 
 def register_post(

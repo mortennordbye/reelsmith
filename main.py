@@ -190,6 +190,27 @@ def run(
         str | None,
         typer.Option("--unmark", help="Clear a repo's cooldown"),
     ] = None,
+    brand_settings: Annotated[
+        str | None,
+        typer.Option(
+            "--brand-settings",
+            help="'show' what the gateway holds for BRAND, or 'push' this account's values to it",
+        ),
+    ] = None,
+    covered_push: Annotated[
+        bool,
+        typer.Option(
+            "--covered-push",
+            help="Copy this account's used_repos.json onto the gateway's cooldown table",
+        ),
+    ] = False,
+    pipeline_kind: Annotated[
+        str | None,
+        typer.Option(
+            "--pipeline",
+            help="With --brand-settings push, what a night renders: 'reel' or 'episode'",
+        ),
+    ] = None,
     repo_full_name: Annotated[
         str | None,
         typer.Option("--repo", help="Skip discovery, e.g. 'astral-sh/uv'"),
@@ -289,18 +310,26 @@ def run(
     # --- Bookkeeping commands: do one thing, then stop. --------------------
     if posted:
         scraper.mark_featured(cfg, posted)
+        # The gateway's cooldown table as well as the local store. A repo posted
+        # by hand was the one commitment the gateway never heard about, so the
+        # only complete list lived in a JSON file on one machine's share.
+        on_gateway = gateway.record_covered(cfg, f"repo:{posted}", source="posted")
         console.print(
             f"[bold green]Marked posted:[/] {posted} "
-            f"[dim](on cooldown for {cfg.repo_cooldown_days} days)[/]"
+            f"[dim](on cooldown for {cfg.repo_cooldown_days} days"
+            f"{'' if on_gateway else '; not recorded on the gateway'})[/]"
         )
         return
 
     if unmark:
         was = scraper.unmark_featured(cfg, unmark)
-        # The gateway holds two separate reasons to skip a repo, a commitment
-        # and a render, and a rejected video usually has both. Clearing one and
-        # leaving the other is how a repo stays invisible to discovery with
-        # nothing local left to explain it.
+        # The gateway holds three separate reasons to skip a repo: a commitment
+        # in its cooldown table, one derived from the queue, and a render. A
+        # rejected video usually has more than one. Clearing some and leaving
+        # the rest is how a repo stays invisible to discovery with nothing
+        # local left to explain it. The queue half clears when the post is
+        # cancelled, which is the rule it always had.
+        gateway.forget_covered(cfg, f"repo:{unmark}")
         forgotten = gateway.forget_rendered(unmark, cfg)
         if was:
             console.print(f"[bold green]Cooldown cleared:[/] {unmark} [dim](was set {was})[/]")
@@ -308,6 +337,16 @@ def run(
             console.print(f"[bold green]Render record cleared:[/] {unmark}")
         else:
             console.print(f"[yellow]{unmark} was not on cooldown.[/]")
+        return
+
+    if brand_settings:
+        _brand_settings(
+            cfg, brand_settings, batch=batch, max_queue=max_queue, pipeline=pipeline_kind
+        )
+        return
+
+    if covered_push:
+        _covered_push(cfg)
         return
 
     if candidates:
@@ -371,6 +410,13 @@ def run(
         console.print(f"[bold green]Token renewed[/] [dim](valid for {left})[/]")
         console.print(f"[dim]Stored in {cfg.ig_token_path}[/]")
         return
+
+    # --- Per brand work reads its brand's settings first. ------------------
+    # Everything above is bookkeeping and inspection; everything below renders,
+    # queues or publishes, so this is where an identity's settings have to be
+    # in place. A read that fails refuses the run rather than rendering on
+    # defaults. A host with no BRAND or no gateway skips this entirely.
+    batch, max_queue = _apply_brand(cfg, batch=batch, max_queue=max_queue)
 
     if publish:
         _preflight(need_github=False, need_claude=False, need_instagram=True)
@@ -2210,6 +2256,140 @@ def _enqueue_facebook(
         f"[dim]({result.get('detail')})[/]"
     )
     return result
+
+
+def _apply_brand(
+    cfg: Settings, *, batch: int | None, max_queue: int | None
+) -> tuple[int | None, int | None]:
+    """Read this brand's settings off the gateway before any per brand work.
+
+    Skipped when the account has no `BRAND=` or no gateway is configured, so a
+    host that has not been set up for this behaves exactly as before.
+
+    **A failed read refuses the run.** No row, an unreachable gateway and a
+    malformed answer all mean the same thing here: this identity's numbers are
+    not known, and rendering on defaults is how a second identity would
+    quietly take the first one's end card, voice knobs and ceiling.
+
+    `.env` wins for any field it sets, and a flag wins over the brand. Only
+    `max_queue` is filled from the brand when no flag gave one. `batch` is
+    never filled here: its absence is what makes a run a single run rather
+    than a batch, and the loop that runs every brand reads it itself.
+    """
+    from config import apply_brand_settings
+
+    if not cfg.brand or not (cfg.gateway_url and cfg.gateway_token):
+        return batch, max_queue
+    row = gateway.fetch_brand_settings(cfg)
+    if row is None:
+        console.print(
+            f"[bold red]Setup problem[/]\nNo settings for brand {cfg.brand} could be read "
+            "from the gateway, so this run would render on defaults. Seed them with\n"
+            f"  python main.py --account {cfg.account} --brand-settings push\n"
+            "or check that the gateway is reachable."
+        )
+        raise typer.Exit(1)
+    settings = row["settings"]
+    applied = apply_brand_settings(cfg, settings)
+    if max_queue is None and isinstance(settings.get("max_queue"), int):
+        max_queue = settings["max_queue"]
+        applied.append("max_queue")
+    log.info(
+        "Brand %s settings v%s applied: %s", cfg.brand, row.get("version"),
+        ", ".join(applied) or "nothing the .env or flags had not already set",
+    )
+    return batch, max_queue
+
+
+def _brand_settings(
+    cfg: Settings,
+    action: str,
+    *,
+    batch: int | None,
+    max_queue: int | None,
+    pipeline: str | None,
+) -> None:
+    """Show or seed this brand's settings on the gateway.
+
+    `push` builds the row from what this account states rather than from
+    defaults: every allowlisted field its `.env` sets explicitly, plus
+    `--pipeline`, `--batch` and `--max-queue` when given, on top of whatever
+    the row already holds. It reads the current version first and writes
+    pinned to it, so a push can never silently overwrite an edit made
+    somewhere else since.
+
+    `--pipeline` is a flag rather than a `PIPELINE=` line in the account's
+    `.env`, because seeding a brand should not need an edit under `accounts/`.
+    """
+    from config import BRAND_SETTING_FIELDS
+
+    if not cfg.brand:
+        console.print(
+            "[bold red]Setup problem[/]\nThis account has no BRAND= in its .env, and brand "
+            "settings are keyed on it."
+        )
+        raise typer.Exit(1)
+
+    current = gateway.fetch_brand_settings(cfg)
+    if action == "show":
+        if current is None:
+            console.print(f"[yellow]No settings on the gateway for {cfg.brand}[/] "
+                          "[dim](or the gateway could not be reached)[/]")
+            raise typer.Exit(1)
+        console.print_json(data=current)
+        return
+    if action != "push":
+        console.print(f"[bold red]--brand-settings takes show or push, not {action!r}[/]")
+        raise typer.Exit(2)
+
+    settings: dict = dict(current["settings"]) if current else {}
+    for field in BRAND_SETTING_FIELDS:
+        if field in cfg.model_fields_set:
+            settings[field] = getattr(cfg, field)
+    if pipeline:
+        settings["pipeline"] = pipeline
+    if batch is not None:
+        settings["batch"] = batch
+    if max_queue is not None:
+        settings["max_queue"] = max_queue
+
+    try:
+        written = gateway.put_brand_settings(
+            cfg, settings, if_version=current["version"] if current else 0
+        )
+    except RuntimeError as exc:
+        console.print(f"[bold red]Not written[/]\n{exc}")
+        raise typer.Exit(1) from exc
+    console.print(f"[bold green]{cfg.brand} settings at version {written['version']}[/]")
+    console.print_json(data=written["settings"])
+
+
+def _covered_push(cfg: Settings) -> None:
+    """Copy this account's `used_repos.json` onto the gateway's cooldown table.
+
+    One-shot, for the render host whose store holds `--posted` repos the
+    gateway never saw. The gateway keeps the earlier date for anything it
+    already covers, so running this twice, or after the queue already
+    backfilled a repo, changes nothing that matters.
+    """
+    if not cfg.brand:
+        console.print("[bold red]Setup problem[/]\nThis account has no BRAND= in its .env.")
+        raise typer.Exit(1)
+    entries = scraper.covered_repos(cfg)
+    failed = [
+        repo
+        for repo, day in entries
+        if not gateway.record_covered(
+            cfg, f"repo:{repo}", committed_at=f"{day}T00:00:00+00:00", source="import"
+        )
+    ]
+    console.print(
+        f"[bold]{len(entries) - len(failed)} of {len(entries)}[/] repos from "
+        f"{cfg.used_repos_path.name} recorded on the gateway for {cfg.brand}"
+    )
+    if failed:
+        console.print(f"[yellow]Not recorded:[/] {', '.join(failed)}")
+        raise typer.Exit(1)
 
 
 def _new_account(name: str) -> None:
