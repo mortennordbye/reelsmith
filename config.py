@@ -582,6 +582,40 @@ def _accounts_line(known: list[str]) -> str:
     return f"Accounts in this checkout: {', '.join(known)}."
 
 
+# The brand settings the gateway holds that map onto a `Settings` field. The
+# gateway's allowlist also has `pipeline`, `batch` and `max_queue`, which are
+# about what a night runs rather than how a stage behaves, so `main.py` reads
+# those itself instead of this writing them onto the settings.
+BRAND_SETTING_FIELDS = (
+    "endcard_name",
+    "endcard_handle",
+    "endcard_tagline",
+    "chatterbox_exaggeration",
+    "chatterbox_cfg_weight",
+    "episode_crf",
+)
+
+
+def apply_brand_settings(cfg: Settings, settings: dict) -> list[str]:
+    """Take a brand's gateway settings for every field the `.env` left unset.
+
+    **`.env` still wins for a key it sets explicitly**, which is what keeps a
+    render host that has not been updated behaving exactly as before: its
+    projected `.env` carries these lines, so nothing here overrides them.
+    `model_fields_set` is the honest test for that, because a value read from
+    either `.env` counts as set and a default does not.
+
+    Returns the fields it applied, so a run can say where its numbers came
+    from.
+    """
+    applied = []
+    for field in BRAND_SETTING_FIELDS:
+        if field in settings and field not in cfg.model_fields_set:
+            setattr(cfg, field, settings[field])
+            applied.append(field)
+    return applied
+
+
 def select_account(name: str) -> Settings:
     """Bind this process to one account, and hand back its settings.
 
