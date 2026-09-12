@@ -28,7 +28,9 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 from gateway import db
 from gateway.graph import GraphError
 from gateway.models import (
+    BRAND_NAME,
     AccountRegistration,
+    BrandUpdate,
     CoverUploaded,
     FacebookAccountRegistration,
     PostRegistration,
@@ -185,6 +187,52 @@ async def list_accounts(request: Request) -> dict:
     Nothing it returns is a secret: see `db.registered_destinations`.
     """
     return {"accounts": await db.registered_destinations(request.app.state.db)}
+
+
+@router.get("/api/brands", dependencies=[Depends(require_token)])
+async def list_brand_settings(request: Request) -> dict:
+    """Every brand that has settings, for a night that runs every identity."""
+    return {"brands": await db.list_brands(request.app.state.db)}
+
+
+@router.get("/api/brands/{brand}", dependencies=[Depends(require_token)])
+async def get_brand_settings(request: Request, brand: str) -> dict:
+    """One identity's settings. 404 when none were written.
+
+    A 404 rather than an empty object so a render host can refuse the run: an
+    identity that renders on defaults because a row was never seeded is the
+    soft failure this table was designed against.
+    """
+    row = await db.get_brand(request.app.state.db, brand)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"no settings for brand {brand!r}")
+    return row
+
+
+@router.put("/api/brands/{brand}", dependencies=[Depends(require_token)])
+async def put_brand_settings(request: Request, brand: str, body: BrandUpdate) -> dict:
+    """Replace one identity's settings, pinned to the version the caller read.
+
+    409 on a stale or missing `if_version`, naming the version the brand is
+    at, so the caller re-reads and redoes the edit rather than overwriting
+    somebody else's.
+    """
+    if not re.fullmatch(BRAND_NAME, brand):
+        raise HTTPException(status_code=422, detail=f"{brand!r} is not a brand label")
+    try:
+        row = await db.put_brand(
+            request.app.state.db,
+            brand,
+            body.settings.model_dump(exclude_none=True),
+            if_version=body.if_version,
+        )
+    except db.BrandVersionConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{brand} is at version {exc.current}; re-read and send that as if_version",
+        ) from exc
+    log.info("Brand %s settings now at version %d", brand, row["version"])
+    return row
 
 
 @router.post("/api/accounts", response_model=Registered, dependencies=[Depends(require_token)])
