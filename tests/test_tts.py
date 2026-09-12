@@ -72,6 +72,25 @@ class TestTorchDevice:
         assert _cfg(chatterbox_device="cuda").chatterbox_device == "cuda"
 
 
+class TestVoiceRef:
+    """The worker is started with no `cwd`, so a relative reference used to
+    resolve against wherever `main.py` happened to be launched from."""
+
+    def test_a_relative_path_is_taken_from_the_checkout_not_the_cwd(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+
+        cfg = _cfg(chatterbox_ref="accounts/x/ref/voice.wav", _env_file=None)
+
+        assert cfg.chatterbox_ref == config_mod.ROOT / "accounts/x/ref/voice.wav"
+
+    def test_an_absolute_path_is_left_alone(self, tmp_path):
+        ref = tmp_path / "voice.wav"
+
+        assert _cfg(chatterbox_ref=ref, _env_file=None).chatterbox_ref == ref
+
+
 class TestAudioSuffix:
     def test_only_edge_emits_mp3(self):
         assert tts.audio_suffix(_cfg(), "edge") == ".mp3"
