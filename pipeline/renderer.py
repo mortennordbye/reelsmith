@@ -184,8 +184,10 @@ def render_episode(
         # four hundred year old page with grain over it, where every frame
         # differs from the last in a way h264 cannot predict: the first render
         # came out at 185 MB for 40 seconds, against about 10 MB for a reel,
-        # which is past what TikTok will take in one chunk.
-        "--crf=24",
+        # which is past what TikTok will take in one chunk. `EPISODE_CRF` is
+        # read rather than written here, because the size warning below tells
+        # the operator to raise it and a hardcoded value made that advice inert.
+        f"--crf={cfg.episode_crf}",
         "--log=info",
     ]
     if concurrency:

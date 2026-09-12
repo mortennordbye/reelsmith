@@ -50,6 +50,34 @@ def npm(monkeypatch):
     return fake_run
 
 
+def test_an_episode_renders_at_the_configured_crf(tmp_path, monkeypatch):
+    """`--crf=24` was hardcoded while `EPISODE_CRF` defaulted to 28 and was
+    read by nothing. 24 is the value CLAUDE.md records as the trap: 58 MB at
+    47 seconds, inside ten percent of TikTok's single chunk cap."""
+    from types import SimpleNamespace
+
+    from config import Settings
+
+    monkeypatch.setattr(Settings, "video_dir", property(lambda self: tmp_path))
+    monkeypatch.setattr(renderer, "_ensure_node_deps", lambda _dir: None)
+    out = tmp_path / "out.mp4"
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        seen.append(cmd)
+        out.write_bytes(b"mp4")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(renderer.subprocess, "run", fake_run)
+    spec = SimpleNamespace(slug="s", durationInFrames=30, model_dump_json=lambda: "{}")
+
+    renderer.render_episode(spec, out, Settings(episode_crf=31, _env_file=None))
+    renderer.render_episode(spec, out, Settings(_env_file=None))
+
+    assert "--crf=31" in seen[0]
+    assert "--crf=28" in seen[1]
+
+
 def test_installed_deps_are_left_alone(video_dir, npm):
     """The common path must not shell out on every render."""
     _install_marker(video_dir)
