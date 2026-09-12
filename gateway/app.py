@@ -275,8 +275,9 @@ def create_app(
                     )
                 )
                 log.info(
-                    "Backups on, every %ds to %s, keeping %d",
+                    "Backups on, every %ds to %s, keeping %d; offsite %s",
                     cfg.backup_interval_s, cfg.backup_dir, cfg.backup_keep,
+                    cfg.backup_offsite_dir or "off",
                 )
 
             # Off unless asked for. Publishing to the feed is a bigger power

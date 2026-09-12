@@ -25,16 +25,19 @@ database can capture a torn page while a write is in flight, and the copy looks
 fine until the day it is needed. `VACUUM INTO` runs in a read transaction and
 writes a consistent, already compacted database.
 
-**This does not defend against losing the volume**, since the copies live
-beside the original. It defends against the file being wrong, which is the
-failure that has no other answer. Pulling one off the cluster is a separate
-job and worth doing.
+**The copies beside the database do not defend against losing the volume.**
+They defend against the file being wrong, which is the failure that has no
+other answer. `GATEWAY_BACKUP_OFFSITE_DIR` adds a second copy of each one on
+storage the volume does not own, which is what makes a schema migration safe to
+ship: a migration that goes wrong and a PVC that gets deleted while fixing it
+are the two failures that happen together.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -113,6 +116,36 @@ async def backup_once(cfg: GatewaySettings, metrics: Metrics) -> Path | None:
         "Backed up the state to %s (%.1f MB), pruned %d",
         target.name, target.stat().st_size / 1e6, dropped,
     )
+    if cfg.backup_offsite_dir is not None:
+        copy_offsite(target, cfg, metrics)
+    return target
+
+
+def copy_offsite(source: Path, cfg: GatewaySettings, metrics: Metrics) -> Path | None:
+    """Copy a finished backup off the state volume. None if that failed.
+
+    The copy beside the database answers a bad row; this one answers a lost
+    volume. It copies the file `VACUUM INTO` already wrote rather than
+    vacuuming twice, since that file is closed and consistent.
+
+    **Written under a temporary name and renamed**, so a copy interrupted
+    halfway never leaves a file that looks like a backup. A failure is logged
+    and never raised: the local copy already succeeded, and the staleness
+    alert on this gauge is what says the second one stopped.
+    """
+    directory = cfg.backup_offsite_dir
+    assert directory is not None
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        partial = directory / f".{source.name}.partial"
+        shutil.copyfile(source, partial)
+        target = partial.rename(directory / source.name)
+        dropped = prune(directory, keep=cfg.backup_offsite_keep)
+    except OSError as exc:
+        log.warning("Offsite backup copy to %s failed: %s", directory, exc)
+        return None
+    metrics.backup_offsite_last_success.set(db.now().timestamp())
+    log.info("Copied the backup offsite to %s, pruned %d", target, dropped)
     return target
 
 
