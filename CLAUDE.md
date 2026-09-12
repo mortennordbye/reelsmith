@@ -1073,8 +1073,8 @@ and it is the last thing here that a test cannot settle.
 
 ### The nightly run is not in this repo
 
-`launchd/` is the Mac story and drives nothing on the Linux host. There the
-02:00 run is a scheduled agent session whose whole behaviour is one prompt,
+The 02:00 run on the Linux host is a scheduled agent session whose whole
+behaviour is one prompt,
 held outside git, so looking for the schedule in this checkout finds nothing
 and editing this checkout cannot change what fires tonight. Anything about it
 that is worth knowing has to be written down here instead, which is what this
@@ -1091,8 +1091,8 @@ section is.
   slot publishes it. The alternative was a draft, which waits for somebody to
   watch it, and a draft queued at 02:00 waits until somebody remembers it
   exists. A slot drains a queue faster than anyone reliably reviews one.
-- **It renders two a night against one slot, up to a queue of three.**
-  `--batch 2 --max-queue 3`, and the surplus is the point: the queue is meant
+- **It renders three a night against two slots, up to a queue of six.**
+  `--batch 3 --max-queue 6`, and the surplus is the point: the queue is meant
   to sit about three days deep so a night that produces nothing is absorbed
   rather than showing up as a gap on the feed. A power cut, a wedged pod, or two
   scripts that both trip the dash validator then costs the account nothing.
@@ -1100,7 +1100,9 @@ section is.
   one and stop on their own.
 
   **It was `--batch 4 --max-queue 10` until 2026-08-27**, when Instagram went
-  from three posts a day to one and ten stopped meaning three days. The numbers
+  from three posts a day to one and ten stopped meaning three days, and
+  `--batch 2 --max-queue 3` from then until 2026-09-10, when the account went
+  back to two posts a day. The numbers
   are a function of the cadence and have to move with it, which is the thing to
   remember rather than either pair of numbers.
 - **One render feeds every destination.** `--enqueue` and `--recover` make an
@@ -1179,9 +1181,10 @@ section is.
 - **The ceiling stopping the batch is the normal outcome**, not a failure to
   investigate and not something to compensate for by rendering by hand.
 - **The batch is not guaranteed to reach its own last step.** It runs inside
-  the verksted session container, which is capped at 8 GiB, and chatterbox
-  holds about 4 GiB while it speaks against a baseline that climbs through a
-  batch. On 2026-08-14 the third video's TTS crossed the limit at 02:33, the
+  the verksted session container, which is capped at 12 GiB (it was 8 GiB
+  when this happened), and chatterbox holds about 4 GiB while it speaks
+  against a baseline that climbs through a batch. On 2026-08-14 the third
+  video's TTS crossed the limit at 02:33, the
   OOM killer took the container, and with it the batch, the session, and
   `/tmp/nightly.log`. One finished video survived because it was already on
   disk; a script that had been researched and paid for did not get used.
@@ -1198,7 +1201,7 @@ section is.
   failure it cannot fix is the one to watch**: anything that makes the render
   host stop producing is invisible here until the feed goes dark days later.
 - **So queueing is `--recover`, not a list of `--enqueue` lines.** The nightly
-  ends with `--recover --approve --max-queue 3`, which sweeps the last two
+  ends with `--recover --approve --max-queue 6`, which sweeps the last two
   days of build folders and finishes whatever each one still owes. It is what
   makes the run idempotent: interrupted anywhere, the next pass picks the work
   up rather than abandoning it. `queued.json`/`published.json` make it safe to
@@ -1246,9 +1249,13 @@ Two things about the queue are load bearing and easy to undo by accident:
   rolled.** A random offset is re-rolled on every restart, which lets one
   evening's slot fire twice. This is also why the config sync keeps the id of
   an unchanged slot rather than recreating the row.
-- **Keep gateway deploys out of the slot window.** Since 2026-08-27 that is one
-  window rather than four: every platform fires at 08:10 Europe/Oslo, so
-  06:10 UTC plus up to twenty minutes of jitter either side. A rollout landing
+- **Keep gateway deploys out of the slot windows.** Since 2026-09-10 there are
+  two: every brand fires at 08:10 Europe/Oslo and `thenightlybuild` again at
+  12:10, each with fifteen minutes of jitter either side, so 07:50 to 08:30
+  and 11:50 to 12:30 Oslo. The render host's own windows, 01:50 to 03:15 and
+  04:55 to 05:30, matter too, since a rollout there fails the batch's gateway
+  writes. It was one window from 2026-08-27, when every platform moved to
+  08:10. A rollout landing
   inside it restarts the pod mid publish, and the claim the row is holding is
   deliberately never swept back automatically, because Meta may already have
   accepted the post. The result is a row stuck in `claimed` with no failure,
