@@ -147,7 +147,18 @@
   {% for label, group in days %}
     <p class="day">{{ label }}</p>
     {% for plan in group %}
-      <div class="vrow">
+      <div class="vrow play">
+        {% if plan.media %}
+          {# The same public route the platforms fetch from, so what plays here is
+             the file that will be published. #}
+          <video class="player" controls playsinline preload="metadata"
+                 src="/media/{{ plan.video_name | urlencode }}"
+                 {% if plan.cover %}poster="/media/{{ plan.cover | urlencode }}"{% endif %}></video>
+        {% else %}
+          <p class="player gone small faint">{{ 'The video file is not on the gateway, so there is nothing to play.' if plan.video_name else 'No video file on this row.' }}</p>
+        {% endif %}
+
+        <div class="vbody">
         <div>
           {% if plan.hook %}<p class="hook">{{ plan.hook }}</p>{% endif %}
           <span class="meta mono faint">
@@ -219,6 +230,7 @@
               <button class="danger" title="Cancel this video on every destination that has not sent it">Cancel</button>
             </form>
           {% endif %}
+        </div>
         </div>
       </div>
     {% endfor %}

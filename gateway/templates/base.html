@@ -250,6 +250,13 @@
     .vrow { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.6fr) auto; gap: 14px; align-items: center; padding: 11px 14px; border-top: 1px solid var(--line); }
     .vrow.with-brand { grid-template-columns: 180px minmax(0, 1fr) minmax(0, 1.4fr); }
     .vrow .meta { display: block; margin-top: 4px; }
+    /* A queued video is watched before it goes out, so the player is the size
+       of a phone screen rather than a thumbnail. The rest stacks beside it. */
+    .vrow.play { grid-template-columns: 220px minmax(0, 1fr); align-items: start; }
+    .vrow.play .vbody { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+    .vrow.play .acts { justify-content: flex-start; }
+    .player { width: 220px; aspect-ratio: 9 / 16; max-width: 100%; background: #000; border-radius: var(--r-md); border: 1px solid var(--line-2); object-fit: contain; }
+    .player.gone { display: flex; align-items: center; justify-content: center; padding: 14px; text-align: center; background: var(--panel); }
     details.chipmenu { position: relative; }
     details.chipmenu > summary { list-style: none; }
     details.chipmenu > summary::-webkit-details-marker { display: none; }
@@ -313,7 +320,8 @@
       .snav a { white-space: nowrap; }
       main { padding: 16px; }
       .grid2, .grid3, .grid4 { grid-template-columns: 1fr; }
-      .vrow, .vrow.with-brand { grid-template-columns: 1fr; }
+      .vrow, .vrow.with-brand, .vrow.play { grid-template-columns: 1fr; }
+      .player { width: min(300px, 100%); margin: 0 auto; }
       .acts { justify-content: flex-start; }
       details.chipmenu .menu { max-width: calc(100vw - 32px); }
       .app:not(.solo)::before { display: none; }

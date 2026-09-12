@@ -1790,6 +1790,34 @@ async def test_the_schedule_shows_one_row_for_one_video(client):
     assert 'class="chip youtube' in body
 
 
+async def test_the_schedule_plays_a_queued_video_with_its_cover(client):
+    """Cancelling before the slot fires is the only review, so the video has to
+    be watchable on the row rather than only described by its hook."""
+    http, app = client
+    await _one_video_on_two_destinations(app, state=db.QUEUE_APPROVED)
+    covers = app.state.cfg.covers_dir
+    covers.mkdir(parents=True, exist_ok=True)
+    (covers / "shared.mp4").write_bytes(b"mp4")
+    (covers / "shared.png").write_bytes(b"png")
+    await app.state.db.execute("UPDATE queued_posts SET cover_name = 'shared.png'")
+    await app.state.db.commit()
+
+    body = (await http.get("/admin/b/one/schedule")).text
+
+    assert body.count('src="/media/shared.mp4"') == 1
+    assert 'poster="/media/shared.png"' in body
+
+
+async def test_the_schedule_says_so_when_the_file_is_gone(client):
+    http, app = client
+    await _one_video_on_two_destinations(app, state=db.QUEUE_APPROVED)
+
+    body = (await http.get("/admin/b/one/schedule")).text
+
+    assert "<video" not in body
+    assert "not on the gateway" in body
+
+
 async def test_a_video_action_cannot_reach_another_brand(client):
     """The ids come from a form, so a forged list must not touch another
     identity's queue."""
