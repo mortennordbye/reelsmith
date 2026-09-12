@@ -7,13 +7,15 @@ delete. Both are cheap to pin down and expensive to notice by eye.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from conftest import candidate
 from pydantic import ValidationError
 
 from config import get_settings
 from pipeline.models import MAX_HOOK_CHARS, VideoScript
-from pipeline.renderer import prune_staged_assets, stage_asset
+from pipeline.renderer import prune_staged_assets, stage_asset, staging_key
 from pipeline.scriptwriter import _build_prompt
 
 
@@ -110,26 +112,13 @@ def video_dir(tmp_path, *names):
     return tmp_path
 
 
-def test_other_runs_assets_are_pruned(tmp_path):
-    root = video_dir(tmp_path, "old-repo-voice.mp3", "old-repo-repo.png", "new-repo-voice.wav")
-
-    assert prune_staged_assets(root, "new-repo") == 2
-    assert {p.name for p in (root / "public").iterdir()} == {"new-repo-voice.wav"}
-
-
-def test_the_current_runs_assets_survive(tmp_path):
-    root = video_dir(tmp_path, "a-b-voice.wav", "a-b-repo.png")
-
-    assert prune_staged_assets(root, "a-b") == 0
-    assert len(list((root / "public").iterdir())) == 2
-
-
 def test_files_we_did_not_stage_are_never_touched(tmp_path):
     # public/ is ours to manage, but not to the point of deleting a font or a
-    # .gitkeep someone put there on purpose.
+    # .gitkeep someone put there on purpose, however old they are.
     root = video_dir(tmp_path, ".gitkeep", "logo.svg", "notes.txt", "old-voice.mp3")
+    later = time.time() + 30 * 86400
 
-    prune_staged_assets(root, "current")
+    prune_staged_assets(root, staging_key("a", "current"), now=later)
 
     assert {p.name for p in (root / "public").iterdir()} == {".gitkeep", "logo.svg", "notes.txt"}
 
@@ -138,7 +127,7 @@ def test_pruning_a_missing_public_dir_is_a_no_op(tmp_path):
     assert prune_staged_assets(tmp_path, "anything") == 0
 
 
-def test_staging_produces_a_name_pruning_recognises(tmp_path):
+def test_staging_produces_a_directory_pruning_recognises(tmp_path):
     # The two halves of the contract: whatever stage_asset writes must be
     # something prune_staged_assets is willing to clean up later.
     source = tmp_path / "voice.wav"
@@ -146,10 +135,12 @@ def test_staging_produces_a_name_pruning_recognises(tmp_path):
     root = tmp_path / "video"
     (root / "public").mkdir(parents=True)
 
-    staged = stage_asset(source, root, "owner-repo")
+    staged = stage_asset(source, root, staging_key("acct", "owner-repo"))
+    later = time.time() + 2 * 86400
 
-    assert staged == "owner-repo-voice.wav"
-    assert prune_staged_assets(root, "some-other-slug") == 1
+    assert staged == "staged/acct/owner-repo/voice.wav"
+    assert prune_staged_assets(root, staging_key("acct", "other"), now=later) == 1
+    assert not (root / "public" / staged).exists()
 
 
 # --- The research audit signal ----------------------------------------------

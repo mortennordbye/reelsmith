@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from config import Settings
@@ -19,8 +21,16 @@ from pipeline.models import VideoSpec
 
 log = logging.getLogger(__name__)
 
-# The filenames stage_asset() produces: "<slug>-<original name>". Slugs are
-# lowercase alphanumerics and hyphens (see RepoCandidate.slug).
+# Where each run stages its assets, under video/public/, and how old a run's
+# directory has to be before another run may delete it. A day is far past the
+# longest render and short enough that a dead run's files do not pile up.
+STAGING_DIR = "staged"
+STAGING_TTL_S = 24 * 60 * 60
+
+# The flat filenames stage_asset() produced before per run staging:
+# "<slug>-<original name>". Nothing writes them any more; the prune still
+# recognises them so a checkout that rendered under the old layout empties out.
+# Slugs are lowercase alphanumerics and hyphens (see RepoCandidate.slug).
 #
 # `repo-page.png` has to be named here explicitly. The slug pattern is greedy
 # over hyphens, so a rule written for `repo.png` does not cover it, and an
@@ -109,42 +119,82 @@ def _ensure_node_deps(video_dir: Path) -> None:
     log.info("Installed the Remotion dependencies")
 
 
-def stage_asset(asset_path: Path, video_dir: Path, slug: str) -> str:
-    """Copy an asset into video/public/ and return its staticFile() path.
+def staging_key(account: str, slug: str) -> str:
+    """Where one run's staged assets live, relative to `video/public/`.
+
+    `staged/<account>/<slug>`. Under a `staged/` directory of its own rather
+    than straight under `public/`, so the prune can remove whole run
+    directories without ever having to decide whether a directory a person
+    made by hand is one of them.
+    """
+    return f"{STAGING_DIR}/{account or '_'}/{slug}"
+
+
+def stage_asset(asset_path: Path, video_dir: Path, run_key: str) -> str:
+    """Copy an asset into this run's staging directory, return its staticFile() path.
 
     Remotion can only load assets from public/, so this copy is required
-    rather than incidental. The slug prefix keeps concurrent runs from
-    clobbering each other's files.
+    rather than incidental. `staticFile()` takes subpaths, so the returned
+    path carries the run directory and the spec needs nothing else.
     """
-    public = video_dir / "public"
-    public.mkdir(parents=True, exist_ok=True)
-    target = public / f"{slug}-{asset_path.name}"
-    shutil.copy2(asset_path, target)
-    return target.name
+    target_dir = video_dir / "public" / run_key
+    target_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(asset_path, target_dir / asset_path.name)
+    # `copy2` keeps the source's mtime, so the directory is what says how
+    # recently a run staged anything, and the prune ages runs by it.
+    os.utime(target_dir)
+    return f"{run_key}/{asset_path.name}"
 
 
-def prune_staged_assets(video_dir: Path, keep_slug: str) -> int:
-    """Delete staged assets belonging to other slugs. Returns the count removed.
+def release_staged(video_dir: Path, run_key: str) -> None:
+    """Delete this run's staging directory, once its video and covers exist."""
+    shutil.rmtree(video_dir / "public" / run_key, ignore_errors=True)
+
+
+def prune_staged_assets(video_dir: Path, keep: str, *, now: float | None = None) -> int:
+    """Delete what other runs left staged, if it is old. Returns the count removed.
 
     public/ is a staging area, not a store: everything in it was copied from
-    build/ and is re-staged on demand, so a stale copy is pure waste. Left alone
-    it accumulates an audio file and a screenshot per video, forever.
+    build/ and is re-staged on demand. A run releases its own directory when it
+    finishes, so this only catches runs that died before that.
 
-    Matching is deliberately narrow -- only the exact filenames this pipeline
-    stages -- so anything a human drops into public/ by hand survives. Adding a
-    new staged asset type means adding it here, or its old copies just linger.
+    **Only past `STAGING_TTL_S`, never by name alone.** Remotion symlinks
+    `video/public` into its bundle, so a prune from another process deletes
+    files out of a render already in flight. It used to remove every other
+    slug's files on the way in, which was safe only while nothing ever
+    rendered at the same time as anything else.
+
+    Two things are swept: run directories under `staged/`, and the flat
+    `<slug>-voice.wav` style files every run wrote before per run staging.
+    Matching on the flat names stays deliberately narrow, so anything a human
+    drops into public/ by hand survives, and `PROTECTED_PREFIXES` still guards
+    the prototypes' scans that sit beside them.
     """
     public = video_dir / "public"
     if not public.is_dir():
         return 0
-
+    now = time.time() if now is None else now
     removed = 0
+
+    staged_root = public / STAGING_DIR
+    if staged_root.is_dir():
+        for account_dir in staged_root.iterdir():
+            if not account_dir.is_dir():
+                continue
+            for run in account_dir.iterdir():
+                if not run.is_dir() or run == public / keep:
+                    continue
+                if now - run.stat().st_mtime < STAGING_TTL_S:
+                    continue
+                shutil.rmtree(run, ignore_errors=True)
+                removed += 1
+
     for path in public.iterdir():
         if not path.is_file() or not STAGED_ASSET_RE.fullmatch(path.name):
             continue
-        if path.name.startswith(f"{keep_slug}-"):
-            continue
         if path.name.startswith(PROTECTED_PREFIXES):
+            continue
+        if now - path.stat().st_mtime < STAGING_TTL_S:
             continue
         try:
             path.unlink()
@@ -153,7 +203,7 @@ def prune_staged_assets(video_dir: Path, keep_slug: str) -> int:
             log.debug("Could not prune %s (%s)", path, exc)
 
     if removed:
-        log.info("Pruned %d stale staged asset(s) from %s", removed, public)
+        log.info("Pruned %d stale staged run(s) and file(s) from %s", removed, public)
     return removed
 
 
