@@ -29,7 +29,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -621,6 +621,33 @@ _MIGRATIONS: tuple[str, ...] = (
     WHERE q.state <> 'cancelled' AND q.repo_full_name IS NOT NULL
       AND q.repo_full_name <> '' AND a.brand <> ''
     GROUP BY a.brand, q.repo_full_name;
+    """,
+    # 24. A night's run, reported by the render host.
+    #
+    # Nothing recorded that a night happened. `build/nightly.log` is on the
+    # render host and overwritten each night, and the panel's heartbeat started
+    # at `rendered_at`, so a host that rendered nothing looked exactly like one
+    # whose `--max-queue` ceiling stopped the batch, which is the normal
+    # outcome. That is how three nights with no node deps went unnoticed until
+    # the queue ran dry (G4).
+    #
+    # One row per run per brand. `outcome` starts `running` when the host
+    # reports a start and is finished by a second report, so a run that died
+    # between the two stays visibly `running` rather than looking like a quiet
+    # night. `results` is the per video list as JSON, for a person reading it.
+    """
+    CREATE TABLE runs (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        brand       TEXT NOT NULL,
+        kind        TEXT NOT NULL,
+        host        TEXT NOT NULL DEFAULT '',
+        started_at  TEXT NOT NULL,
+        finished_at TEXT,
+        outcome     TEXT NOT NULL DEFAULT 'running',
+        results     TEXT NOT NULL DEFAULT '[]',
+        updated_at  TEXT NOT NULL
+    );
+    CREATE INDEX runs_by_brand ON runs (brand, started_at);
     """,
 )
 
@@ -2687,6 +2714,74 @@ async def covered_subjects(conn: aiosqlite.Connection, brand: str) -> list[Any]:
         "SELECT subject_key, committed_at, source FROM covered_subjects "
         "WHERE brand = ? ORDER BY committed_at",
         (brand,),
+    )
+
+
+# --------------------------------------------------------------------------
+# Runs
+# --------------------------------------------------------------------------
+
+
+async def record_run(
+    conn: aiosqlite.Connection,
+    *,
+    brand: str,
+    kind: str,
+    host: str,
+    started_at: str,
+    finished_at: str | None,
+    outcome: str,
+    results: str,
+) -> int:
+    """Open a run, or record one already finished. Returns its id."""
+    cur = await conn.execute(
+        """
+        INSERT INTO runs (brand, kind, host, started_at, finished_at, outcome, results,
+                          updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (brand, kind, host, started_at, finished_at, outcome, results, iso(now())),
+    )
+    await conn.commit()
+    return int(cur.lastrowid)
+
+
+async def finish_run(
+    conn: aiosqlite.Connection, run_id: int, *, finished_at: str, outcome: str, results: str
+) -> bool:
+    """Close a run the host opened. False when there is no such run."""
+    cur = await conn.execute(
+        """
+        UPDATE runs SET finished_at = ?, outcome = ?, results = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (finished_at, outcome, results, iso(now()), run_id),
+    )
+    await conn.commit()
+    return bool(cur.rowcount)
+
+
+async def latest_run(conn: aiosqlite.Connection, brand: str) -> Any | None:
+    """The most recently started run for one brand, finished or not."""
+    return await _one(
+        conn,
+        "SELECT * FROM runs WHERE brand = ? ORDER BY started_at DESC, id DESC LIMIT 1",
+        (brand,),
+    )
+
+
+async def latest_runs(conn: aiosqlite.Connection) -> list[Any]:
+    """The most recently started run for every brand that has one, by brand."""
+    return await _all(
+        conn,
+        """
+        SELECT r.* FROM runs r
+        WHERE r.id = (
+            SELECT id FROM runs WHERE brand = r.brand
+            ORDER BY started_at DESC, id DESC LIMIT 1
+        )
+        ORDER BY r.brand
+        """,
     )
 
 

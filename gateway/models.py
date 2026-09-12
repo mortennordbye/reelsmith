@@ -423,3 +423,33 @@ class CoveredSubject(BaseModel):
     committed_at: datetime | None = None
     # Who said so: `queue`, `posted`, `episode`, `import`. Free text, short.
     source: str = Field(default="", max_length=32)
+
+
+class RunVideo(BaseModel):
+    """One video's line in a run report, for a person reading the panel."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    subject: str = Field(max_length=200)
+    outcome: str = Field(max_length=32)
+    detail: str = Field(default="", max_length=500)
+
+
+class RunReport(BaseModel):
+    """What a render host says about a night, at the start and at the end.
+
+    Without `run_id` it opens a run; with one it finishes that run. A start
+    with no finish stays `running`, which is how a host that died mid batch
+    becomes visible rather than reading as a night with nothing to do.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: int | None = Field(default=None, ge=1)
+    brand: str = Field(pattern=BRAND_NAME)
+    kind: Literal["batch", "episode", "recover", "all"]
+    host: str = Field(default="", max_length=64)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    outcome: Literal["running", "ok", "attention", "failed"] = "running"
+    results: list[RunVideo] = Field(default_factory=list, max_length=50)

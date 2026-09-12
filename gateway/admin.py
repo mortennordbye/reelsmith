@@ -481,6 +481,17 @@ async def system_page(request: Request) -> Any:
         },
         stale=await db.stale_claims(conn),
         funnel=await db.funnel(conn),
+        runs=[
+            {
+                "brand": run["brand"],
+                "kind": run["kind"],
+                "outcome": run["outcome"],
+                # A run still going, or one that died, is shown by when it
+                # started; a finished one by when it ended.
+                "at": db.parse_iso(run["finished_at"] or run["started_at"]),
+            }
+            for run in await db.latest_runs(conn)
+        ],
     )
 
 
