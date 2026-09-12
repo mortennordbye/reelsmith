@@ -375,6 +375,18 @@ class Settings(BaseSettings):
     width: int = 1080
     height: int = 1920
 
+    @field_validator("chatterbox_ref")
+    @classmethod
+    def _voice_ref_from_root(cls, v: Path) -> Path:
+        """A relative `CHATTERBOX_REF` means relative to the checkout.
+
+        The TTS subprocess is handed this path with no `cwd`, so a relative
+        value resolved against whichever directory `main.py` was started from.
+        Every entry point happens to start at the repo root today, which is
+        the only reason it ever worked.
+        """
+        return v if v.is_absolute() else ROOT / v
+
     @field_validator("claude_effort")
     @classmethod
     def _valid_effort(cls, v: str) -> str:
