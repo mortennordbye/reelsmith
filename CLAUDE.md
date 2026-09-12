@@ -724,13 +724,18 @@ no stage signature changes.
   on a share**, for the reason `data` always did: `StarHistory.save()` renames
   a temp file over its target, and that rename replaces a file symlink with a
   real file. `scripts/pod-setup.sh` links one per account.
-- **`python main.py --migrate-account <name>` moves a single account checkout
-  into the new layout.** It prints the plan and moves nothing until it is given
-  `--yes`. The root `.env` is copied rather than moved, because it also holds
-  the global half and which lines are global is a judgement rather than a rule.
-  Until it is run, `data_dir` and the voice reference fall back to where they
-  were, so a checkout mid migration reads the store it already has rather than
-  starting an empty one.
+- **There is no fallback to the single account layout any more**, since
+  2026-09-12. `data_dir` used to return the root `data/` for an account whose
+  directory had no `data/` yet, which kept a checkout mid migration reading
+  the store it had. On the render host the second account had only an `.env`,
+  so its first ranked episode run would have written `subject_pool.json` into
+  that shared root store, which is F9. Now an account always gets
+  `accounts/<name>/data/`, created on first use, no account selected has no
+  data directory at all, and `--migrate-account` is gone with the fallback.
+  **`data/.gitkeep` stays tracked on purpose**: `pod-setup.sh` marks it
+  skip-worktree on the render host, and a pull that deletes a skip-worktree
+  file refuses to run, which would leave that host on old code every night
+  while the prompt carried on.
 
 ### A second account is not a second niche, and only one of them is built
 
