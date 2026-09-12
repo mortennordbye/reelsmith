@@ -144,11 +144,14 @@ python main.py --publish 2026-07-30/astral-sh-uv \
 
 Long-lived Instagram tokens last 60 days, are refreshed rather than reissued,
 and **an expired one cannot be refreshed**. Recovering from that costs a browser
-round trip through the Meta dashboard. The daily `--snapshot` job refreshes when
-it is within `IG_REFRESH_MARGIN_DAYS` (15) of expiring, so keeping that job
-installed is what keeps posting unattended. `--refresh-token` forces it.
+round trip through the Meta dashboard. `--snapshot` refreshes when the token is
+within `IG_REFRESH_MARGIN_DAYS` (15) of expiring, but only on a machine that
+holds one: the render host enqueues rather than publishes, so the nightly
+snapshot there refreshes nothing, and the gateway refreshes its own token
+separately. On a laptop that publishes directly, run `--refresh-token` by hand
+before the 60 days are up.
 
-The live token lives in `data/ig_token.json`, not `.env`. A cron job that
+The live token lives in `accounts/<name>/data/ig_token.json`, not `.env`. A cron job that
 rewrites a hand-edited dotenv eventually eats something you cared about.
 
 ### The daily snapshot
