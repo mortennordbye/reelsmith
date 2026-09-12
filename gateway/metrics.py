@@ -132,6 +132,11 @@ class Metrics:
             "Unix time of the last state backup that finished",
             registry=reg,
         )
+        self.backup_offsite_last_success = Gauge(
+            "reelsmith_backup_offsite_last_success_timestamp",
+            "Unix time of the last state backup copied off the state volume",
+            registry=reg,
+        )
 
         # A labelled counter does not exist until it is first incremented, so a
         # platform that has never published has no series at all and a rule

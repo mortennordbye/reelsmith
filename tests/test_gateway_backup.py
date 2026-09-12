@@ -173,6 +173,53 @@ def test_files_this_did_not_write_are_never_touched(cfg):
     assert "notes.txt" in survivors
 
 
+# --- Off the state volume ---------------------------------------------------
+
+
+async def test_no_offsite_directory_means_no_second_copy(conn, cfg, metrics):
+    await backup.backup_once(cfg, metrics)
+
+    assert metrics.backup_offsite_last_success._value.get() == 0
+
+
+async def test_the_offsite_copy_is_the_same_database(conn, tmp_path, metrics):
+    """The copy that survives losing the volume has to be a database that
+    still knows what was answered, not merely a file of the right name."""
+    cfg = settings(tmp_path, backup_offsite_dir=tmp_path / "offsite")
+    await db.claim_comment(
+        conn, comment_id="c1", media_id="media-1", account_id=ACCOUNT, author_id=IGSID
+    )
+
+    local = await backup.backup_once(cfg, metrics)
+
+    copy = tmp_path / "offsite" / local.name
+    assert copy.read_bytes() == local.read_bytes()
+    assert not list((tmp_path / "offsite").glob(".*partial"))
+    assert metrics.backup_offsite_last_success._value.get() > 0
+
+
+async def test_the_offsite_copies_are_pruned_to_their_own_limit(conn, tmp_path, metrics):
+    cfg = settings(tmp_path, backup_offsite_dir=tmp_path / "offsite", backup_offsite_keep=2)
+    make_copies(tmp_path / "offsite", 5)
+
+    await backup.backup_once(cfg, metrics)
+
+    assert len(list((tmp_path / "offsite").glob("state-*.sqlite3"))) == 2
+
+
+async def test_a_failed_offsite_copy_does_not_fail_the_backup(conn, tmp_path, metrics):
+    """The local copy already exists, and the staleness alert on the offsite
+    gauge is what says the mount went away."""
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("x")
+    cfg = settings(tmp_path, backup_offsite_dir=blocker)
+
+    local = await backup.backup_once(cfg, metrics)
+
+    assert local is not None and local.exists()
+    assert metrics.backup_offsite_last_success._value.get() == 0
+
+
 async def test_the_loop_keeps_going_after_a_failure(conn, cfg, metrics, monkeypatch):
     """A gateway that stops answering Meta because a disk filled has turned a
     recoverable problem into an outage."""

@@ -131,6 +131,15 @@ class GatewaySettings(BaseSettings):
     # Roughly three and a half days at six hours. Long enough that damage done
     # on a Friday is still recoverable on a Monday.
     backup_keep: int = 14
+    # Where a second copy of each backup goes, on storage that does not die
+    # with the state volume. Unset means no second copy, which is what every
+    # deployment had before this and what a test run wants. The cluster mounts
+    # a directory on a different NAS share here, because the state PVC
+    # reclaims with Delete and its backups sit beside the database.
+    backup_offsite_dir: Path | None = None
+    # A week at six hours. Longer than the copies beside the database, because
+    # the failure this covers, a lost volume, is noticed later than a bad row.
+    backup_offsite_keep: int = 28
 
     # --- Scheduled publishing ----------------------------------------------
     # The whole queue is off unless this is on. A gateway that only answers
