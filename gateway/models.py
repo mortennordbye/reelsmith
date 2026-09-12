@@ -8,6 +8,7 @@ naming the field, not as a row with an empty column in it.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
@@ -348,3 +349,53 @@ class RenderedRepo(BaseModel):
     # day. Capped because it arrives over the network and nothing reads inside
     # it.
     score_breakdown: dict[str, float] = Field(default_factory=dict, max_length=20)
+
+
+# A brand is a label somebody typed into an `.env`, never a path or a query.
+BRAND_NAME = r"^[a-z0-9][a-z0-9._-]{0,63}$"
+
+
+class BrandSettings(BaseModel):
+    """What one identity renders and how much, and nothing else.
+
+    **An allowlist, enforced by refusing unknown keys.** One bearer token can
+    write every brand, and a settings table that took any key is a table a
+    token or a client secret ends up in the first time somebody pastes an
+    `.env` into it. So every key is named here, every one is non-secret, and
+    anything else is a 422.
+
+    Every field is optional because a brand's row holds what somebody chose; a
+    key left out means the pipeline's own default, which is the answer an
+    account `.env` has always given for a line it does not have.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Which generator a night runs for this identity.
+    pipeline: Literal["reel", "episode"] | None = None
+    # How many videos a night may render, and how deep the queue may be before
+    # it renders none. Bounded well past any sane cadence, so a typo of an extra
+    # zero is refused rather than queued.
+    batch: int | None = Field(default=None, ge=0, le=20)
+    max_queue: int | None = Field(default=None, ge=0, le=100)
+    endcard_name: str | None = Field(default=None, max_length=80)
+    endcard_handle: str | None = Field(default=None, max_length=80)
+    endcard_tagline: str | None = Field(default=None, max_length=160)
+    chatterbox_exaggeration: float | None = Field(default=None, ge=0, le=2)
+    chatterbox_cfg_weight: float | None = Field(default=None, ge=0, le=2)
+    episode_crf: int | None = Field(default=None, ge=0, le=51)
+
+
+class BrandUpdate(BaseModel):
+    """A write to one brand's settings, pinned to the version it was read at.
+
+    `if_version` is required whenever the brand already has a row, and must be
+    left out (or 0) to create one. The route refuses a mismatch with 409 rather
+    than merging, because a merge of two people's settings is a third set
+    nobody chose.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    settings: BrandSettings
+    if_version: int | None = Field(default=None, ge=0)

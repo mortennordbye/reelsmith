@@ -29,7 +29,7 @@ import aiosqlite
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 # One statement block per version. To change the schema, append a new entry and
 # bump SCHEMA_VERSION; never edit an entry that has shipped.
@@ -562,6 +562,31 @@ _MIGRATIONS: tuple[str, ...] = (
         PRIMARY KEY (account_id, fetched_on)
     );
     """,
+    # 22. What an identity renders and how much, held where every render host
+    # can read it.
+    #
+    # `--batch`, `--max-queue`, the end card and the voice knobs lived in two
+    # places that nothing kept in step: an account's `.env`, projected onto the
+    # render host by an allowlist, and the text of a scheduled prompt that agent
+    # writes are refused on. A night for a second identity needs them read per
+    # brand, so they are a row per brand here.
+    #
+    # `settings` is a JSON object of an allowlisted set of non-secret keys, the
+    # `score_breakdown` trade again: nothing queries inside it, and a column per
+    # knob would be a migration per knob. `version` is what a write is pinned to,
+    # so two people editing one brand cannot silently overwrite each other.
+    #
+    # Deliberately nothing here reads or writes `accounts.brand`. That label is
+    # what groups the live boards and a migration that touched it is the one
+    # thing the account restructure was told never to do.
+    """
+    CREATE TABLE brands (
+        brand      TEXT PRIMARY KEY,
+        settings   TEXT NOT NULL DEFAULT '{}',
+        version    INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL
+    );
+    """,
 )
 
 # Which service an account row publishes to. `account_id` holds a Meta user id
@@ -845,6 +870,94 @@ async def accounts_for_brand(conn: aiosqlite.Connection, brand: str) -> list[str
         (brand,),
     )
     return [str(row["account_id"]) for row in rows]
+
+
+# --------------------------------------------------------------------------
+# Brand settings
+# --------------------------------------------------------------------------
+
+
+class BrandVersionConflict(Exception):
+    """A write named a version the brand is not at. `current` is None if no row."""
+
+    def __init__(self, current: int | None) -> None:
+        super().__init__(f"brand is at version {current}")
+        self.current = current
+
+
+def _brand_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "brand": row["brand"],
+        "settings": json.loads(row["settings"] or "{}"),
+        "version": int(row["version"]),
+        "updated_at": row["updated_at"],
+    }
+
+
+async def get_brand(conn: aiosqlite.Connection, brand: str) -> dict[str, Any] | None:
+    """One brand's settings, or None when nobody has written any.
+
+    None rather than an empty object, because a render host reads "no row" as a
+    reason to refuse and "an empty row" as "use every default", and only the
+    first is honest about a brand nobody configured.
+    """
+    row = await _one(conn, "SELECT * FROM brands WHERE brand = ?", (brand,))
+    return _brand_row(row) if row else None
+
+
+async def list_brands(conn: aiosqlite.Connection) -> list[dict[str, Any]]:
+    rows = await _all(conn, "SELECT * FROM brands ORDER BY brand")
+    return [_brand_row(row) for row in rows]
+
+
+async def put_brand(
+    conn: aiosqlite.Connection,
+    brand: str,
+    settings: Mapping[str, Any],
+    *,
+    if_version: int | None,
+) -> dict[str, Any]:
+    """Replace one brand's settings, pinned to the version the caller read.
+
+    Creating needs no version (or 0); replacing needs exactly the current one,
+    and the update itself re-checks it, so two writers racing between the read
+    and the write still produce one conflict rather than one lost edit. Raises
+    `BrandVersionConflict` naming the version the brand is actually at.
+
+    A replace, not a merge: a key left out goes back to the pipeline's default,
+    which is the only way to remove one.
+    """
+    stamp = iso(now())
+    payload = json.dumps(dict(settings), sort_keys=True)
+    current = await _one(conn, "SELECT version FROM brands WHERE brand = ?", (brand,))
+    if current is None:
+        if if_version not in (None, 0):
+            raise BrandVersionConflict(None)
+        try:
+            await conn.execute(
+                "INSERT INTO brands (brand, settings, version, updated_at) VALUES (?, ?, 1, ?)",
+                (brand, payload, stamp),
+            )
+        except aiosqlite.IntegrityError:
+            raced = await _one(conn, "SELECT version FROM brands WHERE brand = ?", (brand,))
+            raise BrandVersionConflict(int(raced["version"]) if raced else None) from None
+    else:
+        if if_version != int(current["version"]):
+            raise BrandVersionConflict(int(current["version"]))
+        cur = await conn.execute(
+            """
+            UPDATE brands SET settings = ?, version = version + 1, updated_at = ?
+            WHERE brand = ? AND version = ?
+            """,
+            (payload, stamp, brand, if_version),
+        )
+        if not cur.rowcount:
+            raced = await _one(conn, "SELECT version FROM brands WHERE brand = ?", (brand,))
+            raise BrandVersionConflict(int(raced["version"]) if raced else None)
+    await conn.commit()
+    written = await get_brand(conn, brand)
+    assert written is not None
+    return written
 
 
 async def registered_destinations(conn: aiosqlite.Connection) -> list[dict[str, Any]]:
