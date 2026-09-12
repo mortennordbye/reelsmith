@@ -85,8 +85,10 @@ _ENV_TEMPLATE = """\
 def create(name: str, *, root: Path = ROOT) -> tuple[Path, list[Path]]:
     """Make an account directory, or return what is already there.
 
-    Three directories and one file, and it cannot lose anything, which is why
-    it needs no `--yes`.
+    Four directories and one file, and it cannot lose anything, which is why
+    it needs no `--yes`. `brand/` is where the avatar goes, and both accounts
+    that exist had to make it by hand, which is how a backup glob for it came
+    to exist before the directory did.
 
     Returns the account directory and the paths it created, so the caller can
     say what it did rather than claiming it all.
@@ -94,7 +96,7 @@ def create(name: str, *, root: Path = ROOT) -> tuple[Path, list[Path]]:
     accounts_dir = ACCOUNTS_DIR if root == ROOT else root / "accounts"
     home = accounts_dir / name
     made = []
-    for directory in (home, home / "data", home / "ref"):
+    for directory in (home, home / "data", home / "ref", home / "brand"):
         if not directory.exists():
             directory.mkdir(parents=True)
             made.append(directory)

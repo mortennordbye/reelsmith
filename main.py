@@ -2196,7 +2196,7 @@ def _enqueue_facebook(
 def _new_account(name: str) -> None:
     """Create an empty profile, and say what is left to do by hand.
 
-    No `--yes`: it makes three directories and a file of comments and cannot
+    No `--yes`: it makes four directories and a file of comments and cannot
     lose anything.
 
     What it deliberately does not do is fill anything in. Every line of the
@@ -2219,6 +2219,7 @@ def _new_account(name: str) -> None:
         f"    tools/chatterbox/ref/RECORD-THIS.txt. Sharing account 1's voice is\n"
         f"    the strongest link there is between two accounts meant to look\n"
         f"    unrelated.\n"
+        f"  - put the avatar at accounts/{name}/brand/avatar.png\n"
         f"  - add a section for it to PROFILE.md, copying the template at the\n"
         f"    bottom and overriding only what differs.\n"
         f"Then: python main.py --account {name} --candidates[/]"
