@@ -107,8 +107,9 @@ post, then `python main.py --posted astral-sh/uv`.
 That uploads it and starts the cooldown in one step. This is the recommended
 setup: you keep the veto, and you never touch a file.
 
-**Unattended.** `python main.py --post` renders and publishes in one run.
-`launchd/it.nordbye.reelsmith.daily.plist` does it on a schedule.
+**Unattended.** `python main.py --post` renders and publishes in one run. The
+scheduled nightly on the render host renders and enqueues instead; how it runs
+is described in `CLAUDE.md` under *The nightly run is not in this repo*.
 
 All three need the same thing to be true: **nothing starts the cooldown except
 posting.** A video you looked at and rejected should not burn that repo for a
@@ -163,9 +164,8 @@ So snapshot every day, including days you make no video:
 python main.py --snapshot     # two search requests, a couple of seconds
 ```
 
-`launchd/it.nordbye.reelsmith.snapshot.plist` runs it at 06:00 daily; its header
-comment has the install commands. From day two onward every ranking uses
-measured deltas.
+The nightly on the render host runs it first, before any render. From day two
+onward every ranking uses measured deltas.
 
 Every stage writes to `build/<account>/<date>/<owner-repo>/` before the next one
 runs, and re-uses what is already there. A failure at render time never costs
