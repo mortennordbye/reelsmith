@@ -1282,6 +1282,52 @@ Two things about the queue are load bearing and easy to undo by accident:
   which `CLAIM_STALE_AFTER` makes visible after an hour but nothing undoes for
   you.
 
+### Per brand state lives on the gateway, since 2026-09-12
+
+Four gateway changes (schemas 22 to 24) moved what used to be split between an
+account's `.env`, a scheduled prompt and a JSON file on the render host's share
+onto the one service with backups. The pipeline half that reads them is draft
+#139 and **was not merged on 2026-09-12**, so the render host still reads
+nothing below except `/api/covered` in its old shape.
+
+- **Every state backup is copied off the state volume.** `/state/backups` sits
+  on a PVC that reclaims with Delete, so `GATEWAY_BACKUP_OFFSITE_DIR=/offsite`
+  copies each `VACUUM INTO` file to a statically bound, `Retain` volume on the
+  shared-data NAS share (`reelsmith-offsite-backups`, homelab #949 and #950),
+  mounted with `subPath: gateway-backups`. That copy existing is what made the
+  migrations below safe to ship.
+- **The reelsmith namespace is Pod Security `restricted`, and an inline `nfs`
+  volume is refused.** Homelab #947 tried one, the Recreate rollout deleted the
+  old pod and could not create the new one, and the gateway was down for six
+  minutes until #948 reverted it. A server dry run of the Deployment accepts
+  the refused shape, so it is not a check; a server dry run of a Pod built from
+  the pod template is. A PVC passes whatever backs it.
+- **`brands` holds an allowlist of non-secret settings per identity** (`pipeline`,
+  `batch`, `max_queue`, end card, voice knobs, `episode_crf`). One bearer token
+  writes every brand, so any other key is a 422, and a write needs the version
+  it read (409 otherwise). An unseeded brand is a 404, never an empty row,
+  because the render host is meant to refuse a run it cannot read settings for.
+  Seeded on 2026-09-12: thenightlybuild reel, batch 3, queue 6; thewholequote
+  episode, batch 1, queue 3.
+- **`covered_subjects` is the cooldown per brand, keyed on a subject**:
+  `repo:<owner>/<name>` or `person:<wikidata id>`, so an episode's subject can
+  finally be put on cooldown. Merged, earliest date wins. Backfilled from the
+  queue through `accounts.brand` without changing it. `GET /api/covered` keeps
+  its shape and folds the table in, so an older render host sees more rather
+  than something different.
+- **`?brand=` on covered, rendered, queue and results answers for every
+  destination an identity holds.** Sent alongside `account_id`, the brand
+  wins: that is what lets a render host send both, so a gateway older than
+  this still scopes by account. A brand naming no account reads nothing,
+  never everything.
+- **`runs` is the render host saying a night happened.** `POST /api/runs`
+  opens a run and a second report with its id closes it, so a host that died
+  mid batch stays visibly `running`. `reelsmith_last_run_timestamp{brand}`
+  exists for every brand at zero; the alert rule on it is a homelab PR not yet
+  written, and nothing reports runs until the nightly loop does.
+- **Nothing here touches `accounts.brand`.** Every migration and route above was
+  checked against the account snapshot after its deploy.
+
 ### The panel is organised by brand, and the loud look is a layer
 
 Rebuilt on 2026-09-11 from an audit of the live panel at two identities on
