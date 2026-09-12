@@ -31,6 +31,7 @@ from gateway.models import (
     BRAND_NAME,
     AccountRegistration,
     BrandUpdate,
+    CoveredSubject,
     CoverUploaded,
     FacebookAccountRegistration,
     PostRegistration,
@@ -557,6 +558,55 @@ async def list_covered(
     """
     rows = await db.covered_repos(request.app.state.db, _account(account_id, ig_user_id))
     return {"covered": rows}
+
+
+@router.post("/api/covered", response_model=Registered, dependencies=[Depends(require_token)])
+async def record_covered(request: Request, body: CoveredSubject) -> Registered:
+    """Record a commitment, earliest date wins, never replacing.
+
+    What `--posted`, an episode's enqueue and the one-off import of the render
+    host's `used_repos.json` write. A later date for a subject already covered
+    changes nothing, and the reply says which happened.
+    """
+    committed = body.committed_at or db.now()
+    if committed.tzinfo is None:
+        committed = committed.replace(tzinfo=UTC)
+    changed = await db.record_covered(
+        request.app.state.db,
+        brand=body.brand,
+        subject_key=body.subject_key,
+        committed_at=committed.isoformat(),
+        source=body.source,
+    )
+    return Registered(
+        detail=(
+            f"{body.subject_key} covered for {body.brand} from {committed.date()}"
+            if changed
+            else f"{body.subject_key} was already covered for {body.brand} from an earlier date"
+        )
+    )
+
+
+@router.delete(
+    "/api/covered/{subject_key:path}",
+    response_model=Registered,
+    dependencies=[Depends(require_token)],
+)
+async def forget_covered(request: Request, subject_key: str, brand: str) -> Registered:
+    """Take a commitment back out, which is what `--unmark` means.
+
+    Needs the brand, because one identity cancelling a post must not lift the
+    cooldown for another that also covered the subject. Idempotent, like the
+    rendered list's delete.
+    """
+    removed = await db.forget_covered(request.app.state.db, brand=brand, subject_key=subject_key)
+    return Registered(
+        detail=(
+            f"{subject_key} is no longer covered for {brand}"
+            if removed
+            else f"{subject_key} was not covered for {brand}"
+        )
+    )
 
 
 @router.get("/api/rendered", dependencies=[Depends(require_token)])
