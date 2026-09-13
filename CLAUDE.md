@@ -1064,6 +1064,12 @@ mp4 appeared:
 - **The hook needs the same scrim every other line has.** Without one it sat
   straight on engraved hatching, unreadable at the one moment the format cannot
   afford to be.
+- **The citation on screen ends on a whole clause.** `Episode.tsx` sliced
+  `source` at 90 characters, and the first source written to be findable (which
+  printing, which scan) went out reading "IN THE ENGLI", on the one element this
+  account exists to get right. `episodespec.short_source` now ends it at the
+  last sentence or clause break that fits, or the last word, and the full text
+  stays in `episode.json`. Episodes queued before 2026-09-13 keep the cut.
 - **An episode is not a reel and cannot use its bitrate.** A reel is flat
   colour and syntax highlighted text where the default CRF keeps glyph edges
   clean. An episode is a photograph with grain over it, where every frame

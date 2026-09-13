@@ -156,7 +156,9 @@ def test_a_resumed_episode_puts_its_pictures_back_from_the_run_folder(tmp_path):
 
     restaged = artefacts.restage(
         [{"src": "staged/old/moxon/art0.jpg", "w": 2000, "h": 1342}],
-        video, run_key="staged/acct/moxon", keep_dir=keep,
+        video,
+        run_key="staged/acct/moxon",
+        keep_dir=keep,
     )
 
     assert restaged == [{"src": "staged/acct/moxon/art0.jpg", "w": 2000, "h": 1342}]
@@ -168,7 +170,9 @@ def test_a_folder_from_before_kept_copies_asks_to_stage_again(tmp_path):
     downloads again rather than rendering a spec with a missing picture."""
     restaged = artefacts.restage(
         [{"src": "joseph-moxon-art0.jpg", "w": 2000, "h": 1342}],
-        tmp_path / "video", run_key="staged/acct/joseph-moxon", keep_dir=tmp_path / "none",
+        tmp_path / "video",
+        run_key="staged/acct/joseph-moxon",
+        keep_dir=tmp_path / "none",
     )
 
     assert restaged is None
@@ -183,3 +187,39 @@ def test_relevance_falls_back_to_the_order_it_was_given():
     ]
 
     assert artefacts.rank_by_relevance(files, "") == files
+
+
+def test_a_long_citation_ends_on_a_whole_clause():
+    """The first long source printed "IN THE ENGLI" on screen, cut mid word."""
+    source = (
+        "Christine de Pizan, The Book of the City of Ladies, Part 1, chapters 1 and 2, "
+        "in the English translation printed as The Boke of the Cyte of Ladyes by Henry "
+        "Pepwell, London, 1521."
+    )
+
+    short = episodespec.short_source(source)
+
+    assert short == "Christine de Pizan, The Book of the City of Ladies, Part 1, chapters 1 and 2"
+    assert len(short) <= episodespec.SOURCE_CHARS
+
+
+def test_a_citation_that_fits_is_left_alone():
+    assert episodespec.short_source(SCRIPT.source) == SCRIPT.source
+
+
+def test_a_citation_with_no_clause_break_ends_on_a_word():
+    source = " ".join(["word"] * 40)
+
+    short = episodespec.short_source(source)
+
+    assert len(short) <= episodespec.SOURCE_CHARS
+    assert short.endswith("word")
+
+
+def test_the_spec_carries_the_short_citation(cfg):
+    long_script = SCRIPT.model_copy(update={"source": "A, " * 60 + "end"})
+    spec = episodespec.build(
+        long_script, SUBJECT, [WIDE, TALL], timing(len(SCRIPT.lines)), cfg, audio_src=VOICE
+    )
+
+    assert len(spec.source) <= episodespec.SOURCE_CHARS

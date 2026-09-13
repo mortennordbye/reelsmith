@@ -31,6 +31,11 @@ log = logging.getLogger(__name__)
 # enough that nobody watches a still.
 ENDCARD_FRAMES = 75
 
+# The citation on a quote shot is one line of small mono type in the safe band.
+# The script's own `source` is written so a viewer could find the page, which
+# routinely runs to a sentence about which printing and which scan.
+SOURCE_CHARS = 90
+
 # The crop ladder. Each entry is a fraction of the artefact's shorter side and
 # a vertical anchor from 0 (top) to 1 (bottom). Stepping through it is what
 # makes two shots on one picture read as two shots.
@@ -151,13 +156,34 @@ def build(
         audioSrc=audio_src,
         subject=subject.name,
         lived=_lived(subject),
-        source=script.source,
+        source=short_source(script.source),
         artefacts=staged,
         shots=shots,
         endcardName=cfg.endcard_name,
         endcardHandle=cfg.endcard_handle,
         endcardTagline=cfg.endcard_tagline,
     )
+
+
+def short_source(source: str, limit: int = SOURCE_CHARS) -> str:
+    """The citation as it fits on screen: whole clauses, never half a word.
+
+    The render used to slice at `limit` characters, which printed
+    "IN THE ENGLI" on the first episode whose source ran long, on the one
+    element this format exists to get right. So a long citation ends at the last
+    sentence or clause break that fits, and at the last word if there is none.
+    The full text stays in `episode.json` and the caption.
+    """
+    text = " ".join(source.split())
+    if len(text) <= limit:
+        return text
+    head = text[: limit + 1]
+    for mark in (". ", "; ", ", "):
+        cut = head.rfind(mark)
+        if cut >= limit // 3:
+            return text[:cut].rstrip(" ,;.")
+    cut = head.rfind(" ")
+    return text[: cut if cut > 0 else limit].rstrip(" ,;.")
 
 
 def _lived(subject: SubjectCandidate) -> str:

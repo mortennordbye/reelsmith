@@ -31,7 +31,7 @@ export const Episode: React.FC<EpisodeSpec> = (spec) => {
                 on top of it: two pieces of text in the first three seconds is
                 the one place this format cannot afford to be busy. */}
             {i === 0 ? <Hook text={spec.hook} /> : <Line shot={shot} />}
-            {shot.kind === "quote" ? <Source text={spec.source.slice(0, 90)} /> : null}
+            {shot.kind === "quote" ? <Source text={spec.source} /> : null}
             <Grain />
           </Sequence>
         );
