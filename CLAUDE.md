@@ -1110,13 +1110,16 @@ section is.
   `--plan` reads settings and queues and spends nothing, and is the check to
   run before a schedule is switched to it. A cadence change is a
   `--brand-settings push`, not an edit to a prompt.
-- **Until the prompts are switched, it still has to name its account.**
-  `REELSMITH_ACCOUNT` in the render host's `.env` is the one line version and
-  is what the 02:00 and 05:00 sessions rely on while they call `main.py`
-  without `--all-accounts`, and a second identity gets nothing from them.
-  Without it every run fails at startup naming the accounts it could see, which
-  is the trade that was chosen: a night lost is recoverable and a Reel posted to
-  the wrong audience is not. `--all-accounts` never reads it.
+- **The prompts were switched on 2026-09-13 and the render host no longer
+  names an account.** The 02:00 session runs `main.py --all-accounts` and the
+  05:00 sweep loops `--account <name> --recover --approve` over `accounts/`;
+  the previous prompts sit beside them as `*.json.bak-20260913`. The first
+  night ran clean (both brands reported to `/api/runs`), and
+  `REELSMITH_ACCOUNT` in the render host's `.env` was then commented out, with
+  a mode 600 backup beside it. A single run still needs `--account` or that
+  variable, and without either fails at startup naming the accounts it could
+  see: a night lost is recoverable and a Reel posted to the wrong audience is
+  not. `pod-setup.sh --check` reports it as optional for the same reason.
 - **`--recover` queues episode folders as well**: `subject.json` and
   `episode.json` stand in for `repo.json` and the script, and a subject on the
   brand's cooldown is skipped. `--episode --render --approve` queues armed, and
