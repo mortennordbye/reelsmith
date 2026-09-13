@@ -21,6 +21,8 @@ from conftest import candidate, script
 
 import main
 from config import Settings
+from pipeline import subjects
+from pipeline.models import EpisodeScript, SubjectCandidate
 
 
 @pytest.fixture
@@ -263,3 +265,80 @@ def test_an_empty_build_tree_is_not_an_error(cfg, calls):
     main._recover(cfg, approve=True, max_queue=None)
 
     assert calls["enqueued"] == []
+
+
+# --- Episode folders -------------------------------------------------------
+
+
+def episode_dir(cfg, name: str, *, qid: str = "Q1", **files) -> Path:
+    """A folder `--episode` wrote: a subject and its script, no repo."""
+    d = cfg.build_dir / date.today().isoformat() / name
+    d.mkdir(parents=True)
+    (d / "subject.json").write_text(
+        SubjectCandidate(qid=qid, name=name, article=name).model_dump_json()
+    )
+    (d / "episode.json").write_text(
+        EpisodeScript(
+            hook="A hook", situation="You wait.", who="He lived.", quote="Words.",
+            plain="Plain words.", did="He wrote.", back="You can.",
+            steps=["One.", "Two.", "Three."], source="A book",
+        ).model_dump_json()
+    )
+    for filename, body in files.items():
+        (d / filename.replace("_", ".")).write_text(body)
+    return d
+
+
+@pytest.fixture
+def people(monkeypatch) -> set[str]:
+    covered: set[str] = set()
+    monkeypatch.setattr(subjects, "covered_keys", lambda cfg: covered)
+    return covered
+
+
+def test_a_finished_episode_is_queued(cfg, calls, people):
+    """It used to be skipped for having no repo.json, so an episode whose
+    enqueue failed stayed on disk for good."""
+    episode_dir(cfg, "joseph-moxon", out_mp4="video")
+
+    main._recover(cfg, approve=True, max_queue=None)
+
+    assert calls["enqueued"] == ["joseph-moxon"]
+
+
+def test_an_episode_with_no_video_is_rendered_from_its_script(cfg, calls, people, monkeypatch):
+    rendered = []
+
+    def fake_render_episode(cfg, run_dir, subject, script):
+        rendered.append((subject.qid, script.source))
+        (run_dir / "out.mp4").write_bytes(b"video")
+        return run_dir / "out.mp4"
+
+    monkeypatch.setattr(main, "_render_episode", fake_render_episode)
+    episode_dir(cfg, "joseph-moxon")
+
+    main._recover(cfg, approve=True, max_queue=None)
+
+    assert rendered == [("Q1", "A book")]
+    assert calls["enqueued"] == ["joseph-moxon"]
+
+
+def test_an_episode_whose_subject_is_on_cooldown_is_skipped(cfg, calls, people):
+    people.add("person:Q9235")
+    episode_dir(cfg, "hegel", qid="Q9235", out_mp4="video")
+
+    main._recover(cfg, approve=True, max_queue=None)
+
+    assert calls["enqueued"] == []
+
+
+def test_a_sweep_over_reels_never_reads_the_people(cfg, calls, monkeypatch):
+    def refuse(cfg):  # pragma: no cover - must never be reached
+        raise AssertionError("no episode folder, so no reason to ask")
+
+    monkeypatch.setattr(subjects, "covered_keys", refuse)
+    run_dir(cfg, "acme-tool", script_json="{}")
+
+    main._recover(cfg, approve=True, max_queue=None)
+
+    assert calls["enqueued"] == ["acme-tool"]

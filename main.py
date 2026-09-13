@@ -43,6 +43,7 @@ import json
 import logging
 import re
 import shutil
+import socket
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -57,6 +58,7 @@ from config import (
     ROOT,
     ConfigError,
     Settings,
+    available_accounts,
     get_settings,
     require_github_token,
     require_instagram,
@@ -69,7 +71,14 @@ from pipeline import captions as captions_mod
 from pipeline import gateway, migrate, publisher, renderer, scraper, screenshot, tts
 from pipeline import results as results_mod
 from pipeline import spec as spec_mod
-from pipeline.models import Caption, RepoCandidate, SubjectCandidate, VideoScript, VideoSpec
+from pipeline.models import (
+    Caption,
+    EpisodeScript,
+    RepoCandidate,
+    SubjectCandidate,
+    VideoScript,
+    VideoSpec,
+)
 from pipeline.scriptwriter import write_script
 
 app = typer.Typer(add_completion=False, help=__doc__)
@@ -288,6 +297,19 @@ def run(
         str | None,
         typer.Option("--new-account", help="Create an empty accounts/<name>/ profile"),
     ] = None,
+    all_accounts: Annotated[
+        bool,
+        typer.Option(
+            "--all-accounts",
+            help="Tonight's work for every account, in turn, as each brand's settings say",
+        ),
+    ] = False,
+    plan: Annotated[
+        bool,
+        typer.Option(
+            "--plan", help="With --all-accounts, say what each would do and spend nothing"
+        ),
+    ] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
 ) -> None:
     _setup_logging(verbose)
@@ -297,6 +319,10 @@ def run(
     # whole of `--account`: bind the process, and no stage signature changes.
     if new_account:
         return _new_account(new_account)
+    # Binds each account itself, so it must never go through `resolve_account`:
+    # a host whose `.env` still names one account would otherwise run that one.
+    if all_accounts:
+        return _all_accounts(plan=plan)
     try:
         cfg = select_account(resolve_account(account))
     except ConfigError as exc:
@@ -425,7 +451,13 @@ def run(
 
     if episode:
         _preflight(need_github=False, need_claude=True)
-        _write_episode(cfg, subject, render=render)
+        # Asked before the script is paid for. A named subject is a person
+        # deciding, so only a ranked pick is held to the brand's ceiling.
+        if not subject and max_queue is not None and _queue_room(cfg, max_queue) <= 0:
+            return
+        run_dir = _write_episode(cfg, subject, render=render)
+        if render and approve:
+            _enqueue_run(cfg, run_dir, approved=True)
         return
 
     if adopt:
@@ -764,8 +796,8 @@ def _run_batch(
     post: bool,
     cover_url: str | None,
     max_queue: int | None = None,
-) -> None:
-    """Render `count` distinct repos back to back.
+) -> list[Path]:
+    """Render `count` distinct repos back to back. Returns the finished run folders.
 
     The queue is meant to sit about three days deep, so a night that produces
     nothing is absorbed rather than showing up as a gap on the feed. Rendering
@@ -788,13 +820,13 @@ def _run_batch(
                 "[yellow]Cannot read the gateway queue, so --max-queue cannot be honoured.[/] "
                 "[dim]Refusing rather than guessing; a batch is expensive to undo.[/]"
             )
-            return
+            return []
         if pending >= max_queue:
             console.print(
                 f"[bold]Nothing to do.[/] {pending} posts already waiting "
                 f"[dim](--max-queue {max_queue}). Approve or cancel some first.[/]"
             )
-            return
+            return []
         # Never queue past the ceiling, however big a batch was asked for.
         count = min(count, max_queue - pending)
         console.print(f"[dim]{pending} waiting, room for {count}.[/]")
@@ -847,6 +879,7 @@ def _run_batch(
             "[dim]Watch each one first. --enqueue starts the cooldown, because a queued "
             "post goes out days later with nobody here to catch it.[/]"
         )
+    return [run_dir for _, run_dir in done]
 
 
 # Today and yesterday. An unfinished render older than that is stale news, and
@@ -854,7 +887,7 @@ def _run_batch(
 _RECOVER_DAYS = 2
 
 
-def _recover(cfg: Settings, *, approve: bool, max_queue: int | None) -> None:
+def _recover(cfg: Settings, *, approve: bool, max_queue: int | None) -> list[Path]:
     """Finish what a killed run left behind.
 
     The nightly renders inside a container that can go away mid-batch. On
@@ -881,10 +914,16 @@ def _recover(cfg: Settings, *, approve: bool, max_queue: int | None) -> None:
     - No `script.json` means the run died before Claude answered. Writing one
       now is discovery's decision to spend, not recovery's, so it is reported
       and left.
+    - **An episode folder is a run too**: `subject.json` and `episode.json`
+      stand in for `repo.json` and the script, and a subject on the brand's
+      cooldown is skipped as a covered repo is. Before this the sweep read only
+      `repo.json`, so an episode whose enqueue failed stayed on disk for good.
+
+    Returns the folders it queued.
     """
     if not cfg.build_dir.is_dir():
         console.print("[dim]Nothing built yet.[/]")
-        return
+        return []
 
     # The ceiling matters more here than in a batch: recovery is the path that
     # runs when something already went wrong, and a pass that queues four days
@@ -897,19 +936,22 @@ def _recover(cfg: Settings, *, approve: bool, max_queue: int | None) -> None:
                 "[yellow]Cannot read the gateway queue, so --max-queue cannot be honoured.[/] "
                 "[dim]Refusing rather than guessing.[/]"
             )
-            return
+            return []
         room = max_queue - pending
         if room <= 0:
             console.print(
                 f"[bold]Nothing to do.[/] {pending} posts already waiting "
                 f"[dim](--max-queue {max_queue}).[/]"
             )
-            return
+            return []
 
     stamps = {
         (date.today() - timedelta(days=n)).isoformat() for n in range(_RECOVER_DAYS)
     }
     covered = {name for name, _ in scraper.covered_now(cfg)}
+    # Read only once an episode folder is waiting, so a sweep over reels never
+    # asks the gateway for a list it has no use for.
+    people: set[str] | None = None
 
     pending_runs: list[Path] = []
     for day_dir in sorted(p for p in cfg.build_dir.iterdir() if p.name in stamps):
@@ -918,13 +960,13 @@ def _recover(cfg: Settings, *, approve: bool, max_queue: int | None) -> None:
                 continue
             if (run_dir / "queued.json").exists() or (run_dir / "published.json").exists():
                 continue
-            if not (run_dir / "repo.json").exists():
+            if not (run_dir / "repo.json").exists() and not _is_episode_run(run_dir):
                 continue
             pending_runs.append(run_dir)
 
     if not pending_runs:
         console.print("[bold green]Nothing to recover.[/] [dim]Every recent run is committed.[/]")
-        return
+        return []
 
     console.rule(f"[bold]Recovering {len(pending_runs)} unfinished run(s)")
     recovered: list[Path] = []
@@ -932,27 +974,50 @@ def _recover(cfg: Settings, *, approve: bool, max_queue: int | None) -> None:
 
     for run_dir in pending_runs:
         rel = f"{run_dir.parent.name}/{run_dir.name}"
-        repo = RepoCandidate.model_validate_json((run_dir / "repo.json").read_text())
+        repo, subject = None, None
+        if (run_dir / "repo.json").exists():
+            repo = RepoCandidate.model_validate_json((run_dir / "repo.json").read_text())
+            label = repo.full_name
+            if repo.full_name in covered:
+                skipped.append((run_dir, "repo already on cooldown from another run"))
+                continue
+        else:
+            subject = SubjectCandidate.model_validate_json((run_dir / "subject.json").read_text())
+            label = subject.name
+            if people is None:
+                from pipeline import subjects
 
-        if repo.full_name in covered:
-            skipped.append((run_dir, "repo already on cooldown from another run"))
-            continue
+                people = subjects.covered_keys(cfg)
+            if subject.key in people:
+                skipped.append((run_dir, "subject already on cooldown from another run"))
+                continue
         if room is not None and len(recovered) >= room:
             skipped.append((run_dir, "queue ceiling reached"))
             continue
 
         if not (run_dir / "out.mp4").exists():
-            if not (run_dir / "script.json").exists():
+            if repo is not None and not (run_dir / "script.json").exists():
                 skipped.append((run_dir, "no script; would need a fresh Claude run"))
                 continue
-            console.rule(f"[dim]finishing {repo.full_name}")
+            console.rule(f"[dim]finishing {label}")
             try:
-                if _render_one(cfg, repo, run_dir) is None:
-                    skipped.append((run_dir, "render produced nothing"))
-                    continue
+                if repo is not None:
+                    finished = _render_one(cfg, repo, run_dir) is not None
+                else:
+                    script = EpisodeScript.model_validate_json(
+                        (run_dir / "episode.json").read_text()
+                    )
+                    finished = _render_episode(cfg, run_dir, subject, script).exists()
+            except typer.Exit:
+                # `_render_episode` exits on a subject with no usable pictures,
+                # and has said so.
+                finished = False
             except Exception as exc:  # noqa: BLE001 -- one bad run must not end the sweep
                 log.exception("Recovering %s failed", rel)
                 skipped.append((run_dir, f"{type(exc).__name__}: {exc}"))
+                continue
+            if not finished:
+                skipped.append((run_dir, "render produced nothing"))
                 continue
 
         try:
@@ -964,13 +1029,189 @@ def _recover(cfg: Settings, *, approve: bool, max_queue: int | None) -> None:
             skipped.append((run_dir, "gateway would not take it"))
             continue
         recovered.append(run_dir)
-        covered.add(repo.full_name)
+        if repo is not None:
+            covered.add(repo.full_name)
+        else:
+            people.add(subject.key)
 
     console.rule("[bold green]Recovery done" if not skipped else "[bold yellow]Recovery done")
     for run_dir in recovered:
         console.print(f"  [green]✓[/] {run_dir.parent.name}/{run_dir.name}  [dim]queued[/]")
     for run_dir, why in skipped:
         console.print(f"  [dim]·[/] {run_dir.parent.name}/{run_dir.name}  [dim]{why}[/]")
+    return recovered
+
+
+def _is_episode_run(run_dir: Path) -> bool:
+    """A folder `--episode` wrote: a subject and its script, and no repo."""
+    return (run_dir / "subject.json").exists() and (run_dir / "episode.json").exists()
+
+
+def _queue_room(cfg: Settings, max_queue: int) -> int:
+    """Room left under the ceiling, having said so. 0 when full or unreadable.
+
+    Unreadable is 0 rather than room for the reason the batch gives: guessing
+    wrong costs a paid script either way, and unknown must never invite one.
+    """
+    pending = gateway.fetch_pending_count(cfg)
+    if pending is None:
+        console.print(
+            "[yellow]Cannot read the gateway queue, so the ceiling cannot be honoured.[/] "
+            "[dim]Refusing rather than guessing.[/]"
+        )
+        return 0
+    room = max_queue - pending
+    if room <= 0:
+        console.print(
+            f"[bold]Nothing to do.[/] {pending} posts already waiting "
+            f"[dim](ceiling {max_queue}).[/]"
+        )
+        return 0
+    console.print(f"[dim]{pending} waiting, room for {room}.[/]")
+    return room
+
+
+def _all_accounts(*, plan: bool) -> None:
+    """Tonight's work for every account in this checkout, one after another.
+
+    One process and one schedule for every identity, where there used to be a
+    prompt per account naming its flags. What each account does comes from its
+    brand's settings on the gateway (`pipeline`, `batch`, `max_queue`), so a
+    cadence change is a `--brand-settings push` rather than an edit to a
+    schedule held outside git.
+
+    **One account failing never stops the next**, and the exit status is
+    non zero if any did, so the report still says so. `--plan` prints what
+    each would do after reading its settings and its queue, and spends nothing.
+    """
+    names = available_accounts()
+    if not names:
+        console.print("[bold red]No accounts in this checkout.[/]")
+        raise typer.Exit(1)
+
+    summary: list[tuple[str, str]] = []
+    for name in names:
+        console.rule(f"[bold]{name}")
+        try:
+            line = _night_for(name, plan=plan)
+        except typer.Exit as exc:
+            line = "ok" if not exc.exit_code else f"failed: stopped with exit {exc.exit_code}"
+        except Exception as exc:  # noqa: BLE001 -- one account must not end the night for the next
+            log.exception("Account %s failed", name)
+            line = f"failed: {type(exc).__name__}: {exc}"
+        summary.append((name, line))
+
+    console.rule("[bold]Every account")
+    for name, line in summary:
+        console.print(f"  {name}  {line}")
+    if any(line.startswith("failed") for _, line in summary):
+        raise typer.Exit(1)
+
+
+def _night_for(name: str, *, plan: bool) -> str:
+    """One account's night as its brand's settings describe it. Returns its summary line.
+
+    A reel brand takes the star snapshot, renders a batch to the ceiling and
+    recovers. An episode brand renders one episode if the queue has room and
+    recovers, and recovery is what queues it, the same way a batch's reels are
+    queued. The recover step runs whatever happened before it, because it is
+    the step that saves a night that went wrong.
+
+    A brand with no readable settings runs nothing rather than defaults, for
+    the reason `_apply_brand` refuses a single run.
+    """
+    from config import apply_brand_settings
+
+    cfg = select_account(name)
+    if not cfg.brand:
+        return "skipped: no BRAND= in its .env, so there are no settings to run on"
+    row = gateway.fetch_brand_settings(cfg)
+    if row is None:
+        return f"failed: no settings for {cfg.brand} could be read from the gateway"
+    settings = row["settings"]
+    kind = settings.get("pipeline")
+    if kind not in ("reel", "episode"):
+        return f"failed: {cfg.brand} has pipeline {kind!r}, which is neither reel nor episode"
+    apply_brand_settings(cfg, settings)
+    batch = settings.get("batch") or 1
+    max_queue = settings.get("max_queue")
+
+    if plan:
+        pending = gateway.fetch_pending_count(cfg)
+        waiting = "queue unreadable" if pending is None else f"{pending} waiting"
+        work = (
+            f"snapshot, a batch of up to {batch}, recover"
+            if kind == "reel"
+            else "one episode if there is room, recover"
+        )
+        return f"plan: {cfg.brand} {kind}, {work}; ceiling {max_queue}, {waiting}"
+
+    report_kind = "batch" if kind == "reel" else "episode"
+    host = socket.gethostname()[:64]
+    run_id = gateway.report_run(cfg, report_kind, host=host)
+
+    trouble = ""
+    rendered = 0
+    try:
+        if kind == "reel":
+            rendered = _reel_night(cfg, batch=batch, max_queue=max_queue)
+        else:
+            rendered = _episode_night(cfg, max_queue=max_queue)
+    except typer.Exit as exc:
+        if exc.exit_code:
+            trouble = f"{kind} stopped with exit {exc.exit_code}"
+    except Exception as exc:  # noqa: BLE001 -- recovery and the next account still run
+        log.exception("The %s night for %s failed", kind, name)
+        trouble = f"{type(exc).__name__}: {exc}"
+
+    try:
+        recovered = _recover(cfg, approve=True, max_queue=max_queue)
+    except Exception as exc:  # noqa: BLE001 -- the report still has to land
+        log.exception("Recovery for %s failed", name)
+        recovered = []
+        trouble = trouble or f"recover {type(exc).__name__}: {exc}"
+
+    outcome = "failed" if trouble else "ok"
+    gateway.report_run(
+        cfg,
+        report_kind,
+        outcome=outcome,
+        run_id=run_id,
+        results=[{"subject": d.name[:200], "outcome": "queued"} for d in recovered][:50],
+        host=host,
+    )
+    line = f"{outcome}: {rendered} rendered, {len(recovered)} queued"
+    return f"{line}; {trouble}" if trouble else line
+
+
+def _reel_night(cfg: Settings, *, batch: int, max_queue: int | None) -> int:
+    """Snapshot, then a batch to the ceiling. Returns how many rendered.
+
+    The snapshot is first and unconditional, because velocity is most of the
+    ranking score and a missed day cannot be backfilled.
+    """
+    _preflight(need_github=True, need_claude=False)
+    count = scraper.snapshot_stars(cfg)
+    console.print(f"[bold green]Snapshotted[/] {count} repos")
+    try:
+        if state := publisher.refresh_token_if_due(cfg):
+            console.print(f"[dim]Instagram token renewed, {state.days_left:.0f} days left[/]")
+    except publisher.PublishError as exc:
+        console.print(f"[yellow]Instagram token not renewed:[/] {exc}")
+    _preflight(need_github=True, need_claude=True)
+    done = _run_batch(
+        cfg, batch, stop_after=None, post=False, cover_url=None, max_queue=max_queue
+    )
+    return len(done)
+
+
+def _episode_night(cfg: Settings, *, max_queue: int | None) -> int:
+    """One ranked episode if the queue has room. Returns how many rendered."""
+    _preflight(need_github=False, need_claude=True)
+    if max_queue is not None and _queue_room(cfg, max_queue) <= 0:
+        return 0
+    _write_episode(cfg, None, render=True)
+    return 1
 
 
 def _show_covered(cfg: Settings) -> None:
