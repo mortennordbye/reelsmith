@@ -164,6 +164,48 @@ def test_a_run_report_returns_its_id_and_never_raises(cfg):
     assert gateway.report_run(cfg, "batch", outcome="ok", run_id=7, client=_client(down)) is None
 
 
+def test_covered_subjects_are_read_by_brand_and_an_older_gateway_is_empty(cfg):
+    seen = []
+
+    def handler(request):
+        seen.append(dict(request.url.params))
+        return httpx.Response(200, json={"covered": [], "subjects": [
+            {"subject_key": "person:Q9235", "committed_at": "2026-09-12T21:30:00+00:00"},
+        ]})
+
+    old = lambda request: httpx.Response(200, json={"covered": []})  # noqa: E731
+
+    assert gateway.fetch_covered_subjects(cfg, client=_client(handler)) == {
+        "person:Q9235": "2026-09-12"
+    }
+    assert seen == [{"brand": "thenightlybuild"}]
+    assert gateway.fetch_covered_subjects(cfg, client=_client(old)) == {}
+
+
+def test_an_episode_skips_people_inside_the_cooldown_only(cfg, monkeypatch):
+    """The key has to be the one the gateway stores, or nothing ever matches.
+    It used to be compared against (repo, date) pairs."""
+    from datetime import date
+
+    from pipeline import subjects
+    from pipeline.models import SubjectCandidate
+
+    monkeypatch.setattr(
+        gateway,
+        "fetch_covered_subjects",
+        lambda cfg: {
+            "person:Q9235": "2026-09-12",
+            "person:Q7324": "2026-07-01",
+            "repo:a/b": "2026-09-12",
+        },
+    )
+
+    covered = subjects.covered_keys(cfg, on=date(2026, 9, 13))
+
+    assert covered == {"person:Q9235"}
+    assert SubjectCandidate(qid="Q9235", name="Hegel", article="H").key in covered
+
+
 # --- The startup read --------------------------------------------------------
 
 

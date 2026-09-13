@@ -627,6 +627,31 @@ def fetch_covered(cfg: Settings, *, client: httpx.Client | None = None) -> dict[
     return out
 
 
+def fetch_covered_subjects(cfg: Settings, *, client: httpx.Client | None = None) -> dict[str, str]:
+    """This brand's cooldown table, as subject key to an ISO date.
+
+    Every kind of key, `person:Q9235` as well as `repo:owner/name`. The
+    `subjects` list only comes back when a brand is named, and an older gateway
+    leaves it out, so both read as an empty dict, as does every failure.
+    """
+    if not _configured(cfg) or not cfg.brand:
+        return {}
+    url = f"{cfg.gateway_url.rstrip('/')}/api/covered"
+    try:
+        with _borrow(client) as http:
+            response = http.get(url, headers=_headers(cfg), params={"brand": cfg.brand})
+            response.raise_for_status()
+            rows = response.json().get("subjects") or []
+    except (httpx.HTTPError, ValueError) as exc:
+        log.debug("Could not read the gateway's covered subjects: %s", exc)
+        return {}
+    return {
+        row["subject_key"]: str(row["committed_at"])[:10]
+        for row in rows
+        if row.get("subject_key") and row.get("committed_at")
+    }
+
+
 def fetch_pending_count(cfg: Settings, *, client: httpx.Client | None = None) -> int | None:
     """How many posts are waiting to go out, drafts and armed together.
 

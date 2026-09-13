@@ -69,7 +69,7 @@ from pipeline import captions as captions_mod
 from pipeline import gateway, migrate, publisher, renderer, scraper, screenshot, tts
 from pipeline import results as results_mod
 from pipeline import spec as spec_mod
-from pipeline.models import Caption, RepoCandidate, VideoScript, VideoSpec
+from pipeline.models import Caption, RepoCandidate, SubjectCandidate, VideoScript, VideoSpec
 from pipeline.scriptwriter import write_script
 
 app = typer.Typer(add_completion=False, help=__doc__)
@@ -1643,9 +1643,7 @@ def _write_episode(cfg: Settings, subject_name: str | None, *, render: bool = Fa
             )
             raise typer.Exit(1)
     else:
-        ranked = subjects.discover(
-            cfg, ai=cfg.claude_research, covered=set(scraper.covered_repos(cfg))
-        )
+        ranked = subjects.discover(cfg, ai=cfg.claude_research, covered=subjects.covered_keys(cfg))
         if not ranked:
             console.print("[bold red]Nothing ranked.[/] [dim]The catalogue is unreachable.[/]")
             raise typer.Exit(1)
@@ -2033,6 +2031,19 @@ def _enqueue_run(cfg: Settings, run_dir: Path, *, approved: bool) -> None:
             f"[dim]{repo.full_name} is on cooldown for {cfg.repo_cooldown_days} days. "
             f"Cancelling the post means running --unmark {repo.full_name}.[/]"
         )
+    elif (run_dir / "subject.json").exists():
+        # An episode's cooldown lives only on the gateway: there is no local
+        # store for people, and the table is what `subjects.covered_keys` reads.
+        subject = SubjectCandidate.model_validate_json((run_dir / "subject.json").read_text())
+        if gateway.record_covered(cfg, subject.key, source="episode"):
+            console.print(
+                f"[dim]{subject.name} is on cooldown for {cfg.repo_cooldown_days} days.[/]"
+            )
+        else:
+            console.print(
+                f"[yellow]{subject.name} was queued but not put on cooldown[/] "
+                "[dim](the gateway did not take it, so the next episode may pick them again)[/]"
+            )
     else:
         console.print(
             "[yellow]No repo.json in this run, so no cooldown was started.[/] "

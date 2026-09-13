@@ -1286,9 +1286,30 @@ Two things about the queue are load bearing and easy to undo by accident:
 
 Four gateway changes (schemas 22 to 24) moved what used to be split between an
 account's `.env`, a scheduled prompt and a JSON file on the render host's share
-onto the one service with backups. The pipeline half that reads them is draft
-#139 and **was not merged on 2026-09-12**, so the render host still reads
-nothing below except `/api/covered` in its old shape.
+onto the one service with backups. The pipeline half that reads them is #139,
+merged 2026-09-13.
+
+- **A run with `BRAND=` and a gateway reads its brand's settings before any
+  render, queue or publish work, and refuses if it cannot.** `_apply_brand` in
+  `main.py`. A 404, an unreachable gateway and a malformed row all mean the
+  identity's numbers are unknown, and rendering on defaults is how a second
+  identity quietly takes the first one's end card and ceiling. `.env` still
+  wins for a key it sets, and a flag wins over the brand. `max_queue` is filled
+  from the brand when no flag gave one; `batch` never is, because its absence
+  is what makes a run a single run.
+- **`--brand-settings show|push` and `--covered-push`** are the two commands.
+  Push writes pinned to the version it read. `--covered-push` copies
+  `used_repos.json` into the table once, which the render host's copy needed
+  because it holds `--posted` repos the gateway never saw.
+- **An episode's subject is committed at enqueue as `person:<qid>`** and read
+  back through `subjects` on `GET /api/covered?brand=` (#141).
+  `SubjectCandidate.key` was `wikidata:<qid>` and episode discovery compared it
+  against `(repo, date)` pairs, so no episode subject was ever skipped. People
+  have no local store; the gateway is the only record.
+- **The queue ceiling counts one destination, never the brand.** Every other
+  read sends `brand` beside `account_id`; `fetch_pending_count` deliberately
+  sends only the account id, since a brand wide count multiplies by the number
+  of platforms against a ceiling calibrated on one feed.
 
 - **Every state backup is copied off the state volume.** `/state/backups` sits
   on a PVC that reclaims with Delete, so `GATEWAY_BACKUP_OFFSITE_DIR=/offsite`

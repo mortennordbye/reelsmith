@@ -126,11 +126,12 @@ class SubjectCandidate(BaseModel):
     def key(self) -> str:
         """The cooldown key.
 
-        Prefixed, because the cooldown store is one file per account keyed by
-        strings and a bare `Q41568` beside `astral-sh/uv` says nothing about
-        which catalogue it came from.
+        Prefixed, because a bare `Q41568` beside `astral-sh/uv` says nothing
+        about what it is. `person:` rather than the catalogue's name, because
+        it is the key the gateway's cooldown table stores and refuses any other
+        shape of.
         """
-        return f"wikidata:{self.qid}"
+        return f"person:{self.qid}"
 
     @property
     def slug(self) -> str:
