@@ -57,6 +57,11 @@ IDS = {
 # a finished video with a blank one, and nothing fails or logs.
 RENDER_SIDE = {
     "CHATTERBOX_REF": "accounts/other/ref/voice.wav",
+}
+
+# Brand settings on the gateway since 2026-09-14. A projected line would win
+# over the brand, because `.env` wins for a key it sets, so these stay behind.
+BRAND_SIDE = {
     "CHATTERBOX_EXAGGERATION": "0.52",
     "CHATTERBOX_CFG_WEIGHT": "0.48",
     "ENDCARD_NAME": "Second Brand",
@@ -78,7 +83,7 @@ def world(tmp_path: Path) -> tuple[Path, Path]:
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
 
     (repo / "PROFILE.md").write_text("# The identity\n\nNot in git.\n")
-    lines = [f"{k}={v}" for k, v in {**SECRETS, **IDS, **RENDER_SIDE}.items()]
+    lines = [f"{k}={v}" for k, v in {**SECRETS, **IDS, **RENDER_SIDE, **BRAND_SIDE}.items()]
     (repo / "accounts" / "acct" / ".env").write_text(
         "# the per account half\n\n" + "\n".join(lines) + "\n"
     )
@@ -148,6 +153,20 @@ def test_what_the_render_host_renders_with_reaches_it_too(world):
     body = far_env(share)
     for name, value in RENDER_SIDE.items():
         assert f"{name}={value}" in body, f"{name} did not reach the share"
+
+
+def test_brand_settings_stay_behind(world):
+    """The end card and voice knobs live on the gateway as brand settings.
+
+    A projected line would silently override the brand on the render host, so
+    the far `.env` must not carry them even when this laptop's does.
+    """
+    repo, share = world
+    run(repo, share, "--push", "--yes")
+
+    body = far_env(share)
+    for name in BRAND_SIDE:
+        assert f"{name}=" not in body, f"{name} reached the share"
 
 
 def test_everything_else_is_copied_byte_for_byte(world):
