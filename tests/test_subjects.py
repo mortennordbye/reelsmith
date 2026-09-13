@@ -137,7 +137,7 @@ def test_the_cooldown_key_says_which_catalogue_it_came_from():
     astral-sh/uv says nothing about what it is."""
     candidate = SubjectCandidate(qid="Q41568", name="Michel de Montaigne", article="M")
 
-    assert candidate.key == "wikidata:Q41568"
+    assert candidate.key == "person:Q41568"
 
 
 @pytest.fixture
@@ -206,7 +206,7 @@ def test_covered_subjects_cost_no_request(cfg, monkeypatch):
 
     monkeypatch.setattr(subjects.wm, "pageviews", views)
 
-    ranked = subjects.rank(cfg, enrich_top=0, covered={"wikidata:Q1"})
+    ranked = subjects.rank(cfg, enrich_top=0, covered={"person:Q1"})
 
     assert asked == ["Two"]
     assert [c.name for c in ranked] == ["Two"]

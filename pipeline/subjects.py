@@ -318,6 +318,25 @@ def enrich(
     )
 
 
+def covered_keys(cfg: Settings, on: date | None = None) -> set[str]:
+    """The people this brand committed to inside the cooldown window.
+
+    Read from the gateway's table, which is where an episode records its
+    subject at enqueue. This used to be `scraper.covered_repos`, a list of
+    `(repo, date)` pairs no `person:` key could ever equal, so nothing an
+    episode covered was ever skipped.
+    """
+    from pipeline import gateway
+
+    today = on or date.today()
+    return {
+        key
+        for key, day in gateway.fetch_covered_subjects(cfg).items()
+        if key.startswith("person:")
+        and (today - date.fromisoformat(day)).days < cfg.repo_cooldown_days
+    }
+
+
 def inspect(
     cfg: Settings, *, top: int = 15, depth: int = RANK_DEPTH, ai: bool = True
 ) -> list[SubjectCandidate]:
@@ -329,10 +348,8 @@ def inspect(
     from rich.console import Console
     from rich.table import Table
 
-    from pipeline import scraper
-
     console = Console()
-    covered = set(scraper.covered_repos(cfg))
+    covered = covered_keys(cfg)
 
     with console.status("Reading the catalogue and asking for proposals..."):
         ranked = discover(cfg, depth=depth, ai=ai, covered=covered)
@@ -545,9 +562,9 @@ def discover(
     if not ai:
         return ranked
 
-    seen = {c.qid for c in ranked} | covered
+    seen = {c.key for c in ranked} | covered
     proposals = propose(cfg, avoid=covered | {c.name for c in ranked[:20]}, client=client)
-    merged = ranked + [p for p in proposals if p.qid not in seen]
+    merged = ranked + [p for p in proposals if p.key not in seen]
     merged.sort(key=lambda c: c.score, reverse=True)
     return merged
 
