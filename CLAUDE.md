@@ -1098,12 +1098,27 @@ and editing this checkout cannot change what fires tonight. Anything about it
 that is worth knowing has to be written down here instead, which is what this
 section is.
 
-- **It has to name its account.** `REELSMITH_ACCOUNT` in the render host's
-  `.env` is the one line version and is what the 02:00 and 05:00 sessions rely
-  on, since a scheduled prompt held outside git cannot easily gain a flag.
+- **`--all-accounts` is the one nightly for every identity**, since
+  2026-09-13. It binds each account in `accounts/` in turn and does what its
+  brand's settings on the gateway say: `pipeline=reel` is snapshot, a batch of
+  `batch` to `max_queue`, recover; `pipeline=episode` is one ranked episode if
+  the queue has room, recover. Recover runs whatever happened before it, and
+  one account failing never stops the next. Each account opens and closes a
+  run on `/api/runs`, which is what `reelsmith_last_run_timestamp` reads.
+  `--plan` reads settings and queues and spends nothing, and is the check to
+  run before a schedule is switched to it. A cadence change is a
+  `--brand-settings push`, not an edit to a prompt.
+- **Until the prompts are switched, it still has to name its account.**
+  `REELSMITH_ACCOUNT` in the render host's `.env` is the one line version and
+  is what the 02:00 and 05:00 sessions rely on while they call `main.py`
+  without `--all-accounts`, and a second identity gets nothing from them.
   Without it every run fails at startup naming the accounts it could see, which
   is the trade that was chosen: a night lost is recoverable and a Reel posted to
-  the wrong audience is not.
+  the wrong audience is not. `--all-accounts` never reads it.
+- **`--recover` queues episode folders as well**: `subject.json` and
+  `episode.json` stand in for `repo.json` and the script, and a subject on the
+  brand's cooldown is skipped. `--episode --render --approve` queues armed, and
+  a ranked `--episode` asks the ceiling before paying for a script.
 - **It arms what it renders.** The nightly enqueues with `--approve`, so a
   finished Reel goes straight into the gateway's schedule and the next free
   slot publishes it. The alternative was a draft, which waits for somebody to
