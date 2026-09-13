@@ -23,8 +23,9 @@
 #   - populate PRIVATE_DIR. Copy PROFILE.md and one accounts/<name>/ directory
 #     there by hand, once. `python main.py --new-account <name>` makes an empty
 #     one to fill in.
-#   - set REELSMITH_ACCOUNT=<name> in .env. There is no default and a run
-#     without one fails at startup rather than guessing.
+#   - schedule `main.py --all-accounts`, which binds each account in turn. A
+#     single run still needs --account, or REELSMITH_ACCOUNT in .env; there is
+#     no default and a run without either fails at startup rather than guessing.
 
 set -euo pipefail
 
@@ -94,14 +95,14 @@ if [[ "$CHECK_ONLY" == 1 ]]; then
   have "$PRIVATE_DIR/PROFILE.md"           "PROFILE.md on $PRIVATE_DIR"
   have "$PRIVATE_DIR/accounts"             "accounts on $PRIVATE_DIR"
   have accounts                            "accounts symlinks in the repo"
-  # Which account tonight's batch is for. There is no default: a run without
-  # one fails at startup rather than guessing, so a MISS here is a batch that
-  # will not start.
+  # Which account a single run is for. Not a MISS when absent: the nightly is
+  # `--all-accounts`, which binds each account itself and never reads it, so
+  # the render host retired it on 2026-09-13. Only a bare single run needs it.
   if grep -qs '^REELSMITH_ACCOUNT=' .env; then
     printf '  ok    REELSMITH_ACCOUNT in .env (%s)\n' \
       "$(grep -m1 '^REELSMITH_ACCOUNT=' .env | cut -d= -f2)"
   else
-    printf '  MISS  REELSMITH_ACCOUNT in .env; every run needs --account without it\n'
+    printf '  ok    REELSMITH_ACCOUNT unset; --all-accounts binds each account, single runs take --account\n'
   fi
   echo
   exit 0
@@ -240,5 +241,5 @@ fi
 
 say "Done. Remaining manual steps:"
 printf '  - .env, if ./scripts/pod-setup.sh --check says MISS.\n'
-printf '  - REELSMITH_ACCOUNT=<name> in .env, or --account on every call. There\n'
-printf '    is no default and a run without one fails at startup.\n'
+printf '  - Schedule main.py --all-accounts. Single runs take --account <name>,\n'
+printf '    or REELSMITH_ACCOUNT in .env; there is no default.\n'
