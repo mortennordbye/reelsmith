@@ -119,7 +119,16 @@ notes/spinoffs/tools/assets/small/*
 video/public/cv-*.jpg
 video/public/cv-*.png
 video/public/cv-*.wav
+# Brainstorm folders: findings, specs and code copies from format experiments.
+# One line per depth, for the same compgen reason as above. The videos in them
+# are left out of the backup on purpose; they re-render from the specs.
+brainstorm/*/*.md
+brainstorm/*/specs/*
+brainstorm/*/code/*
 # backup:end
+
+# Private experiments, never published.
+brainstorm/
 
 # --- Secrets ---------------------------------------------------------------
 # Every variant, because `.env.local` and `.env.backup` are exactly the files
