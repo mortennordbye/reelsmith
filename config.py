@@ -143,8 +143,7 @@ class Settings(BaseSettings):
     ig_refresh_margin_days: int = 15
 
     # --- YouTube (optional) -------------------------------------------------
-    # Setup is docs/youtube-api-setup.md. Written by
-    # the YouTube consent trip and read by scripts/youtube_upload.py.
+    # Setup is docs/youtube-api-setup.md. Written by the YouTube consent trip.
     #
     # All four live here, refresh token included, and that is the difference
     # from the Instagram block above. `ig_access_token` is only a seed because

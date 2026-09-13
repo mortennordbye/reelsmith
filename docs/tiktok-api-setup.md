@@ -16,7 +16,7 @@ Three things shape all of it, and the first two are the opposite of what the
 YouTube side taught:
 
 - **The audit is real here, and an error code proves it.** YouTube's private
-  lock turned out not to apply to this project (`docs/youtube-handover.md`).
+  lock turned out not to apply to this project (`docs/youtube-api-setup.md`).
   TikTok's does not have that escape hatch: `unaudited_client_can_only_post_to_private_accounts`
   is a documented 403 on the publish endpoint, and the content sharing
   guidelines state the caps in the same breath. An unaudited client posts
@@ -494,9 +494,9 @@ rather than `PUBLISH_COMPLETE`.
 `brand_content_toggle`, `brand_organic_toggle`, `is_aigc`.
 
 **`is_aigc` is a decision, not a default.** It is the same question
-`containsSyntheticMedia` asks on the YouTube side, which
-`docs/youtube-handover.md` records as answered `false` because a value had to be
-sent rather than because the question was settled. The voice is a clone of a
+`containsSyntheticMedia` asks on the YouTube side. Both were first answered
+`false` because a value had to be sent, and since 2026-08-26 for a reason, which
+is written next to the flag in `gateway/config.py`. The voice is a clone of a
 real person reading a script that person commissioned. Answer it the same way on
 both platforms or write down why not.
 

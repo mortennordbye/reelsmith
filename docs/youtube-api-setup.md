@@ -17,7 +17,7 @@ taught:
   asking for private, unlisted and public each kept the value they asked for,
   and the values still held after processing. Why is unknown, so the paragraph
   above stays as the documented behaviour and the thing to design against. It
-  is not what happens here. See `docs/youtube-handover.md`.
+  is not what happens here. See *Measured after setup* below.
 - **YouTube takes pushed bytes.** Meta fetches the MP4 from a public URL, which
   is why `pipeline/gateway.upload_media` exists and why the gateway hosts
   anything at all. YouTube is a resumable upload: three HTTP calls, file goes up
@@ -186,6 +186,26 @@ Since 2026-08-27 all three destinations fire one post a day in the same 08:10
 Europe/Oslo slot, so YouTube already runs at exactly Instagram's cadence and
 there is no lower one to drop to. The other mitigation still stands and is still
 configuration rather than code: let the scene mix vary visibly across a week.
+
+## Measured after setup
+
+Moved here on 2026-09-13 from `docs/youtube-handover.md`, which recorded the
+first weeks of publishing and was otherwise overtaken.
+
+- **The private lock did not apply.** Three uploads on 2026-08-16 asking for
+  `private`, `unlisted` and `public` each kept that value after processing, with
+  no audit submitted. `gateway/scheduler.py` logs whenever a returned privacy
+  status differs from the one requested, which is what the lock would look like
+  if it starts applying.
+- **No custom thumbnail.** The YouTube row is queued without a cover, so YouTube
+  picks a frame. `thumbnails.set` is one more call on the scope already granted.
+- **The channel is the Google account's own, not a Brand Account.** It cannot be
+  moved to another account or hold a second owner. Converting is the step
+  Google warns can delete the wrong channel, and it gets more expensive the
+  more the channel holds.
+- **An image has to understand a `GATEWAY_SLOTS` line before the ConfigMap
+  carries it.** `parse_slots` fails the boot on a line it cannot read, which
+  crashlooped the pod on 2026-08-15 when `account=` reached the ConfigMap first.
 
 ## Sources
 

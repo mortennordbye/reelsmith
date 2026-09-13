@@ -211,7 +211,7 @@ is dangerous.**
 > `GATEWAY_SLOTS` before any second account is registered, and make
 > `_apply_config_slots` refuse to visit an account with an empty list when the
 > ambiguity was unresolved, rather than treating "I could not tell" as "there
-> are none". `docs/youtube-handover.md` already records that ConfigMap ordering
+> are none". `docs/youtube-api-setup.md` already records that ConfigMap ordering
 > crashlooped the pod once; this is the same class of trap with a quieter
 > failure.
 
@@ -312,7 +312,7 @@ The templates are already per account. The arithmetic is not.
 ## Naming and authorisation
 
 > **F10. `ig_user_id` is the account key and the name is wrong on two thirds of
-> the rows it will soon hold.** `docs/youtube-handover.md:105` records the rename
+> the rows it will soon hold.** The YouTube handover (since retired) recorded the rename
 > to `account_id` as mechanical and deliberately deferred. It touches `db.py`,
 > `admin.py`, `models.py`, `pipeline/gateway.py`, ten templates, the
 > `?ig_user_id=` query parameter on six API routes and most of a 5,800 line test
