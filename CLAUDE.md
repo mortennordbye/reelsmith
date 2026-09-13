@@ -1034,8 +1034,10 @@ write an episode about somebody who died in 1994.
 Built 2026-09-10. `--episode --render` stages the pictures, speaks the lines,
 builds an `EpisodeSpec` and renders the `Episode` composition, which is
 registered on `Root.tsx` beside `Reel` and `Cover`. It is public machinery with
-no identity in it: the end card comes from `ENDCARD_NAME`, `ENDCARD_HANDLE` and
-`ENDCARD_TAGLINE` on the account, which are empty in this repo.
+no identity in it: the end card comes from `endcard_name`, `endcard_handle` and
+`endcard_tagline` in the brand's settings on the gateway, which are empty in
+this repo. `sync-private.sh` no longer projects the `ENDCARD_*` lines, because
+an `.env` line would win over the brand.
 
 **It ran end to end before any of the following was true**, which is the thing
 worth remembering about it. A render that finishes is not a render worth

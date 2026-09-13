@@ -164,25 +164,16 @@ ENV_PROJECTED_KEYS=(
   # same on the render host as it does here, which is the machine somebody is
   # on when a night has published to three platforms instead of four.
   BRAND
-  # The voice. Added 2026-09-11, when the second account was registered and the
-  # dry run printed these as staying behind. `CHATTERBOX_REF` is a path, the
-  # other two are floats picked by ear from a four-preset sweep, and account 2
-  # sets all three because it speaks in account 1's cloned voice rather than
-  # its own recording. Without them the render host resolves the reference to
-  # `accounts/<name>/ref/voice.wav`, which for that account does not exist, and
-  # `tts.py` raises naming the missing file. That fails loudly, which is the
-  # better of the two below.
+  # The voice reference, a path. Account 2 sets it because it speaks in account
+  # 1's cloned voice rather than its own recording. Without it the render host
+  # resolves the reference to `accounts/<name>/ref/voice.wav`, which for that
+  # account does not exist, and `tts.py` raises naming the missing file.
+  #
+  # The voice knobs and the end card crossed here too until 2026-09-14. They
+  # are brand settings on the gateway now (`--brand-settings`), read before
+  # any render and refused if unreadable, and a line here would override them
+  # because `.env` wins for a key it sets. So they stay behind on purpose.
   CHATTERBOX_REF
-  CHATTERBOX_EXAGGERATION
-  CHATTERBOX_CFG_WEIGHT
-  # The end card, and the reason this was worth fixing the same day. These
-  # default to the empty string, because the episode renderer is public
-  # machinery with no identity in it, so an account whose end card did not
-  # cross renders a finished video with a blank one. Nothing fails and nothing
-  # logs. A render that finishes wrong is the failure this repo keeps meeting.
-  ENDCARD_NAME
-  ENDCARD_HANDLE
-  ENDCARD_TAGLINE
   # What discovery ranks on, where an account overrides the checkout. Nothing
   # sets these yet and they are in the `--new-account` template, so the first
   # account to use one would otherwise be ranked by the render host on the
