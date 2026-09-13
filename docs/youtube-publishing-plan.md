@@ -2,7 +2,7 @@
 
 **Executed as of 2026-08-15.** Every phase below is built and deployed except
 the audit, which is not code. Kept as the record of why the design is shaped
-the way it is; `docs/youtube-handover.md` is what remains open.
+the way it is; `docs/youtube-api-setup.md` records what was measured after it.
 
 The plan for putting Shorts on the same footing Reels are already on: rendered on
 the Mac, queued to the gateway, published unattended from the cluster. The API
