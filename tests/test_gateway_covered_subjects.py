@@ -110,6 +110,21 @@ async def test_a_person_is_a_subject_too(client):
     assert await covered(http) == {}
 
 
+async def test_a_brand_read_lists_its_subjects_beside_the_repos(client):
+    """An episode's subject has to be readable by the host that picks the next
+    one. Without a brand the body is exactly the old shape."""
+    http, _ = client
+    await post(http, brand="thewholequote", subject_key="person:Q9235", source="episode")
+    await post(http, brand="thenightlybuild", subject_key="repo:a/b")
+
+    scoped = (await http.get("/api/covered", params={"brand": "thewholequote"}, headers=AUTH))
+    plain = (await http.get("/api/covered", headers=AUTH))
+
+    assert [row["subject_key"] for row in scoped.json()["subjects"]] == ["person:Q9235"]
+    assert scoped.json()["subjects"][0]["source"] == "episode"
+    assert set(plain.json()) == {"covered"}
+
+
 @pytest.mark.parametrize(
     "body",
     [

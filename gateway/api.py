@@ -650,6 +650,11 @@ async def list_covered(
     merges it into `data/used_repos.json` rather than trusting it outright:
     `--posted` marks repos this service never hears about, and a merge that
     replaced would quietly un-cover them.
+
+    **`subjects` is added when a brand is named**: every key that brand's
+    table holds, people included. `covered` stays repos only, in the shape an
+    older render host parses, so an episode's subject had nowhere to be read
+    back from until this.
     """
     ids = await _scope_ids(request, account_id, ig_user_id, brand)
     earliest: dict[str, dict] = {}
@@ -658,7 +663,12 @@ async def list_covered(
             seen = earliest.get(row["repo_full_name"])
             if seen is None or row["covered_at"] < seen["covered_at"]:
                 earliest[row["repo_full_name"]] = row
-    return {"covered": sorted(earliest.values(), key=lambda r: r["covered_at"])}
+    body: dict = {"covered": sorted(earliest.values(), key=lambda r: r["covered_at"])}
+    if brand is not None:
+        body["subjects"] = [
+            dict(row) for row in await db.covered_subjects(request.app.state.db, brand)
+        ]
+    return body
 
 
 @router.post("/api/covered", response_model=Registered, dependencies=[Depends(require_token)])
