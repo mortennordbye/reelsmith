@@ -640,8 +640,12 @@ const CommandScene: React.FC<SceneProps> = ({ scene, words }) => {
   // Sized so the longest unbreakable piece fits, not the whole line: a URL or
   // an env assignment is one token, and sizing from the line put
   // ANTHROPIC_BASE_URL="http://..." a thousand pixels past the frame.
-  const longestToken = Math.max(...code.split(/\s+/).map((t) => t.length), 1);
-  const size = fit(Math.max(longestToken, Math.min(code.length, 18)), 78, 30, 880, 0.6);
+  // A flag stays on the line with its argument, so the unit that has to fit
+  // is the pair: "--env-file deploy/.env.docker" is one piece. Sizing from
+  // single words broke that path mid word on the first render host video.
+  const longestPiece = Math.max(...commandLines(code, 0).map((t) => t.length), 1);
+  // Plus two for the "$ " every line is indented by.
+  const size = fit(Math.max(longestPiece, Math.min(code.length, 18)) + 2, 78, 30, 880, 0.6);
   const perLine = Math.floor(880 / (size * 0.6)) - 2;
   const lines = commandLines(code, perLine);
   const total = lines.join("").length;
