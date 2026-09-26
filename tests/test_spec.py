@@ -409,3 +409,33 @@ def test_the_nodes_reach_the_spec():
     spec = _spec_with_page(page_src=None, page_aspect=None)
     assert all(s.diagramNodes == [] for s in spec.scenes)
     assert CueKind.DIAGRAM.value == "diagram"
+
+
+def _spec_with_screenshot_cue(shot):
+    base = script("one two three", "four five six")
+    cues = [base.visual_cues[0].model_copy(update={"kind": CueKind.SCREENSHOT}),
+            *base.visual_cues[1:]]
+    return build_spec(
+        candidate("just-vugg/colibri"),
+        base.model_copy(update={"visual_cues": cues}),
+        captions_from("one two three four five six"),
+        SECONDS,
+        "voice.wav",
+        Settings(github_token="x", _env_file=None),
+        screenshot_src=shot,
+    )
+
+
+def test_a_screenshot_cue_shows_the_capture():
+    """It was handed no image, so it rendered as an empty frame."""
+    shots = [s for s in _spec_with_screenshot_cue("hero.png").scenes
+             if s.kind == CueKind.SCREENSHOT]
+    assert len(shots) >= 2
+    assert all(s.imageSrc == "hero.png" for s in shots)
+
+
+def test_a_screenshot_cue_without_a_capture_is_the_card():
+    """With no capture it opened the video, and the cover, on nothing at all."""
+    spec = _spec_with_screenshot_cue(None)
+    assert spec.scenes[0].kind == CueKind.REPO_CARD
+    assert all(s.kind != CueKind.SCREENSHOT for s in spec.scenes)
