@@ -17,6 +17,7 @@ from config import Settings
 from pipeline.models import (
     Caption,
     CueKind,
+    ReadmeSection,
     RepoCandidate,
     RepoMeta,
     Scene,
@@ -57,6 +58,11 @@ MIN_SCENE_SECONDS = 1.8
 # video into 1.8 second slivers. A shorter intro gives them their real timings
 # back.
 INTRO_SECONDS = 4.0
+# The ad format's intro is set by the voice instead, inside these bounds: long
+# enough to read the hook, short enough that a slow first sentence does not
+# hold the hero for a third of the video.
+AD_INTRO_MIN_SECONDS = 2.5
+AD_INTRO_MAX_SECONDS = 7.0
 
 # No scene should hold longer than this. Nothing enforces it, because a scene's
 # length comes from how long its cue is spoken for and there is no second thing
@@ -126,6 +132,34 @@ def _norm_words(text: str) -> list[str]:
     return out
 
 
+def _cue_starts_ms(cues: list, flat: list[tuple[str, float]]) -> list[float] | None:
+    """The moment each cue's spoken_excerpt begins in the transcript, in order.
+
+    None when any excerpt cannot be found, since a boundary guessed for one cue
+    shifts every cue after it.
+    """
+    starts: list[float] = []
+    cursor = 0
+    for cue in cues:
+        probe = _norm_words(cue.spoken_excerpt)[:4]
+        if len(probe) < 2:
+            return None  # too little to match on; not worth guessing
+        found = -1
+        for i in range(cursor, len(flat) - len(probe) + 1):
+            if [w for w, _ in flat[i : i + len(probe)]] == probe:
+                found = i
+                break
+        if found < 0:
+            return None  # transcript diverged from the script; fall back
+        starts.append(flat[found][1])
+        cursor = found + 1
+    return starts
+
+
+def _flat_words(captions: list[Caption]) -> list[tuple[str, float]]:
+    return [(w, c.startMs) for c in captions for w in _norm_words(c.text)]
+
+
 def _align_to_captions(
     script: VideoScript,
     captions: list[Caption],
@@ -156,22 +190,9 @@ def _align_to_captions(
         return None
 
     # Where in the transcript does each cue (after the first) begin?
-    boundaries_ms: list[float] = []
-    cursor = 0
-    for cue in cues[1:]:
-        probe = _norm_words(cue.spoken_excerpt)[:4]
-        if len(probe) < 2:
-            return None  # too little to match on; not worth guessing
-
-        found = -1
-        for i in range(cursor, len(flat) - len(probe) + 1):
-            if [w for w, _ in flat[i : i + len(probe)]] == probe:
-                found = i
-                break
-        if found < 0:
-            return None  # transcript diverged from the script; fall back
-        boundaries_ms.append(flat[found][1])
-        cursor = found + 1
+    boundaries_ms = _cue_starts_ms(cues[1:], flat)
+    if boundaries_ms is None:
+        return None
 
     # Convert to frames and enforce the minimum scene length.
     min_frames = int(MIN_SCENE_SECONDS * fps)
@@ -249,6 +270,7 @@ def build_spec(
     spoken_cta: str | None = None,
     page_src: str | None = None,
     page_aspect: float | None = None,
+    sections: dict[str, ReadmeSection] | None = None,
 ) -> VideoSpec:
     fps = cfg.fps
     # A short tail so the last word isn't clipped and the outro can breathe.
@@ -256,6 +278,8 @@ def build_spec(
 
     scenes: list[Scene] = []
     intro_frames = 0
+    # The repo_card the ad format asks for as its opening beat, once dropped.
+    opening_excerpt: str | None = None
 
     if screenshot_src:
         # The real README hero opens the video, under the hook overlay. Never
@@ -273,8 +297,30 @@ def build_spec(
         # and license, so a repo_card immediately after it is the same
         # information twice in a row. Drop it and give the time back.
         if script.visual_cues and script.visual_cues[0].kind == CueKind.REPO_CARD:
+            opening_excerpt = script.visual_cues[0].spoken_excerpt
             script = script.model_copy(update={"visual_cues": script.visual_cues[1:]})
             log.info("Dropped leading repo_card: the README hero already covers it.")
+
+    # The ad format's opening. The hook sits over the README hero, and the
+    # first beat of the script plays under them rather than as a device: the
+    # intro ends exactly where the next beat starts to be spoken, so every
+    # device after it lands on its own words. A fixed intro that ended mid
+    # sentence pushed each later scene back by the minimum scene length in
+    # turn, which in the first render put every device a second and a half
+    # behind the voice that describes it.
+    if cfg.reel_format == "ad" and screenshot_src and script.visual_cues:
+        # The opening beat is the repo_card dropped above, or, when the script
+        # did not write one, whatever cue came first.
+        under = [] if opening_excerpt is not None else script.visual_cues[:1]
+        rest = script.visual_cues[len(under):]
+        starts = _cue_starts_ms(rest, _flat_words(captions)) if rest else None
+        if starts:
+            first = int(round(starts[0] / 1000 * fps))
+            lo, hi = int(AD_INTRO_MIN_SECONDS * fps), int(AD_INTRO_MAX_SECONDS * fps)
+            intro_frames = max(lo, min(first, hi, total_frames // 3))
+            scenes[0] = scenes[0].model_copy(update={"durationInFrames": intro_frames})
+            script = script.model_copy(update={"visual_cues": rest})
+            log.info("Ad intro runs %.1fs, under the first beat.", intro_frames / fps)
 
     # Prefer real spoken timings; fall back to proportional word-count split if
     # the transcript can't be matched to the script (heavy mis-transcription,
@@ -303,7 +349,12 @@ def build_spec(
         if cta_frame is not None:
             start, duration = allocations[-1]
             kept, tail = cta_frame - start, start + duration - cta_frame
-            if kept >= min_frames and tail >= min_frames:
+            # The ad format's end card starts at the ask, so it always splits
+            # there: a last beat shorter than the minimum is a better trade
+            # than an end card that never appears. The first real render lost
+            # its end card to a 1.7 second last beat.
+            floor = 1 if cfg.reel_format == "ad" else min_frames
+            if kept >= floor and tail >= floor:
                 allocations[-1] = (start, kept)
                 outro = (cta_frame, tail)
                 ask_frame = cta_frame
@@ -335,6 +386,9 @@ def build_spec(
         kind = cue.kind
         if kind == CueKind.SCREENSHOT and not screenshot_src:
             kind = CueKind.REPO_CARD
+        # A readme cue whose block was not found keeps its kind and simply has
+        # no section; the ad composition shows the hero in its place.
+        section = (sections or {}).get(cue.readme_text or "") if kind == CueKind.README else None
         scenes.append(
             Scene(
                 kind=kind,
@@ -349,6 +403,9 @@ def build_spec(
                 statValue=cue.stat_value,
                 statLabel=cue.stat_label,
                 diagramNodes=cue.diagram_nodes,
+                items=cue.items,
+                emphasis=cue.emphasis,
+                section=section,
             )
         )
 
@@ -392,6 +449,10 @@ def build_spec(
         # no frame where the video stops being about the repo and starts asking
         # for a comment, so there is nothing honest to cut at.
         ctaFromFrame=ask_frame,
+        format=cfg.reel_format,
+        hookEmphasis=script.hook_emphasis,
+        endcardHandle=cfg.endcard_handle,
+        endcardTagline=cfg.endcard_tagline,
     )
 
     log.info(
@@ -399,3 +460,56 @@ def build_spec(
         total_frames, total_frames / fps, fps, len(scenes), len(captions),
     )
     return spec
+
+
+def _classic_scene(scene: Scene, screenshot_src: str | None) -> Scene:
+    """One ad scene as the nearest thing the classic renderer can draw.
+
+    Lossy on purpose. This only runs when the ad composition failed to render,
+    and the alternative there is no video at all, so a verdict drawn as two
+    bullets is the right trade.
+    """
+    kind = scene.kind
+    items = scene.items
+    update: dict = {"items": [], "emphasis": [], "section": None}
+    if kind is CueKind.STATEMENT:
+        update |= {"kind": CueKind.BULLETS, "bullets": [scene.title or ""], "title": None}
+    elif kind is CueKind.POSTER:
+        update |= {"kind": CueKind.BULLETS}
+    elif kind in (CueKind.VERDICT, CueKind.COMPARE, CueKind.BARS):
+        update |= {
+            "kind": CueKind.BULLETS,
+            "bullets": [f"{i.label} {i.note}".strip()[:40] for i in items][:4],
+        }
+    elif kind is CueKind.COMMAND:
+        update |= {"kind": CueKind.TERMINAL, "codeLanguage": "bash"}
+    elif kind is CueKind.FILES:
+        update |= {
+            "kind": CueKind.CODE,
+            "code": "\n".join(i.label for i in items),
+            "codeLanguage": "text",
+        }
+    elif kind is CueKind.README:
+        update |= (
+            {"kind": CueKind.SCREENSHOT, "imageSrc": screenshot_src}
+            if screenshot_src
+            else {"kind": CueKind.REPO_CARD}
+        )
+    return scene.model_copy(update=update)
+
+
+def to_classic(spec: VideoSpec) -> VideoSpec:
+    """The same video as the classic `Reel` composition can render it.
+
+    The ad format's fallback: same audio, captions and timings, scenes mapped
+    onto the classic kinds. Nothing about the script is re-asked.
+    """
+    hero = next(
+        (s.imageSrc for s in spec.scenes if s.kind is CueKind.SCREENSHOT and s.imageSrc), None
+    )
+    return spec.model_copy(
+        update={
+            "format": "classic",
+            "scenes": [_classic_scene(s, hero) for s in spec.scenes],
+        }
+    )

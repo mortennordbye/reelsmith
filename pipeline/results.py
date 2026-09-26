@@ -128,6 +128,7 @@ def recipe(cfg: Settings) -> str:
             cfg.claude_effort,
             cfg.claude_research,
             cfg.tts_backend,
+            cfg.reel_format,
         )
     )
     from pipeline import scriptwriter

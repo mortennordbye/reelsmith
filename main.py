@@ -73,7 +73,9 @@ from pipeline import results as results_mod
 from pipeline import spec as spec_mod
 from pipeline.models import (
     Caption,
+    CueKind,
     EpisodeScript,
+    ReadmeSection,
     RepoCandidate,
     SubjectCandidate,
     VideoScript,
@@ -733,12 +735,15 @@ def _render_one(
         f"{', page scrolls' if page_src else ''}[/]"
     )
 
+    sections = _readme_sections(cfg, repo, script, run_dir, run_key)
+
     audio_src = renderer.stage_asset(audio_path, cfg.video_dir, run_key)
     video_spec: VideoSpec = spec_mod.build_spec(
         repo, script, caps, duration, audio_src, cfg,
         screenshot_src=screenshot_src,
         page_src=page_src,
         page_aspect=page_aspect,
+        sections=sections,
         # The ask is audio no visual cue was written for, so the spec needs to
         # know its words to give it a scene of its own.
         spoken_cta=cta_line,
@@ -750,7 +755,20 @@ def _render_one(
 
     out_path = run_dir / "out.mp4"
     with console.status("Remotion is rendering..."):
-        renderer.render(video_spec, out_path, cfg)
+        try:
+            renderer.render(video_spec, out_path, cfg)
+        except renderer.RenderError as exc:
+            if video_spec.format == "classic":
+                raise
+            # The ad format is new and runs armed, so a composition that falls
+            # over on some script nobody foresaw costs that video its look,
+            # never the night. The classic reel renders from the same audio,
+            # captions and timings.
+            log.warning("Ad render failed, rendering the classic reel instead: %s", exc)
+            console.print("  [yellow]ad render failed; falling back to the classic reel[/]")
+            video_spec = spec_mod.to_classic(video_spec)
+            renderer.write_spec(video_spec, run_dir / "video.json")
+            renderer.render(video_spec, out_path, cfg)
 
     # An MP4 now exists, which is the fact worth recording. Rendering still
     # starts no cooldown; this only stops tomorrow's discovery spending a
@@ -786,6 +804,47 @@ def _render_one(
         (run_dir / "caption.txt").write_text(caption_out.rstrip() + "\n")
 
     return script
+
+
+def _readme_sections(
+    cfg: Settings, repo: RepoCandidate, script: VideoScript, run_dir: Path, run_key: str
+) -> dict[str, ReadmeSection]:
+    """The README blocks the script's readme cues quote, captured and staged.
+
+    Cached in the run folder like the hero, as `readme-sections.json` beside the
+    images, so a resumed run does not visit GitHub again. Best effort: a quote
+    the page does not hold is absent, and its cue shows the hero instead.
+    """
+    needles = [
+        c.readme_text for c in script.visual_cues if c.kind == CueKind.README and c.readme_text
+    ]
+    if cfg.reel_format != "ad" or not needles:
+        return {}
+    index_path = run_dir / "readme-sections.json"
+    try:
+        index = json.loads(index_path.read_text()) if index_path.exists() else {}
+    except ValueError:
+        index = {}
+    missing = [n for n in needles if n not in index]
+    if missing:
+        with console.status("Capturing README sections..."):
+            found = screenshot.capture_sections(repo.url, missing, run_dir)
+        for needle, sec in found.items():
+            index[needle] = {"file": sec.path.name, "w": sec.w, "h": sec.h, "lines": sec.lines}
+        # A needle that was looked for and not found is recorded too, so a
+        # resume does not keep asking the page for text it does not hold.
+        for needle in missing:
+            index.setdefault(needle, None)
+        index_path.write_text(json.dumps(index, indent=2))
+    out: dict[str, ReadmeSection] = {}
+    for needle in needles:
+        entry = index.get(needle)
+        if not entry or not (run_dir / entry["file"]).exists():
+            continue
+        src = renderer.stage_asset(run_dir / entry["file"], cfg.video_dir, run_key)
+        out[needle] = ReadmeSection(src=src, w=entry["w"], h=entry["h"], lines=entry["lines"])
+    console.print(f"  [dim]README sections: {len(out)} of {len(needles)}[/]")
+    return out
 
 
 def _run_batch(

@@ -107,7 +107,59 @@ The viewer has about two seconds to recognise a snippet and it has to match what
 they would type. Anything else that renders code needs the same treatment
 (`fontVariantLigatures: "none"` plus `fontFeatureSettings: '"liga" 0, "calt" 0'`).
 
-**The shot is the README, full bleed and scrolling.** It was a browser card
+### The ad format, which is what the nightly makes since 2026-09-26
+
+`REEL_FORMAT=ad` is the default and `REEL_FORMAT=classic` is everything below
+this section. It was chosen by Morten after three hand built prototypes, on the
+explicit grounds that the account has not broken out and `PROFILE.md` and
+`IDEAS.md` are hypotheses to test rather than rules. It deliberately uses
+several things `IDEAS.md` lists as saturated (per word caption colour, counting
+figures, a typing command). Measure it with `--cohorts recipe`, where
+`reel_format` is part of the fingerprint, before arguing either way.
+
+The shape: the README hero under the hook, then one **device** per beat of the
+script, chosen by the scriptwriter from a fixed menu (`statement`, `poster`,
+`verdict`, `compare`, `bars`, `command`, `files`, `readme`, plus the classic
+kinds drawn in the same style), then an end card with the repo's numbers and
+the brand's `endcard_handle`. `video/src/ad/AdReel.tsx` draws it;
+`VideoScript._check_ad_cues` refuses a cue that would not fit a phone; the menu
+is `_AD_CUES` in `pipeline/scriptwriter.py`.
+
+Five things about it are load bearing:
+
+- **It runs armed, so it fails safe rather than loud.** An `AdReel` render that
+  fails falls back to the classic `Reel` from the same audio, captions and
+  timings (`spec.to_classic`), and a readme cue whose README block cannot be
+  found shows the hero instead. Neither costs the night.
+- **The first beat plays under the hook, and the intro ends where the second
+  beat is spoken.** A fixed four second intro ended mid sentence, and the
+  minimum scene length then pushed every later scene back in turn: in the first
+  render every device was a second and a half behind the words it illustrates,
+  which in a format built on devices landing on their words is the whole look
+  broken. `AD_INTRO_MIN_SECONDS` and `AD_INTRO_MAX_SECONDS` bound it.
+- **A readme cue captures one README block at 3x, not the whole page.**
+  `screenshot.capture_sections` finds the smallest block holding the quoted
+  text and records each line's box, which is what lets the scene light the line
+  the voice is on. The whole README at 4x was 2632 by 12544 pixels decoded on
+  every frame; a block is a few hundred kilobytes. Cached in the run folder as
+  `readme-sections.json`.
+- **The info scenes are set like print.** Flat ground, hairline rules, light
+  and regular weights, colour only as small marks, values that roll in place.
+  Glass cards, glow, pills and outlined giant numerals were tried in the
+  prototypes and read as generated at a glance. Do not add them back.
+- **Illustrations are allowed, invented numbers are not.** A verdict or a
+  compare may show a representative case the README describes; every figure
+  must be real. That is the trade Morten chose for an unreviewed format.
+
+Two things the first real render (antirez/ds4) got wrong, both fixed and both
+easy to reintroduce: **the ask always splits the timeline in this format**,
+because the end card starts there, and a last beat under the minimum scene
+length had cost the video its end card; and **a statement whose title is not
+the sentence being spoken lands on a stagger and keeps its caption**, where it
+had held a blank sheet of paper for two seconds waiting for words the voice
+said late or never.
+
+**In the classic format the shot is the README, full bleed and scrolling.** It was a browser card
 floating in the middle of the frame, which left roughly a third of a 9:16 frame
 empty above and below it. That was not a composition choice, it is what a 16:10
 screenshot leaves behind when it is dropped into a vertical frame, and in a

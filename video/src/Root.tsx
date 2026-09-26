@@ -3,6 +3,7 @@ import { loadFont as loadMono } from "@remotion/google-fonts/JetBrainsMono";
 import React from "react";
 import { Composition, type CalculateMetadataFunction } from "remotion";
 
+import { AdReel } from "./ad/AdReel";
 import { Cover, type CoverProps } from "./Cover";
 import { Episode } from "./episode/Episode";
 import { type EpisodeSpec, parseEpisodeSpec } from "./episodeSchema";
@@ -52,6 +53,8 @@ const PLACEHOLDER: VideoSpec = {
       title: "repo",
       subtitle: "A one-line description of the project.",
       bullets: [],
+      items: [],
+      emphasis: [],
     },
     {
       kind: "terminal",
@@ -60,6 +63,8 @@ const PLACEHOLDER: VideoSpec = {
       bullets: [],
       code: "cargo install repo\nrepo --help",
       codeLanguage: "bash",
+      items: [],
+      emphasis: [],
     },
     {
       kind: "stat",
@@ -68,9 +73,15 @@ const PLACEHOLDER: VideoSpec = {
       bullets: [],
       statValue: "80x",
       statLabel: "faster than the alternative",
+      items: [],
+      emphasis: [],
     },
   ],
   captions: [],
+  format: "classic",
+  hookEmphasis: [],
+  endcardHandle: "",
+  endcardTagline: "",
 };
 
 /**
@@ -172,6 +183,18 @@ export const RemotionRoot: React.FC = () => (
       width={PLACEHOLDER.width}
       height={PLACEHOLDER.height}
       defaultProps={PLACEHOLDER}
+      calculateMetadata={calculateMetadata}
+    />
+    {/* The ad format. Same spec, same validation; a different composition so
+        the classic Reel stays exactly as it was for the fallback. */}
+    <Composition
+      id="AdReel"
+      component={AdReel}
+      durationInFrames={PLACEHOLDER.durationInFrames}
+      fps={PLACEHOLDER.fps}
+      width={PLACEHOLDER.width}
+      height={PLACEHOLDER.height}
+      defaultProps={{ ...PLACEHOLDER, format: "ad" }}
       calculateMetadata={calculateMetadata}
     />
     <Composition
