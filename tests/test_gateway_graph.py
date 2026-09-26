@@ -11,9 +11,11 @@ So the assertions here are about the request as it leaves, not about the reply.
 
 from __future__ import annotations
 
+import httpx
 import pytest
 
-from gateway.graph import GraphClient
+from gateway import graph as graph_module
+from gateway.graph import GraphClient, GraphError
 from tests.gateway_harness import ACCOUNT, IGSID, FakeMeta, settings
 
 TOKEN = "a-live-token"
@@ -83,3 +85,23 @@ async def test_the_query_string_still_carries_what_is_not_secret(graph, meta):
 
     metrics = meta.requests[-1].url.params["metric"]
     assert "views" in metrics and "reach" in metrics
+
+
+async def test_a_timeout_is_a_graph_error_that_says_so(cfg):
+    """It used to escape as a raw httpx exception, past every handler here."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    client = GraphClient(httpx.AsyncClient(transport=httpx.MockTransport(handler)), cfg)
+    with pytest.raises(GraphError) as caught:
+        await client.request("GET", f"{cfg.graph_base}/1", token="secret-token")
+    assert caught.value.transport
+    assert "ReadTimeout" in str(caught.value)
+    assert "secret-token" not in str(caught.value)
+
+
+def test_a_timeout_is_not_a_refused_metric():
+    """A refusal is remembered for the process; one slow minute must not be."""
+    assert graph_module._refused(GraphError("no such metric", code=100))
+    assert not graph_module._refused(GraphError("ReadTimeout", transport=True))

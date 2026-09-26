@@ -30,6 +30,14 @@ log = logging.getLogger(__name__)
 # Terminal states from GET /<container-id>?fields=status_code.
 _STATUS_DONE = "FINISHED"
 _STATUS_WAIT = "IN_PROGRESS"
+_STATUS_PUBLISHED = "PUBLISHED"
+
+# How many times to ask a FINISHED container whether it has since been
+# published, after `media_publish` failed. Meta can publish in the same second
+# the call times out, so the first answer may not be the last.
+_PUBLISHED_RECHECKS = 3
+# How far back in the account's media to look for the one a container became.
+_RECENT_MEDIA = 10
 
 
 class PublishError(RuntimeError):
@@ -142,8 +150,21 @@ async def await_container(
 
 
 async def publish_container(
-    graph: GraphClient, cfg: GatewaySettings, *, ig_user_id: str, token: str, container_id: str
+    graph: GraphClient,
+    cfg: GatewaySettings,
+    *,
+    ig_user_id: str,
+    token: str,
+    container_id: str,
+    caption: str = "",
 ) -> PublishResult:
+    """Publish a finished container.
+
+    A failed `media_publish` is not proof that nothing went out. On
+    2026-09-22 the call timed out and Meta published the Reel in the same
+    second, so before reporting a failure this asks the container whether it
+    was published and, if it was, finds the media by its caption.
+    """
     try:
         data = await graph.request(
             "POST",
@@ -152,7 +173,29 @@ async def publish_container(
             params={"creation_id": container_id},
         )
     except GraphError as exc:
-        raise PublishError(f"media_publish failed: {exc}", container_created=True) from exc
+        status, found = await _published_anyway(
+            graph, cfg, ig_user_id=ig_user_id, token=token,
+            container_id=container_id, caption=caption,
+        )
+        if found is not None:
+            log.warning(
+                "media_publish for container %s failed (%s) but Meta published it as %s",
+                container_id, exc, found,
+            )
+            return PublishResult(
+                media_id=found,
+                permalink=await permalink(graph, cfg, media_id=found, token=token),
+                container_id=container_id,
+            )
+        detail = f"media_publish failed: {exc}"
+        if status == _STATUS_PUBLISHED:
+            # Live, and nothing here knows its media id. Saying so is what
+            # stops somebody retrying it into a duplicate.
+            detail += (
+                f". Meta reports container {container_id} as PUBLISHED, so the Reel"
+                " is live; find it on the account rather than retrying."
+            )
+        raise PublishError(detail, container_created=True) from exc
 
     media_id = str(data.get("id") or "")
     if not media_id:
@@ -185,3 +228,63 @@ async def permalink(
         log.debug("Could not read permalink for %s (%s)", media_id, exc)
         return None
     return data.get("permalink")
+
+
+async def _published_anyway(
+    graph: GraphClient,
+    cfg: GatewaySettings,
+    *,
+    ig_user_id: str,
+    token: str,
+    container_id: str,
+    caption: str,
+) -> tuple[str, str | None]:
+    """The container's status, and the media id it became if it can be shown.
+
+    No media id whenever it cannot be shown, which leaves the caller on the old path:
+    the row fails with its container recorded and a human decides. A container
+    does not name the media it became, so the media is found by its caption,
+    which is the one thing this service wrote and Meta stores verbatim.
+    """
+    status = ""
+    for attempt in range(_PUBLISHED_RECHECKS):
+        if attempt:
+            await asyncio.sleep(cfg.publish_poll_interval_s)
+        try:
+            data = await graph.request(
+                "GET",
+                f"{cfg.graph_base}/{container_id}",
+                token=token,
+                params={"fields": "status_code"},
+            )
+        except GraphError as exc:
+            log.warning("Could not re-read container %s: %s", container_id, exc)
+            return status, None
+        status = str(data.get("status_code") or "")
+        if status != _STATUS_DONE:
+            break
+    if status != _STATUS_PUBLISHED:
+        return status, None
+
+    wanted = caption.strip()
+    if not wanted:
+        log.error("Container %s is published but has no caption to find it by", container_id)
+        return status, None
+    try:
+        data = await graph.request(
+            "GET",
+            f"{cfg.graph_base}/{ig_user_id}/media",
+            token=token,
+            params={"fields": "id,caption", "limit": str(_RECENT_MEDIA)},
+        )
+    except GraphError as exc:
+        log.error("Container %s is published but its media could not be listed: %s",
+                  container_id, exc)
+        return status, None
+    # Newest first, so a repeated caption resolves to the post just made.
+    for item in data.get("data") or []:
+        if str(item.get("caption") or "").strip() == wanted and item.get("id"):
+            return status, str(item["id"])
+    log.error("Container %s is published but no recent media carries its caption",
+              container_id)
+    return status, None

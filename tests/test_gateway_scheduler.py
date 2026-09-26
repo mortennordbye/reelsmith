@@ -32,6 +32,11 @@ class PublishingMeta(FakeMeta):
         self.container_status = "FINISHED"
         self.fail_container = False
         self.fail_publish = False
+        # A `media_publish` that times out, and whether Meta published anyway,
+        # which is what it did on 2026-09-22.
+        self.publish_times_out = False
+        self.live_anyway = False
+        self.live_caption = "hi"
         self.published: list[str] = []
 
     def _handle(self, request: httpx.Request) -> httpx.Response:
@@ -42,7 +47,16 @@ class PublishingMeta(FakeMeta):
             if self.fail_container:
                 return httpx.Response(400, json={"error": {"message": "no", "code": 1}})
             return httpx.Response(200, json={"id": "container-1"})
+        if path.endswith("/media") and request.method == "GET":
+            data = [{"id": "media-older", "caption": "an older post"}]
+            if self.live_anyway:
+                data.insert(0, {"id": "media-999", "caption": self.live_caption})
+            return httpx.Response(200, json={"data": data})
         if path.endswith("/media_publish"):
+            if self.publish_times_out:
+                if self.live_anyway:
+                    self.container_status = "PUBLISHED"
+                raise httpx.ReadTimeout("slow", request=request)
             if self.fail_publish:
                 return httpx.Response(400, json={"error": {"message": "nope", "code": 1}})
             self.published.append("container-1")
@@ -249,6 +263,60 @@ async def test_a_failure_after_the_container_stops_and_waits(conn, cfg):
     assert row["container_id"] == "container-1"
     day = db.now().date().isoformat()
     assert await db.claim_slot_fire(conn, slot_id=slot.id, local_date=day) is False
+
+
+async def test_a_publish_that_timed_out_but_went_live_is_recorded(conn, cfg):
+    """Meta published in the same second the call timed out, on 2026-09-22.
+
+    The timeout escaped the tick, so the row sat in `claimed` with no media id
+    for four days and the live Reel was never measured. Now the container is
+    asked whether it was published and the media is found by its caption.
+    """
+    meta = PublishingMeta()
+    meta.publish_times_out = True
+    meta.live_anyway = True
+    queued_id = await queue_one(conn)
+    await due_slot(conn)
+
+    assert await scheduler.tick_once(conn, graph_for(meta, cfg), cfg, Metrics()) == 1
+    row = await db.get_queued(conn, queued_id)
+    assert row["state"] == db.QUEUE_PUBLISHED
+    assert row["media_id"] == "media-999"
+    assert row["permalink"] == "https://instagram.com/reel/A/"
+    assert [p["media_id"] for p in await db.pollable_posts(conn, ACCOUNT, ttl_days=7)] == [
+        "media-999"
+    ]
+
+
+async def test_a_publish_that_timed_out_and_did_not_go_live_fails_the_row(conn, cfg):
+    """Not left claimed and not retried: the container exists, so a human decides."""
+    meta = PublishingMeta()
+    meta.publish_times_out = True
+    queued_id = await queue_one(conn)
+    await due_slot(conn)
+
+    assert await scheduler.tick_once(conn, graph_for(meta, cfg), cfg, Metrics()) == 0
+    row = await db.get_queued(conn, queued_id)
+    assert row["state"] == db.QUEUE_FAILED
+    assert row["container_id"] == "container-1"
+    assert "ReadTimeout" in row["failure"]
+    assert "PUBLISHED" not in row["failure"]
+
+
+async def test_a_live_reel_that_cannot_be_found_says_it_is_live(conn, cfg):
+    """The failure has to stop a retry, since retrying it posts it twice."""
+    meta = PublishingMeta()
+    meta.publish_times_out = True
+    meta.live_anyway = True
+    meta.live_caption = "a caption this service never wrote"
+    queued_id = await queue_one(conn)
+    await due_slot(conn)
+
+    await scheduler.tick_once(conn, graph_for(meta, cfg), cfg, Metrics())
+    row = await db.get_queued(conn, queued_id)
+    assert row["state"] == db.QUEUE_FAILED
+    assert row["media_id"] is None
+    assert "is live" in row["failure"]
 
 
 async def test_a_container_that_errors_is_not_retried_either(conn, cfg):

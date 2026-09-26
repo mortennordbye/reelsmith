@@ -46,10 +46,27 @@ CONSENT_ERROR_CODES = frozenset({10, 200, 230})
 
 
 class GraphError(RuntimeError):
-    def __init__(self, message: str, *, code: int | None = None, subcode: int | None = None):
+    """Meta said no, or never answered.
+
+    `transport` is the second case: a timeout or a dropped connection, where
+    Meta may well have done what it was asked. It used to escape as a raw
+    httpx exception, past every `except GraphError` here, and on 2026-09-22 a
+    `media_publish` that timed out took the scheduler tick with it and left a
+    live Reel's row claimed for four days with no media id.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: int | None = None,
+        subcode: int | None = None,
+        transport: bool = False,
+    ):
         super().__init__(message)
         self.code = code
         self.subcode = subcode
+        self.transport = transport
 
     @property
     def is_auth(self) -> bool:
@@ -161,8 +178,16 @@ class AccountReading:
 
 
 def _refused(outcome: Any) -> bool:
-    """A Graph refusal that is about the request rather than the token."""
-    return isinstance(outcome, GraphError) and not outcome.is_auth
+    """A Graph refusal that is about the request rather than the token.
+
+    A timeout is not a refusal: remembering it would switch a metric off for
+    the life of the process over one slow minute.
+    """
+    return (
+        isinstance(outcome, GraphError)
+        and not outcome.is_auth
+        and not outcome.transport
+    )
 
 
 # Meta's name -> ours. Theirs carry the product and the unit, which is useful
@@ -261,14 +286,22 @@ class GraphClient:
             params["access_token"] = token
         else:
             headers["Authorization"] = f"Bearer {token}"
-        response = await self._http.request(
-            method,
-            url,
-            params=params,
-            json=json_body,
-            headers=headers,
-            timeout=self._cfg.graph_timeout_s,
-        )
+        try:
+            response = await self._http.request(
+                method,
+                url,
+                params=params,
+                json=json_body,
+                headers=headers,
+                timeout=self._cfg.graph_timeout_s,
+            )
+        except httpx.HTTPError as exc:
+            # No URL in the message: the refresh call carries its token in the
+            # query string, and this text reaches logs and the queue row.
+            raise GraphError(
+                f"{type(exc).__name__} talking to Meta ({method} {httpx.URL(url).path})",
+                transport=True,
+            ) from exc
         try:
             payload = response.json()
         except ValueError:
