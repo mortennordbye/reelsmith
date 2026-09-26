@@ -12,6 +12,8 @@ scaled into a 1080-wide frame.
 from __future__ import annotations
 
 import logging
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -202,6 +204,44 @@ def _open(browser, viewport: dict, scale: int, url: str, timeout_ms: int):  # no
     return context, page
 
 
+# Playwright's refusal when the chromium build it pins is not on disk.
+_MISSING_BROWSER = "Executable doesn't exist"
+
+
+def _install_browser() -> bool:
+    """Download the chromium build this playwright pins. True if it worked.
+
+    The render host's image ships its own playwright browsers, and when the
+    image moved to chromium 1243 on 2026-09-21 the pinned playwright went on
+    asking for 1234. Every capture failed, every video opened on the repo card
+    and every cover lost the README hero, for eleven nights, on runs that all
+    exited zero. A browser installed by hand lives on the pod's overlay and is
+    gone at the next recreation, so the capture installs it itself, the way
+    `renderer._ensure_node_deps` does for Remotion.
+    """
+    log.warning("Chromium for playwright is missing; installing it")
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            check=True, capture_output=True, text=True, timeout=600,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        detail = getattr(exc, "stderr", None) or exc
+        log.warning("Could not install chromium for playwright: %s", str(detail).strip()[-500:])
+        return False
+    log.info("Installed chromium for playwright")
+    return True
+
+
+def _launch(p):
+    try:
+        return p.chromium.launch()
+    except Exception as exc:  # noqa: BLE001 - playwright's own Error type, lazily imported
+        if _MISSING_BROWSER not in str(exc) or not _install_browser():
+            raise
+    return p.chromium.launch()
+
+
 def capture_repo(
     url: str, out_path: Path, *, page_path: Path | None = None, timeout_ms: int = 30_000
 ) -> Capture | None:
@@ -238,7 +278,7 @@ def capture_repo(
     page_aspect: float | None = None
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch()
+            browser = _launch(p)
             context, page = _open(browser, VIEWPORT, DEVICE_SCALE, url, timeout_ms)
 
             clip = _readme_hero_clip(page)
