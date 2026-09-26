@@ -322,3 +322,162 @@ def capture_repo(
         )
         return Capture(hero=out_path, page=page_path, page_aspect=page_aspect)
     return Capture(hero=out_path)
+
+
+# --------------------------------------------------------------------------
+# README sections, for the ad format's readme cue
+# --------------------------------------------------------------------------
+
+# How much of one block a section shows, in CSS px. A code block or list longer
+# than this is cut around the line the script quoted, since the device lights
+# lines as they are read and a block taller than the window is a scroll the
+# viewer cannot follow.
+SECTION_MAX_HEIGHT = 640
+SECTION_SCALE = 3
+SECTION_PAD = 14
+
+# Finds the smallest README block holding the needle and reports it in document
+# coordinates, with one box per line it can tell apart: a code block's lines
+# from its line height, a list's items, a table's rows, a paragraph's rendered
+# lines. The needle is matched on collapsed whitespace and case, since the
+# model copies from markdown source and the page is rendered text.
+_FIND_SECTION_JS = """
+(needle) => {
+  const norm = (s) => (s || "").replace(/[`*_]/g, "").replace(/\\s+/g, " ").trim().toLowerCase();
+  const n = norm(needle);
+  const root = document.querySelector("article.markdown-body") || document.querySelector("#readme");
+  if (!root || !n) return null;
+  let best = null;
+  for (const el of root.querySelectorAll("pre, ul, ol, table, blockquote, p")) {
+    const t = norm(el.innerText);
+    if (!t.includes(n)) continue;
+    if (!best || t.length < norm(best.innerText).length) best = el;
+  }
+  if (!best) return null;
+  if (best.tagName === "P" && best.closest("li")) best = best.closest("ul, ol");
+  const sy = window.scrollY, sx = window.scrollX;
+  const r = best.getBoundingClientRect();
+  const lines = [];
+  if (best.tagName === "PRE") {
+    const code = best.querySelector("code") || best;
+    const cs = getComputedStyle(code);
+    const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.45;
+    // A code element's box starts where its first line does; the pre's
+    // padding is already outside it.
+    const top = code.getBoundingClientRect().top;
+    (code.innerText || "").replace(/\\n$/, "").split("\\n").forEach((t, i) => {
+      lines.push({ y: top + i * lh + sy, h: lh, text: t });
+    });
+  } else if (best.tagName === "UL" || best.tagName === "OL") {
+    for (const li of best.children) {
+      const b = li.getBoundingClientRect();
+      lines.push({ y: b.top + sy, h: b.height, text: (li.innerText || "").split("\\n")[0] });
+    }
+  } else if (best.tagName === "TABLE") {
+    for (const tr of best.querySelectorAll("tr")) {
+      const b = tr.getBoundingClientRect();
+      lines.push({ y: b.top + sy, h: b.height, text: tr.innerText || "" });
+    }
+  } else {
+    const b = best.getBoundingClientRect();
+    lines.push({ y: b.top + sy, h: b.height, text: best.innerText || "" });
+  }
+  const hit = lines.find((l) => norm(l.text).includes(n)) || lines[0];
+  return {
+    x: r.left + sx, y: r.top + sy, w: r.width, h: r.height,
+    hit: hit ? hit.y : r.top + sy, lines,
+  };
+}
+"""
+
+
+@dataclass(frozen=True)
+class Section:
+    """One README block captured on its own, lines in the image's pixels."""
+
+    path: Path
+    w: int
+    h: int
+    lines: list[dict]
+
+
+def _section_clip(found: dict) -> dict[str, float]:
+    """The part of a block to show: all of it, or a window around the quoted line."""
+    top = found["y"]
+    height = found["h"]
+    if height > SECTION_MAX_HEIGHT:
+        last = found["y"] + height - SECTION_MAX_HEIGHT
+        top = max(found["y"], min(found["hit"] - SECTION_MAX_HEIGHT / 3, last))
+        height = SECTION_MAX_HEIGHT
+    return {
+        "x": max(found["x"] - SECTION_PAD, 0),
+        "y": max(top - SECTION_PAD, 0),
+        "width": found["w"] + SECTION_PAD * 2,
+        "height": height + SECTION_PAD * 2,
+    }
+
+
+def _section_lines(found: dict, clip: dict[str, float], scale: int) -> list[dict]:
+    """The block's lines that fall inside the clip, in image pixels."""
+    out = []
+    for line in found["lines"]:
+        y = line["y"] - clip["y"]
+        if y < 0 or y + line["h"] > clip["height"] + 1:
+            continue
+        out.append(
+            {"y": round(y * scale), "h": round(line["h"] * scale), "text": line["text"].strip()}
+        )
+    return out
+
+
+def capture_sections(
+    url: str, needles: list[str], out_dir: Path, *, timeout_ms: int = 30_000
+) -> dict[str, Section]:
+    """Capture the README block holding each needle. Best effort, like `capture_repo`.
+
+    A needle the page does not contain is simply absent from the result, and
+    the readme cue that asked for it falls back to the README hero. Never
+    raises: a missing section costs one shot its detail, not the video.
+    """
+    if not needles:
+        return {}
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        log.warning("playwright not installed; skipping README sections")
+        return {}
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    found_sections: dict[str, Section] = {}
+    try:
+        with sync_playwright() as p:
+            browser = _launch(p)
+            context, page = _open(browser, VIEWPORT, SECTION_SCALE, url, timeout_ms)
+            for i, needle in enumerate(needles):
+                try:
+                    found = page.evaluate(_FIND_SECTION_JS, needle)
+                    if not found:
+                        # The model copies from markdown, so a long needle can
+                        # straddle a link or a line break the page renders
+                        # differently. Its first few words usually survive.
+                        short = " ".join(needle.split()[:4])
+                        found = page.evaluate(_FIND_SECTION_JS, short) if short != needle else None
+                    if not found or found["w"] < 100:
+                        log.info("README section not found: %r", needle)
+                        continue
+                    clip = _section_clip(found)
+                    path = out_dir / f"readme-section-{i}.png"
+                    page.screenshot(path=str(path), type="png", clip=clip, full_page=True)
+                    found_sections[needle] = Section(
+                        path=path,
+                        w=round(clip["width"] * SECTION_SCALE),
+                        h=round(clip["height"] * SECTION_SCALE),
+                        lines=_section_lines(found, clip, SECTION_SCALE),
+                    )
+                except Exception as exc:  # noqa: BLE001 - one section never costs the rest
+                    log.warning("README section %r failed (%s)", needle, exc)
+            context.close()
+            browser.close()
+    except Exception as exc:  # noqa: BLE001 - any failure degrades gracefully
+        log.warning("README sections of %s failed (%s); continuing without them.", url, exc)
+    return found_sections

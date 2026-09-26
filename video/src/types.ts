@@ -12,7 +12,9 @@ import type { z } from "zod";
 import type {
   captionSchema,
   codeTokenSchema,
+  cueItemSchema,
   cueKindSchema,
+  readmeSectionSchema,
   repoMetaSchema,
   sceneSchema,
   videoSpecSchema,
@@ -24,3 +26,5 @@ export type Scene = z.infer<typeof sceneSchema>;
 export type Caption = z.infer<typeof captionSchema>;
 export type RepoMeta = z.infer<typeof repoMetaSchema>;
 export type VideoSpec = z.infer<typeof videoSpecSchema>;
+export type CueItem = z.infer<typeof cueItemSchema>;
+export type ReadmeSection = z.infer<typeof readmeSectionSchema>;

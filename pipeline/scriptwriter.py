@@ -254,24 +254,29 @@ characters -- this is validated, and a longer hook fails the run. It must make
     enough to survive the test above, that is a finding about the project
     rather than a licence to write a general hook.
 
-    **Name something the viewer already runs, and say what changed about it.**
-    Of this account's first 53 videos, the ten that held their audience were
-    almost all about a project the viewer already depends on, and each reported
-    a change or an admission rather than announcing a tool. "TensorFlow is
-    removing the part that runs on phones" kept 49 percent of viewers past three
-    seconds. "Vercel agrees its own prefetching looked ridiculous" kept 47.
-    "Downloading one video means running YouTube's own code" kept 47. The median
-    video kept 27.
+    **Say what the viewer gets, and why this project is the one that gets it
+    for them.** Two short sentences, or a question and its answer. The first
+    half is about the viewer's own work, so a developer reads it as being about
+    them. The second half is what only this project does, which is what keeps
+    it from being a slogan, and it is the half the test above applies to.
 
-    Recognition on its own does not do it. "Claude, Codex and Copilot in one VS
-    Code sidebar" names three things the viewer knows and still lost 80 percent
-    of them, because it announces a feature and nothing in it costs the viewer
-    anything. The recognised subject buys the half second of attention. The
-    change is what spends it.
+      Trust your agent's results. A different model checks them
+      Feeding PDFs to your AI? Know what this does to them
+      Make your coding agent plan before it writes a line
 
-    When the project itself is unknown, the recognised thing has to come from
-    elsewhere in the sentence: what it replaces, what it breaks, or the number
-    it beats.
+    This replaced "name something the viewer already runs, and say what changed
+    about it" on 2026-09-26, as a deliberate experiment: the account has not
+    broken out, and that rule had been tried. Where the project IS something
+    the viewer already depends on, recognition still buys the first half
+    second, so say its name: "TensorFlow is removing the part that runs on
+    phones" kept 49 percent of viewers past three seconds against a median of
+    27. Recognition on its own does not do it, though. "Claude, Codex and
+    Copilot in one VS Code sidebar" named three things the viewer knows and
+    lost 80 percent of them, because nothing in it was about what the viewer
+    would get.
+
+    Also return `hook_emphasis`: one to three words of the hook, the ones that
+    carry the payoff, which are set in the accent colour.
 
     No colons and no hyphens or dashes anywhere in the hook. This is validated
     and a violation fails the run. Rewrite around them: "92k stars" not
@@ -354,7 +359,33 @@ spoken_script
     short sentences, varied length, verb-first openings. If two consecutive
     sentences have a similar shape, rewrite one.
 
-visual_cues
+{_cues_block(cfg)}caption_text
+    The Instagram caption: two or three sentences, then 5-8 relevant hashtags.
+
+    **The first line must open on a concrete fact, never a definition.** Only
+    the first line shows before the "more" tap, so "X is a tool that does Y"
+    spends it telling the reader nothing they cannot see from the video. Lead
+    with the number, the command, or the specific behaviour, and let the
+    definition follow in the second sentence.
+
+      no    Ponytail is a rules file that makes your coding agent stop.
+      no    Grok Build is SpaceXAI's terminal coding agent.
+      yes   Colibri keeps about ten gigabytes of a 744 gigabyte index on disk.
+      yes   /grill-me interviews you before your agent writes a line.
+
+    The first two are real captions from this account that reached about 150
+    accounts each. The third is a real one that reached 1173.
+"""
+
+
+def _cues_block(cfg: Settings) -> str:
+    """The visual_cues section of the prompt, for the reel format in use."""
+    return _AD_CUES if cfg.reel_format == "ad" else _classic_cues()
+
+
+def _classic_cues() -> str:
+    """The cue menu for `REEL_FORMAT=classic`, unchanged from before the ad format."""
+    return """visual_cues
     5 to 8 ordered beats describing what is on screen. Each cue's
     spoken_excerpt must be the portion of spoken_script playing during that
     beat -- concatenated in order they should reconstruct the whole script,
@@ -437,22 +468,76 @@ visual_cues
     search in less time than it takes to comment, is a bad trade in both
     directions. Do not reinstate it without numbers saying so.
 
-caption_text
-    The Instagram caption: two or three sentences, then 5-8 relevant hashtags.
+"""
 
-    **The first line must open on a concrete fact, never a definition.** Only
-    the first line shows before the "more" tap, so "X is a tool that does Y"
-    spends it telling the reader nothing they cannot see from the video. Lead
-    with the number, the command, or the specific behaviour, and let the
-    definition follow in the second sentence.
 
-      no    Ponytail is a rules file that makes your coding agent stop.
-      no    Grok Build is SpaceXAI's terminal coding agent.
-      yes   Colibri keeps about ten gigabytes of a 744 gigabyte index on disk.
-      yes   /grill-me interviews you before your agent writes a line.
+# The cue menu for the ad format. Each device is a component in video/src/ad/
+# and a validator in `VideoScript._check_ad_cues`; the limits quoted here are
+# the ones those validators enforce.
+_AD_CUES = """visual_cues
+    5 to 8 ordered beats, one device each. Each cue's spoken_excerpt must be
+    the portion of spoken_script playing during that beat, and concatenated in
+    order they must reconstruct the whole script, because screen time comes
+    from them. Keep each to one or two sentences, about 15 words.
 
-    The first two are real captions from this account that reached about 150
-    accounts each. The third is a real one that reached 1173.
+    The video opens on the project's own README hero under the hook. The
+    pipeline adds that, and the FIRST cue plays under it: its device is never
+    drawn, so make it a repo_card whose spoken_excerpt is the opening line of
+    the script, and keep that line short. After it, every beat is one of
+    these devices. Together they are meant to look like a considered product
+    film about this repository rather than a slide deck, so for each beat pick
+    the device that SHOWS what its sentence says:
+
+      statement  title = one short line, at most 32 characters, set huge on
+                 paper with a hard cut. For the sentence that lands a point on
+                 its own ("Nobody checked", "That is MarkItDown"). At most twice.
+      poster     bullets = 2 to 4 single words, at most 11 characters each,
+                 stacked huge. Each lands when the voice says it, so take them
+                 from the spoken_excerpt, in spoken order. For a list the voice
+                 names: roles, formats, stages.
+      verdict    items = 2 or 3 of {label, note, ok}. A check (ok true) or a
+                 cross (ok false) is drawn on each as it is said. For "X works,
+                 Y does not".
+      compare    items = 2 to 4 rows of {label, note, ok}, with ok true on the
+                 row that wins. For an honest comparison with a named
+                 alternative, including one where the alternative wins.
+      bars       items = 2 to 4 of {label, note, value}, drawn to scale. note
+                 is the figure as the viewer should read it ("about 10x",
+                 "2,577 lines"); value is the number, in the same unit across
+                 the items. Real numbers only.
+      command    code = the one command a viewer would type, one line, at most
+                 60 characters. items = up to 3 facts of {label, note} shown
+                 under it ("Model", "none").
+      files      items = 2 to 4 of {label, note}: a path or file name, and what
+                 is in it. Dropped in as index cards. For what the tool writes.
+      readme     readme_text = a short phrase copied exactly from the README's
+                 text: one list item, one line of a code block, or a sentence.
+                 The pipeline captures the block that holds it and lights its
+                 lines as the voice names them. Use it where the README itself
+                 says the thing best: its list of supported inputs, its
+                 commands. At most once.
+      stat       stat_value and stat_label: one real figure, set large and thin.
+
+    code, terminal, bullets, diagram and repo_card are still accepted and drawn
+    in the same style, but prefer the devices above.
+
+    Use at least three different devices, never the same device twice in a
+    row, and at least one of command, readme or files, so a developer sees the
+    real interface.
+
+    Every cue may carry `emphasis`: one to three words from its spoken_excerpt
+    to light in the accent colour as the voice reaches them. The words that
+    carry the point, not the filler.
+
+    Illustrations are allowed. An item may show what the tool would report in a
+    representative case, such as which model fills which role, as long as it is
+    consistent with what the README and your research say the tool does. Never
+    invent a number: every value, figure and count must be real.
+
+    Every word of spoken_script is burned onto the video as captions, synced to
+    the voice. Device text should add what the sentence does not say: the exact
+    command, the file names, the figures, the verdict. Never the sentence again.
+
 """
 
 
@@ -480,7 +565,8 @@ def prompt_source() -> str:
     digest on an edit to a logging line.
     """
     parts = [SYSTEM_PROMPT]
-    for fn in (_results_block, _build_prompt):
+    parts.append(_AD_CUES)
+    for fn in (_results_block, _build_prompt, _classic_cues):
         try:
             parts.append(inspect.getsource(fn))
         except (OSError, TypeError):

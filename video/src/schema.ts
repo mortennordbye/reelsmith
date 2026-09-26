@@ -26,7 +26,33 @@ export const cueKindSchema = z.enum([
   "terminal",
   "screenshot",
   "diagram",
+  // The ad format's devices, rendered by src/ad/AdReel.tsx. The classic Reel
+  // never sees them: pipeline/spec.py `to_classic` maps them away first.
+  "statement",
+  "poster",
+  "verdict",
+  "compare",
+  "bars",
+  "command",
+  "files",
+  "readme",
 ]);
+
+/** One row of a verdict, compare, bars or files scene. */
+export const cueItemSchema = z.object({
+  label: z.string(),
+  note: z.string().default(""),
+  ok: z.boolean().nullable().optional(),
+  value: z.number().nullable().optional(),
+});
+
+/** A README block captured on its own, lines in the image's own pixels. */
+export const readmeSectionSchema = z.object({
+  src: z.string(),
+  w: z.number().int().positive(),
+  h: z.number().int().positive(),
+  lines: z.array(z.object({ y: z.number().int(), h: z.number().int(), text: z.string() })).default([]),
+});
 
 /** One Shiki-highlighted token. Produced in calculateMetadata, never by Python. */
 export const codeTokenSchema = z.object({
@@ -56,6 +82,9 @@ export const sceneSchema = z.object({
   diagramNodes: z.array(z.string()).optional(),
   /** Injected by calculateMetadata; absent in the JSON Python writes. */
   tokens: z.array(z.array(codeTokenSchema)).optional(),
+  items: z.array(cueItemSchema).default([]),
+  emphasis: z.array(z.string()).default([]),
+  section: readmeSectionSchema.nullable().optional(),
 });
 
 export const captionSchema = z.object({
@@ -125,6 +154,11 @@ export const videoSpecSchema = z.object({
    * close to a scene boundary.
    */
   ctaFromFrame: z.number().int().nullable().optional(),
+  /** "classic" renders as Reel, "ad" as AdReel. */
+  format: z.string().default("classic"),
+  hookEmphasis: z.array(z.string()).default([]),
+  endcardHandle: z.string().default(""),
+  endcardTagline: z.string().default(""),
 });
 
 /**

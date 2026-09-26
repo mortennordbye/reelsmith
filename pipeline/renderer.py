@@ -321,7 +321,10 @@ def render(
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
-        "npx", "remotion", "render", "Reel", str(out_path.resolve()),
+        # The ad format is its own composition, so the classic one can stay
+        # exactly as it was for the fallback and for `REEL_FORMAT=classic`.
+        "npx", "remotion", "render", "AdReel" if spec.format == "ad" else "Reel",
+        str(out_path.resolve()),
         f"--props={props_path.resolve()}",
         "--log=info",
     ]

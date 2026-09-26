@@ -220,7 +220,7 @@ SECONDS = 12.5
 def _spec_with_cta(*, first_cue_words=14, transcript=TRANSCRIPT, seconds=SECONDS,
                    cta=CTA, shot="hero.png"):
     words = NARRATION.split()
-    cfg = Settings(github_token="x", _env_file=None)
+    cfg = Settings(github_token="x", reel_format="classic", _env_file=None)
     return build_spec(
         candidate("just-vugg/colibri"),
         script(" ".join(words[:first_cue_words]), " ".join(words[first_cue_words:])),
@@ -311,7 +311,7 @@ def test_a_split_too_tight_to_be_readable_is_declined():
 
 
 def _spec_with_page(*, page_src, page_aspect):
-    cfg = Settings(github_token="x", _env_file=None)
+    cfg = Settings(github_token="x", reel_format="classic", _env_file=None)
     return build_spec(
         candidate("just-vugg/colibri"),
         script("one two three", "four five six"),
@@ -421,7 +421,7 @@ def _spec_with_screenshot_cue(shot):
         captions_from("one two three four five six"),
         SECONDS,
         "voice.wav",
-        Settings(github_token="x", _env_file=None),
+        Settings(github_token="x", reel_format="classic", _env_file=None),
         screenshot_src=shot,
     )
 

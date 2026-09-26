@@ -291,6 +291,15 @@ class Settings(BaseSettings):
     endcard_handle: str = ""
     endcard_tagline: str = ""
 
+    # --- Which reel the pipeline makes -------------------------------------
+    # "ad" is the per sentence format built on 2026-09-26: the README hero,
+    # then one device per beat (a type poster, a drawn verdict, bars to scale,
+    # a section of the README lit as it is read), with paper scenes cut in.
+    # "classic" is the scrolling README with a card per cue that shipped
+    # before it. An ad render that fails falls back to classic on its own, so
+    # this is the switch for choosing, not the safety net.
+    reel_format: str = "ad"
+
     # --- Voiceover ---------------------------------------------------------
     # "edge"   -- Microsoft Edge voices. Free, keyless, but a network call, and
     #             its only natural-sounding English voices (Andrew, Brian, Ava,

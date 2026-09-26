@@ -166,6 +166,30 @@ class CueKind(StrEnum):
     # `_diagram_nodes` refuses the generic version rather than rendering it.
     DIAGRAM = "diagram"
 
+    # The ad format (`REEL_FORMAT=ad`, since 2026-09-26). Each is one device in
+    # video/src/ad/, and the classic renderer maps them onto its own kinds in
+    # `spec.to_classic`, so a script written for the new format still renders
+    # if the new composition fails.
+    STATEMENT = "statement"  # one short line, set huge on paper
+    POSTER = "poster"  # 2 to 4 words stacked huge, each landing as it is said
+    VERDICT = "verdict"  # 2 or 3 items, each drawn a check or a cross
+    COMPARE = "compare"  # a ledger of rows, one of them the winner
+    BARS = "bars"  # 2 to 4 values drawn to scale
+    COMMAND = "command"  # one command as a poster, facts under it
+    FILES = "files"  # what it writes, as divider cards
+    README = "readme"  # a section of the README itself, lines lit as spoken
+
+
+class CueItem(BaseModel):
+    """One row of a verdict, compare, bars or files cue."""
+
+    label: str
+    note: str = ""
+    # verdict: true is a check, false a cross. compare: true marks the winner.
+    ok: bool | None = None
+    # bars: the quantity drawn to scale. Only its ratio to the others is shown.
+    value: float | None = None
+
 
 class VisualCue(BaseModel):
     """One beat of the video. Ordered; durations are allocated proportionally
@@ -184,6 +208,26 @@ class VisualCue(BaseModel):
     stat_value: str | None = None
     stat_label: str | None = None
     diagram_nodes: list[str] = Field(default_factory=list)
+
+    # The ad format's fields. Ignored by the classic renderer.
+    items: list[CueItem] = Field(default_factory=list)
+    # One to three words of the spoken excerpt to light in the accent colour as
+    # the voice reaches them.
+    emphasis: list[str] = Field(default_factory=list)
+    # readme: a short phrase copied from the README's rendered text. The
+    # pipeline finds the block that holds it and captures that block.
+    readme_text: str | None = None
+
+
+# How much each ad device can hold before it stops fitting a phone screen.
+# Checked in `VideoScript._check_ad_cues`, so an overfull cue goes back to
+# Claude with the number rather than rendering off the edge of the frame.
+MAX_POSTER_WORD_CHARS = 11
+MAX_STATEMENT_CHARS = 32
+MAX_COMMAND_CHARS = 60
+MAX_ITEM_LABEL_CHARS = 24
+MAX_ITEM_NOTE_CHARS = 34
+MAX_README_TEXT_CHARS = 120
 
 
 # The words that turn a diagram into a slide. Every one of these is a box an
@@ -229,6 +273,10 @@ class VideoScript(BaseModel):
     caption_text: str = Field(
         default="",
         description="Instagram caption with hashtags. Not rendered into the video.",
+    )
+    hook_emphasis: list[str] = Field(
+        default_factory=list,
+        description="One to three words of the hook to set in the accent colour.",
     )
 
     @field_validator("hook")
@@ -309,6 +357,76 @@ class VideoScript(BaseModel):
                         "README, or drop the diagram cue and use code or terminal."
                     )
             cue.diagram_nodes = nodes
+        return self
+
+    @model_validator(mode="after")
+    def _check_ad_cues(self) -> VideoScript:
+        """Each ad device holds a fixed amount, and more does not fit.
+
+        Rejected rather than trimmed, like the dash rule: cutting a poster word
+        to eleven letters or a ledger to four rows changes what the video says,
+        and the model can choose what to leave out where a slice cannot.
+        """
+        for cue in self.visual_cues:
+            kind = cue.kind
+            items = cue.items
+            if kind is CueKind.STATEMENT:
+                text = (cue.title or "").strip()
+                if not text or len(text) > MAX_STATEMENT_CHARS:
+                    raise ValueError(
+                        f"a statement cue needs a title of 1 to {MAX_STATEMENT_CHARS} "
+                        f"characters, got {len(text)}"
+                    )
+            elif kind is CueKind.POSTER:
+                words = [b.strip() for b in cue.bullets if b.strip()]
+                if not 2 <= len(words) <= 4:
+                    raise ValueError(f"a poster cue needs 2 to 4 bullets, got {len(words)}")
+                for w in words:
+                    if len(w) > MAX_POSTER_WORD_CHARS or " " in w:
+                        raise ValueError(
+                            f"poster word {w!r} must be one word of at most "
+                            f"{MAX_POSTER_WORD_CHARS} characters"
+                        )
+                cue.bullets = words
+            elif kind is CueKind.VERDICT:
+                if not 2 <= len(items) <= 3 or any(i.ok is None for i in items):
+                    raise ValueError(
+                        "a verdict cue needs 2 or 3 items, each with ok set to true or false"
+                    )
+            elif kind in (CueKind.COMPARE, CueKind.FILES):
+                if not 2 <= len(items) <= 4:
+                    raise ValueError(f"a {kind.value} cue needs 2 to 4 items, got {len(items)}")
+            elif kind is CueKind.BARS:
+                if not 2 <= len(items) <= 4 or any(not i.value or i.value <= 0 for i in items):
+                    raise ValueError(
+                        "a bars cue needs 2 to 4 items, each with a positive value"
+                    )
+            elif kind is CueKind.COMMAND:
+                code = (cue.code or "").strip()
+                if not code or "\n" in code or len(code) > MAX_COMMAND_CHARS:
+                    raise ValueError(
+                        f"a command cue needs code of one line under {MAX_COMMAND_CHARS} "
+                        "characters"
+                    )
+                if len(items) > 3:
+                    raise ValueError("a command cue holds at most 3 items")
+            elif kind is CueKind.README:
+                text = (cue.readme_text or "").strip()
+                if not text or len(text) > MAX_README_TEXT_CHARS:
+                    raise ValueError(
+                        f"a readme cue needs readme_text of 1 to {MAX_README_TEXT_CHARS} "
+                        "characters, copied from the README"
+                    )
+            for item in items:
+                if len(item.label) > MAX_ITEM_LABEL_CHARS or len(item.note) > MAX_ITEM_NOTE_CHARS:
+                    raise ValueError(
+                        f"item {item.label!r} is too long; keep labels under "
+                        f"{MAX_ITEM_LABEL_CHARS} and notes under {MAX_ITEM_NOTE_CHARS} characters"
+                    )
+            if len(cue.emphasis) > 3:
+                raise ValueError("emphasis holds at most 3 words")
+        if len(self.hook_emphasis) > 3:
+            raise ValueError("hook_emphasis holds at most 3 words")
         return self
 
 
@@ -494,6 +612,23 @@ class Caption(BaseModel):
 # --------------------------------------------------------------------------
 
 
+class SectionLine(BaseModel):
+    """One line of a captured README block, in the block image's pixels."""
+
+    y: int
+    h: int
+    text: str
+
+
+class ReadmeSection(BaseModel):
+    """A block of the README captured on its own, for a readme cue."""
+
+    src: str  # relative to video/public/
+    w: int
+    h: int
+    lines: list[SectionLine] = Field(default_factory=list)
+
+
 class Scene(BaseModel):
     """A resolved visual cue with concrete frame timings."""
 
@@ -510,6 +645,12 @@ class Scene(BaseModel):
     statLabel: str | None = None  # noqa: N815
     imageSrc: str | None = None  # noqa: N815  - path relative to video/public/
     diagramNodes: list[str] = Field(default_factory=list)  # noqa: N815
+
+    # The ad format. See `VisualCue`.
+    items: list[CueItem] = Field(default_factory=list)
+    emphasis: list[str] = Field(default_factory=list)
+    section: ReadmeSection | None = None
+
 
 
 class RepoMeta(BaseModel):
@@ -668,3 +809,13 @@ class VideoSpec(BaseModel):
     # does not, this stays None and the full video is the only version there
     # is, which is the honest answer rather than a cut in the wrong place.
     ctaFromFrame: int | None = None  # noqa: N815
+
+    # Which composition renders this spec: "classic" is `Reel`, "ad" is
+    # `AdReel`. See `REEL_FORMAT` in config.py.
+    format: str = "classic"
+    # Words of the hook to set in the accent colour. The ad format only.
+    hookEmphasis: list[str] = Field(default_factory=list)  # noqa: N815
+    # The end card's handle and line, from the brand's settings. Empty means
+    # the end card says "Follow" and nothing else.
+    endcardHandle: str = ""  # noqa: N815
+    endcardTagline: str = ""  # noqa: N815
