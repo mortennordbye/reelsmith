@@ -449,7 +449,8 @@ async def publish_queued_instagram(
     try:
         await publisher.await_container(graph, cfg, container_id=container_id, token=token)
         result = await publisher.publish_container(
-            graph, cfg, ig_user_id=account_id, token=token, container_id=container_id
+            graph, cfg, ig_user_id=account_id, token=token, container_id=container_id,
+            caption=queued["caption"] or "",
         )
     except publisher.PublishError as exc:
         await db.set_queue_state(conn, queued_id, db.QUEUE_FAILED, failure=str(exc))
