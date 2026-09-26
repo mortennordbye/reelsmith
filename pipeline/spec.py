@@ -327,11 +327,20 @@ def build_spec(
         )
 
     for cue, (from_frame, duration) in zip(script.visual_cues, allocations, strict=True):
+        # A screenshot cue from the script names no image of its own; the one
+        # image there is is the capture. Until 2026-09-26 it was passed nothing
+        # either way, so every such cue rendered as an empty frame, and when it
+        # opened the video the cover was an empty frame too. With no capture it
+        # becomes the card, the same fallback the opening and the outro take.
+        kind = cue.kind
+        if kind == CueKind.SCREENSHOT and not screenshot_src:
+            kind = CueKind.REPO_CARD
         scenes.append(
             Scene(
-                kind=cue.kind,
+                kind=kind,
                 fromFrame=from_frame,
                 durationInFrames=duration,
+                imageSrc=screenshot_src if kind == CueKind.SCREENSHOT else None,
                 title=cue.title,
                 subtitle=cue.subtitle,
                 bullets=cue.bullets,
