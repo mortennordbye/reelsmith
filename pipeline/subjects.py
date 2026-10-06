@@ -498,6 +498,8 @@ def propose(
             prompt, PROPOSAL_SCHEMA, cfg, system=PROPOSAL_SYSTEM, research=False
         )
         proposals = claude_cli.payload(envelope).get("subjects", [])
+    except claude_cli.ClaudeAuthError:
+        raise
     except claude_cli.ClaudeError as exc:
         # The catalogue is the fallback, not the other way round. A night with
         # no proposals ranks what Wikidata already knows about.

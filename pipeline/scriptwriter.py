@@ -589,6 +589,8 @@ def _run_claude(prompt: str, schema: dict[str, Any], cfg: Settings) -> dict[str,
     """
     try:
         return claude_cli.run(prompt, schema, cfg, system=SYSTEM_PROMPT)
+    except claude_cli.ClaudeAuthError:
+        raise
     except claude_cli.TransientClaudeError as exc:
         raise TransientScriptError(str(exc)) from exc
     except claude_cli.ClaudeError as exc:

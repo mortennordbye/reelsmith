@@ -68,6 +68,7 @@ from config import (
 )
 from pipeline import backfill as backfill_mod
 from pipeline import captions as captions_mod
+from pipeline import claude as claude_cli
 from pipeline import gateway, migrate, publisher, renderer, scraper, screenshot, tts
 from pipeline import results as results_mod
 from pipeline import spec as spec_mod
@@ -910,6 +911,11 @@ def _run_batch(
         (run_dir / "repo.json").write_text(repo.model_dump_json(indent=2))
         try:
             script = _render_one(cfg, repo, run_dir, stop_after=stop_after)
+        except claude_cli.ClaudeAuthError:
+            # Every repo after this one would fail the same way, and a batch
+            # that skips them all ends "ok, 0 rendered", which is how a lapsed
+            # sign in went five nights without anyone being told.
+            raise
         except Exception as exc:  # noqa: BLE001 -- one bad repo must not end the batch
             log.exception("Video %d failed", i)
             failed.append((repo, f"{type(exc).__name__}: {exc}"))
