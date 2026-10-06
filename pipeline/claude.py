@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 from typing import Any
 
@@ -30,6 +31,46 @@ class ClaudeError(RuntimeError):
 
 class TransientClaudeError(ClaudeError):
     """A failure worth simply trying again, with nothing to correct."""
+
+
+class ClaudeAuthError(ClaudeError):
+    """The CLI is not signed in. Nothing after this can succeed either.
+
+    Not transient, and not something one repo or one subject can be skipped
+    past: every later call fails the same way. Callers that catch ClaudeError
+    to move on to the next candidate must let this one through, or a night
+    with no sign in reads as a night where every candidate happened to fail.
+    """
+
+
+# What the CLI says in `result` when it has no usable login. Matched loosely,
+# because the wording has changed between releases and a miss only costs the
+# retries this exists to skip.
+_AUTH_MARKERS = ("authenticate", "oauth", "not logged in", "/login", "invalid api key")
+
+
+def _cli_reason(stdout: str) -> str:
+    """The error the CLI put in its JSON envelope, or the raw output.
+
+    With --output-format json a failure is an envelope on stdout whose `result`
+    holds the reason, and that field sits past the first 400 characters. Cut
+    off there, five nights of "OAuth session expired" were logged as a usage
+    block with nothing in it.
+    """
+    try:
+        envelope = json.loads(stdout)
+    except json.JSONDecodeError:
+        return stdout[:400]
+    if isinstance(envelope, dict) and envelope.get("result"):
+        return str(envelope["result"])[:400]
+    return stdout[:400]
+
+
+def _env(cfg: Settings) -> dict[str, str] | None:
+    """The CLI's environment: this one, plus the pipeline's own sign in if set."""
+    if not cfg.claude_code_oauth_token:
+        return None
+    return {**os.environ, "CLAUDE_CODE_OAUTH_TOKEN": cfg.claude_code_oauth_token}
 
 
 def run(
@@ -59,7 +100,12 @@ def run(
     log.info("Invoking Claude Code (model=%s, research=%s)", cfg.claude_model, wants_research)
     try:
         proc = subprocess.run(  # noqa: S603 - argv list, no shell
-            cmd, capture_output=True, text=True, timeout=cfg.claude_timeout_s, check=False
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=cfg.claude_timeout_s,
+            check=False,
+            env=_env(cfg),
         )
     except subprocess.TimeoutExpired as exc:
         raise ClaudeError(
@@ -71,12 +117,18 @@ def run(
         # stdout, not just stderr. With --output-format json the CLI puts its
         # error envelope on stdout, so reporting stderr alone produced a blank
         # message and the real reason had to be dug out of ~/.claude/projects.
+        reason = _cli_reason(proc.stdout)
+        if any(m in reason.lower() for m in _AUTH_MARKERS):
+            raise ClaudeAuthError(
+                f"claude is not signed in: {reason}\n"
+                f"Set CLAUDE_CODE_OAUTH_TOKEN in this repo's .env to a token from "
+                f"`claude setup-token`. Under a Claude Code session, signing that "
+                f"session in does not help: its token is withheld from the commands "
+                f"it runs, so this CLI reads ~/.claude/.credentials.json instead."
+            )
         raise TransientClaudeError(
-            f"claude exited {proc.returncode}.\n"
-            f"stderr: {proc.stderr[:400]}\n"
-            f"stdout: {proc.stdout[:400]}\n"
-            f"If this says you are not authenticated, run `claude` once interactively "
-            f"to sign in."
+            f"claude exited {proc.returncode}: {reason}\n"
+            f"stderr: {proc.stderr[:400]}"
         )
 
     try:

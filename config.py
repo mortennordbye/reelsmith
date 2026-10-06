@@ -255,6 +255,15 @@ class Settings(BaseSettings):
     claude_effort: str = "high"
     claude_research: bool = True
     claude_timeout_s: int = 420
+    # The pipeline's own sign in, from `claude setup-token` (valid a year).
+    # Unset, the CLI uses whatever this shell is signed in with, which is right
+    # on a laptop. It exists for the render host, where the nightly runs inside
+    # a Claude Code session: Claude Code withholds its own CLAUDE_CODE_OAUTH_TOKEN
+    # from every command its Bash tool runs, so the `claude` this pipeline
+    # starts falls back to ~/.claude/.credentials.json, and when that login
+    # stopped refreshing on 2026-10-01 five nights wrote no scripts at all.
+    # Read from this repo's .env and handed to the CLI alone, never exported.
+    claude_code_oauth_token: str | None = None
     # Measured on six real runs on 2026-08-01: the cloned voice reads 165 to
     # 190 words per minute, call it 170, and the appended ask adds about seven
     # words of audio on top of this budget. So a script written to the ceiling
