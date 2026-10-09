@@ -340,6 +340,9 @@ class FakeFacebook:
     upload_error: dict[str, Any] | None = None
     finish_error: dict[str, Any] | None = None
     status_error: dict[str, Any] | None = None
+    # How many status polls answer "Object with ID ... does not exist" before
+    # the node reads, which is how a Reel looks in the second after `finish`.
+    status_not_found_polls: int = 0
     insights_error: dict[str, Any] | None = None
     # Per video id. A video absent from here has no insights yet, which is a
     # normal answer for a Reel published minutes ago rather than an error.
@@ -492,6 +495,13 @@ class FakeFacebook:
         self.phases.append("status")
         if self.status_error:
             return httpx.Response(400, json={"error": self.status_error})
+        if self.status_not_found_polls > 0:
+            self.status_not_found_polls -= 1
+            return httpx.Response(400, json={"error": {
+                "code": 100,
+                "error_subcode": 33,
+                "message": "Unsupported get request. Object with ID 'fb-video-1' does not exist",
+            }})
         index = min(self.polls, len(self.publish_states) - 1)
         video_index = min(self.polls, len(self.video_states) - 1)
         self.polls += 1

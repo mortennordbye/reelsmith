@@ -73,6 +73,11 @@ STATUS_EXPIRED = "expired"
 PUBLISH_PUBLISHED = "published"
 PUBLISH_ERROR = "error"
 
+# What the video node answers for a Reel Meta has accepted and cannot read back
+# yet: "Object with ID ... does not exist". Row 415 failed on it on 2026-10-07
+# within a second of `finish`, and the Reel was live on the Page all along.
+STATUS_NOT_READABLE_YET = "100/33"
+
 
 class PublishError(RuntimeError):
     """A publish that did not complete.
@@ -335,13 +340,25 @@ async def await_published(
 
     A timeout is terminal rather than retried. The video may be seconds from
     going live and starting again would publish it twice.
+
+    A node Meta says does not exist is polled again rather than failed. Right
+    after `finish` that is the read lagging the write, not a missing Reel, and
+    failing on it marks a live post as failed and fires the stuck-post alert
+    for as long as nobody corrects the row by hand.
     """
     deadline = asyncio.get_running_loop().time() + timeout_s
     last = ""
     while asyncio.get_running_loop().time() < deadline:
-        last, publish_state, permalink = await video_status(
-            http, video_id=video_id, token=token, api_version=api_version
-        )
+        try:
+            last, publish_state, permalink = await video_status(
+                http, video_id=video_id, token=token, api_version=api_version
+            )
+        except PublishError as exc:
+            if exc.code != STATUS_NOT_READABLE_YET:
+                raise
+            last = "not readable yet"
+            await asyncio.sleep(poll_interval_s)
+            continue
         if publish_state == PUBLISH_PUBLISHED:
             return PublishResult(video_id=video_id, permalink=permalink or None)
         if publish_state == PUBLISH_ERROR:
