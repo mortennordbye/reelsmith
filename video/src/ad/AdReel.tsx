@@ -12,7 +12,7 @@ import {
   useVideoConfig,
 } from "remotion";
 
-import { theme } from "../theme";
+import { captionBand, theme } from "../theme";
 import type { Caption, CueItem, Scene, VideoSpec } from "../types";
 
 /**
@@ -366,8 +366,10 @@ const CaptionLine: React.FC<{ words: Word[]; dur: number; bottom: boolean; paper
     <AbsoluteFill
       style={{
         justifyContent: bottom ? "flex-end" : "flex-start",
-        // 300 at the top is safeTop; 300 at the bottom clears the platform's caption band.
-        padding: bottom ? "0 80px 300px" : "300px 80px 0",
+        // 300 at the top is safeTop. At the bottom it is the classic format's
+        // band: 300 put the words inside Instagram's caption preview, which
+        // opens on the same sentence, so the two printed over each other.
+        padding: bottom ? `0 80px ${captionBand.fromBottom}px` : "300px 80px 0",
         opacity: 1 - out,
         transform: `translateY(${out * (bottom ? 20 : -20)}px)`,
       }}
