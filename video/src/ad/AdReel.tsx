@@ -957,10 +957,11 @@ const DiffScene: React.FC<SceneProps> = ({ scene }) => {
 };
 
 /** One ratio on a rail with its scale, filling as the voice names it. */
-const MeterScene: React.FC<SceneProps> = ({ scene, words }) => {
+const MeterScene: React.FC<SceneProps> = (props) => {
+  const { scene, words } = props;
   const frame = useCurrentFrame();
   const it = scene.items[0];
-  if (!it) return <StatScene scene={scene} words={words} spec={{} as VideoSpec} hero={null} />;
+  if (!it) return <StatScene {...props} />;
   const share = Math.max(0, Math.min(1, (it.value ?? 0) / (it.max || 1)));
   const at = cueAt(words, scene, it.label, 0, 10, 0);
   const fill = tween(frame, at, 34);
@@ -987,7 +988,8 @@ const MeterScene: React.FC<SceneProps> = ({ scene, words }) => {
   );
 };
 
-const monthOf = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+/** "Sep 15". The curve covers the weeks this account has watched a repo, so a month is too coarse. */
+const dayOf = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
 /** The repo's real star curve, drawn on in the star-history shape, ending on today's count. */
 const StarsScene: React.FC<SceneProps> = (props) => {
@@ -1003,7 +1005,6 @@ const StarsScene: React.FC<SceneProps> = (props) => {
   const xy = pts.map((p) => [((Date.parse(p.t) - t0) / (t1 - t0)) * W, H - (p.v / vMax) * (H - 20)] as const);
   const line = xy.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
   const draw = tween(frame, 6, 40);
-  const L = 4000;
   const last = xy[xy.length - 1];
   return (
     <AbsoluteFill>
@@ -1028,10 +1029,16 @@ const StarsScene: React.FC<SceneProps> = (props) => {
           ))}
           <line x1={0} x2={W} y1={H} y2={H} stroke={hair} strokeWidth={1} />
           <path d={`${line} L${W} ${H} L0 ${H} Z`} fill="url(#stars-fill)" clipPath="url(#stars-reveal)" />
-          <path d={line} fill="none" stroke={c.accent} strokeWidth={5} strokeLinejoin="round" strokeLinecap="round" strokeDasharray={L} strokeDashoffset={L * (1 - draw)} />
+          {/* Revealed by the same clip as the fill, so the line and the area under it
+              arrive together. A dash sized to a guessed path length drew the whole line
+              on the first frame while the fill was still sweeping in. */}
+          <path d={line} fill="none" stroke={c.accent} strokeWidth={5} strokeLinejoin="round" strokeLinecap="round" clipPath="url(#stars-reveal)" />
           <circle cx={last[0]} cy={last[1]} r={10} fill={c.ink} opacity={tween(frame, 40, 8)} />
-          <text x={0} y={H + 46} fill={c.inkFaint} fontFamily={font.mono} fontSize={24}>{monthOf(pts[0].t)}</text>
-          <text x={W} y={H + 46} fill={c.inkFaint} fontFamily={font.mono} fontSize={24} textAnchor="end">{monthOf(pts[pts.length - 1].t)}</text>
+          {/* The starting count, so the curve reads as from one number to another
+              rather than as a shape on an axis with no scale. */}
+          <text x={xy[0][0] + 4} y={xy[0][1] - 22} fill={c.inkDim} fontFamily={font.mono} fontSize={26} opacity={tween(frame, 4, 10)}>{count(pts[0].v)}</text>
+          <text x={0} y={H + 46} fill={c.inkFaint} fontFamily={font.mono} fontSize={24}>{dayOf(pts[0].t)}</text>
+          <text x={W} y={H + 46} fill={c.inkFaint} fontFamily={font.mono} fontSize={24} textAnchor="end">{dayOf(pts[pts.length - 1].t)}</text>
         </svg>
       </div>
     </AbsoluteFill>

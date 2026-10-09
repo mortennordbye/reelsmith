@@ -16,7 +16,7 @@ import type { CodeToken, Scene } from "./types";
 // actually produces and fall back to plaintext for anything else.
 const LANGS = [
   "bash", "shell", "python", "typescript", "javascript", "tsx", "jsx",
-  "rust", "go", "json", "yaml", "sql", "docker", "toml", "html", "css",
+  "rust", "go", "json", "yaml", "sql", "docker", "toml", "html", "css", "diff",
 ] as const;
 
 const ALIASES: Record<string, string> = {

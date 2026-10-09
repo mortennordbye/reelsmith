@@ -433,7 +433,9 @@ class VideoScript(BaseModel):
                         "characters, copied from the README"
                     )
             elif kind is CueKind.DIFF:
-                lines = [ln.rstrip() for ln in (cue.code or "").strip("\n").split("\n")]
+                # A context line that is only its leading space reads as empty
+                # once trailing space is stripped, so it is put back.
+                lines = [ln.rstrip() or " " for ln in (cue.code or "").strip("\n").split("\n")]
                 if not 2 <= len(lines) <= MAX_DIFF_LINES:
                     raise ValueError(
                         f"a diff cue needs 2 to {MAX_DIFF_LINES} lines of code, got {len(lines)}"

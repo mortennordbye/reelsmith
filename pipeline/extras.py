@@ -39,7 +39,7 @@ MIN_DEMO_WIDTH = 400
 # which is how GitHub embeds an uploaded video in a README.
 _MEDIA = re.compile(
     r"""(?:!\[[^\]]*\]\(\s*<?(?P<md>[^)\s>]+)"""
-    r"""|<(?:img|video|source)\b[^>]*?\bsrc\s*=\s*["'](?P<html>[^"']+)["']"""
+    r"""|<(?P<tag>img|video|source)\b[^>]*?\bsrc\s*=\s*["'](?P<html>[^"']+)["']"""
     r"""|(?P<bare>https://github\.com/user-attachments/assets/[0-9a-f-]{36}))""",
     re.IGNORECASE,
 )
@@ -77,7 +77,10 @@ def demo_url(readme: str, full_name: str) -> str | None:
         url = m.group("md") or m.group("html") or m.group("bare")
         if not url:
             continue
-        if not (m.group("bare") or _MOTION.search(url)):
+        # A video tag is a demo whatever its URL ends in: an uploaded video is a
+        # user-attachments link with no extension at all.
+        tag = (m.group("tag") or "").lower()
+        if not (m.group("bare") or tag in ("video", "source") or _MOTION.search(url)):
             continue
         if url.startswith("//"):
             url = "https:" + url

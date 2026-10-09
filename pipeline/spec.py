@@ -519,7 +519,7 @@ def _classic_scene(scene: Scene, screenshot_src: str | None) -> Scene:
             "bullets": [f"{i.label} {i.note}".strip()[:40] for i in items][:4],
         }
     elif kind is CueKind.DIFF:
-        update |= {"kind": CueKind.CODE}
+        update |= {"kind": CueKind.CODE, "codeLanguage": "diff"}
     elif kind is CueKind.STARS:
         last = scene.series[-1].v if scene.series else 0
         update |= {

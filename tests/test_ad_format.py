@@ -362,3 +362,17 @@ def test_the_star_curve_is_the_accounts_own_snapshots_plus_today(tmp_path):
     # Cached, so a resume draws the same curve whatever the store says later.
     history.write_text("{}")
     assert star_series(history, "o/r", 999, run) == series
+
+
+def test_a_blank_context_line_is_part_of_a_diff():
+    s = ad_script({"kind": "diff", "code": "- old()\n \n+ new()"})
+    assert s.visual_cues[0].code == "- old()\n \n+ new()"
+
+
+def test_an_uploaded_video_in_a_video_tag_is_a_demo():
+    from pipeline.extras import demo_url
+
+    url = "https://github.com/user-attachments/assets/0f4c2a9e-1111-2222-3333-444455556666"
+    assert demo_url(f'<video src="{url}" controls></video>', "o/r") == url
+    # The same link as a markdown image is a screenshot, not a demo.
+    assert demo_url(f"![shot]({url})", "o/r") is None
