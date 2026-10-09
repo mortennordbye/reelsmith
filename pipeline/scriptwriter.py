@@ -517,13 +517,36 @@ _AD_CUES = """visual_cues
                  says the thing best: its list of supported inputs, its
                  commands. At most once.
       stat       stat_value and stat_label: one real figure, set large and thin.
+      diff       code = 2 to 8 lines, each starting with "-" (removed), "+"
+                 (added) or a space (unchanged), at most 44 characters. For
+                 "today you write this, with the tool you write that". Show
+                 only an API or config the README documents.
+      meter      items = exactly 1 of {label, note, value, max}: one real ratio
+                 on a rail, value read against max in the same unit ("8.5
+                 percent of the tokens", "175 of 1000 MB"). For one claim
+                 with its scale, where bars would need a second value.
+      stars      no fields. The project's real star count over the nights
+                 this account has tracked it, drawn from the pipeline's own
+                 snapshots. For a sentence about how fast it is growing right
+                 now. At most once.
+      demo       no fields. The README's own demo GIF or video, playing in a
+                 window. For the sentence that says what it looks like in use.
+                 The pipeline finds it; with no demo the README hero shows.
+                 At most once.
+      hud        items = 2 to 4 of {label, note}: short readouts ("Runtime",
+                 "single binary") in a bracketed frame over the README hero.
+                 For the facts that describe the project at a glance.
+      glass      items = 2 or 3 of {label, note}: frosted cards over the
+                 blurred README hero, each landing as it is said. For two or
+                 three parallel features.
 
     code, terminal, bullets, diagram and repo_card are still accepted and drawn
     in the same style, but prefer the devices above.
 
     Use at least three different devices, never the same device twice in a
-    row, and at least one of command, readme or files, so a developer sees the
-    real interface.
+    row, and at least one of command, readme, files, diff or demo, so a
+    developer sees the real interface. Prefer a device that shows a real number
+    (bars, compare, meter, stars) wherever the research found one.
 
     Every cue may carry `emphasis`: one to three words from its spoken_excerpt
     to light in the accent colour as the voice reaches them. The words that

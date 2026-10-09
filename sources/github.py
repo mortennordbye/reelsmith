@@ -102,6 +102,10 @@ class StarHistory:
         # Normalise to a per-day figure so a 3-day gap doesn't look like a spike.
         return round((stars_now - prev_stars) / elapsed_days)
 
+    def series(self, full_name: str) -> list[tuple[str, int]]:
+        """Every snapshot of one repo, oldest first, as (ISO date, stars)."""
+        return sorted(self._data.get(full_name, {}).items())
+
     def prune(self, on: date | None = None) -> None:
         cutoff = ((on or date.today()) - timedelta(days=self.keep_days)).isoformat()
         for name in list(self._data):

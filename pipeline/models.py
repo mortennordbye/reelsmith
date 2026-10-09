@@ -178,6 +178,14 @@ class CueKind(StrEnum):
     COMMAND = "command"  # one command as a poster, facts under it
     FILES = "files"  # what it writes, as divider cards
     README = "readme"  # a section of the README itself, lines lit as spoken
+    # Added 2026-10-09, after the first read of the ad format: every post that
+    # broke out carried a device that showed real numbers or real interface.
+    DIFF = "diff"  # a before and after, red and green, the way a PR reads
+    METER = "meter"  # one ratio on a rail, with its scale
+    STARS = "stars"  # the repo's real star curve; the pipeline supplies the data
+    DEMO = "demo"  # the README's own GIF or video, playing in a window
+    HUD = "hud"  # readouts in a bracketed frame over the README hero
+    GLASS = "glass"  # 2 or 3 frosted cards over the blurred README hero
 
 
 class CueItem(BaseModel):
@@ -188,7 +196,10 @@ class CueItem(BaseModel):
     # verdict: true is a check, false a cross. compare: true marks the winner.
     ok: bool | None = None
     # bars: the quantity drawn to scale. Only its ratio to the others is shown.
+    # meter: the part, read against `max`.
     value: float | None = None
+    # meter: the whole the value is a share of, in the same unit.
+    max: float | None = None
 
 
 class VisualCue(BaseModel):
@@ -228,6 +239,10 @@ MAX_COMMAND_CHARS = 60
 MAX_ITEM_LABEL_CHARS = 24
 MAX_ITEM_NOTE_CHARS = 34
 MAX_README_TEXT_CHARS = 120
+MAX_DIFF_LINES = 8
+MAX_DIFF_LINE_CHARS = 44
+# Devices that show one particular thing and would be the same frame twice.
+_ONCE_PER_SCRIPT = ("readme", "stars", "demo")
 
 
 # The words that turn a diagram into a slide. Every one of these is a box an
@@ -417,6 +432,43 @@ class VideoScript(BaseModel):
                         f"a readme cue needs readme_text of 1 to {MAX_README_TEXT_CHARS} "
                         "characters, copied from the README"
                     )
+            elif kind is CueKind.DIFF:
+                # A context line that is only its leading space reads as empty
+                # once trailing space is stripped, so it is put back.
+                lines = [ln.rstrip() or " " for ln in (cue.code or "").strip("\n").split("\n")]
+                if not 2 <= len(lines) <= MAX_DIFF_LINES:
+                    raise ValueError(
+                        f"a diff cue needs 2 to {MAX_DIFF_LINES} lines of code, got {len(lines)}"
+                    )
+                for ln in lines:
+                    if ln[:1] not in ("-", "+", " "):
+                        raise ValueError(
+                            f"diff line {ln!r} must start with '-' (removed), '+' (added) "
+                            "or a space (unchanged)"
+                        )
+                    if len(ln) > MAX_DIFF_LINE_CHARS:
+                        raise ValueError(
+                            f"diff line {ln!r} is {len(ln)} chars; keep each under "
+                            f"{MAX_DIFF_LINE_CHARS} so it stays legible on a phone"
+                        )
+                if not any(ln.startswith("-") for ln in lines) or not any(
+                    ln.startswith("+") for ln in lines
+                ):
+                    raise ValueError("a diff cue needs at least one '-' line and one '+' line")
+                cue.code = "\n".join(lines)
+            elif kind is CueKind.METER:
+                it = items[0] if len(items) == 1 else None
+                if not it or not it.value or not it.max or not 0 < it.value <= it.max:
+                    raise ValueError(
+                        "a meter cue needs exactly 1 item with value and max, "
+                        "0 < value <= max, both real numbers in the same unit"
+                    )
+            elif kind is CueKind.HUD:
+                if not 2 <= len(items) <= 4:
+                    raise ValueError(f"a hud cue needs 2 to 4 items, got {len(items)}")
+            elif kind is CueKind.GLASS:
+                if not 2 <= len(items) <= 3:
+                    raise ValueError(f"a glass cue needs 2 or 3 items, got {len(items)}")
             for item in items:
                 if len(item.label) > MAX_ITEM_LABEL_CHARS or len(item.note) > MAX_ITEM_NOTE_CHARS:
                     raise ValueError(
@@ -425,6 +477,9 @@ class VideoScript(BaseModel):
                     )
             if len(cue.emphasis) > 3:
                 raise ValueError("emphasis holds at most 3 words")
+        for once in _ONCE_PER_SCRIPT:
+            if sum(c.kind.value == once for c in self.visual_cues) > 1:
+                raise ValueError(f"use a {once} cue at most once")
         if len(self.hook_emphasis) > 3:
             raise ValueError("hook_emphasis holds at most 3 words")
         return self
@@ -629,6 +684,22 @@ class ReadmeSection(BaseModel):
     lines: list[SectionLine] = Field(default_factory=list)
 
 
+class StarPoint(BaseModel):
+    """One sample of a repo's star count, for a stars scene."""
+
+    t: str  # ISO date
+    v: int
+
+
+class DemoClip(BaseModel):
+    """The README's own GIF or video, converted to mp4 and staged."""
+
+    src: str  # relative to video/public/
+    w: int
+    h: int
+    seconds: float
+
+
 class Scene(BaseModel):
     """A resolved visual cue with concrete frame timings."""
 
@@ -650,6 +721,9 @@ class Scene(BaseModel):
     items: list[CueItem] = Field(default_factory=list)
     emphasis: list[str] = Field(default_factory=list)
     section: ReadmeSection | None = None
+    # Filled by the pipeline, never by the model, so neither can be invented.
+    series: list[StarPoint] = Field(default_factory=list)
+    demo: DemoClip | None = None
 
 
 

@@ -17,15 +17,20 @@ from config import Settings
 from pipeline.models import (
     Caption,
     CueKind,
+    DemoClip,
     ReadmeSection,
     RepoCandidate,
     RepoMeta,
     Scene,
+    StarPoint,
     VideoScript,
     VideoSpec,
 )
 
 log = logging.getLogger(__name__)
+
+# Scenes drawn over the README hero, so they carry its image.
+_ON_HERO = (CueKind.SCREENSHOT, CueKind.HUD, CueKind.GLASS)
 
 # Every scene gets at least this long, or fast cuts become unreadable.
 MIN_SCENE_SECONDS = 1.8
@@ -271,6 +276,8 @@ def build_spec(
     page_src: str | None = None,
     page_aspect: float | None = None,
     sections: dict[str, ReadmeSection] | None = None,
+    star_series: list[StarPoint] | None = None,
+    demo: DemoClip | None = None,
 ) -> VideoSpec:
     fps = cfg.fps
     # A short tail so the last word isn't clipped and the outro can breathe.
@@ -389,23 +396,33 @@ def build_spec(
         # A readme cue whose block was not found keeps its kind and simply has
         # no section; the ad composition shows the hero in its place.
         section = (sections or {}).get(cue.readme_text or "") if kind == CueKind.README else None
+        # The two devices whose data the pipeline fetches degrade rather than
+        # draw nothing: a curve that could not be read becomes today's count,
+        # and a README with no demo shows its hero.
+        stat_value, stat_label = cue.stat_value, cue.stat_label
+        if kind == CueKind.STARS and len(star_series or []) < 3:
+            kind, stat_value, stat_label = CueKind.STAT, f"{repo.stars:,}", "GitHub stars"
+        if kind == CueKind.DEMO and demo is None:
+            kind = CueKind.SCREENSHOT if screenshot_src else CueKind.REPO_CARD
         scenes.append(
             Scene(
                 kind=kind,
                 fromFrame=from_frame,
                 durationInFrames=duration,
-                imageSrc=screenshot_src if kind == CueKind.SCREENSHOT else None,
+                imageSrc=screenshot_src if kind in _ON_HERO else None,
                 title=cue.title,
                 subtitle=cue.subtitle,
                 bullets=cue.bullets,
                 code=cue.code,
                 codeLanguage=cue.code_language,
-                statValue=cue.stat_value,
-                statLabel=cue.stat_label,
+                statValue=stat_value,
+                statLabel=stat_label,
                 diagramNodes=cue.diagram_nodes,
                 items=cue.items,
                 emphasis=cue.emphasis,
                 section=section,
+                series=(star_series or []) if kind == CueKind.STARS else [],
+                demo=demo if kind == CueKind.DEMO else None,
             )
         )
 
@@ -489,12 +506,30 @@ def _classic_scene(scene: Scene, screenshot_src: str | None) -> Scene:
             "code": "\n".join(i.label for i in items),
             "codeLanguage": "text",
         }
-    elif kind is CueKind.README:
+    elif kind in (CueKind.README, CueKind.DEMO):
         update |= (
             {"kind": CueKind.SCREENSHOT, "imageSrc": screenshot_src}
             if screenshot_src
             else {"kind": CueKind.REPO_CARD}
         )
+    elif kind in (CueKind.METER, CueKind.HUD, CueKind.GLASS):
+        update |= {
+            "kind": CueKind.BULLETS,
+            "imageSrc": None,
+            "bullets": [f"{i.label} {i.note}".strip()[:40] for i in items][:4],
+        }
+    elif kind is CueKind.DIFF:
+        update |= {"kind": CueKind.CODE, "codeLanguage": "diff"}
+    elif kind is CueKind.STARS:
+        last = scene.series[-1].v if scene.series else 0
+        update |= {
+            "kind": CueKind.STAT,
+            "statValue": f"{last:,}",
+            "statLabel": "GitHub stars",
+            "series": [],
+        }
+    if kind is CueKind.DEMO:
+        update["demo"] = None
     return scene.model_copy(update=update)
 
 
