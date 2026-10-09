@@ -36,6 +36,12 @@ export const cueKindSchema = z.enum([
   "command",
   "files",
   "readme",
+  "diff",
+  "meter",
+  "stars",
+  "demo",
+  "hud",
+  "glass",
 ]);
 
 /** One row of a verdict, compare, bars or files scene. */
@@ -44,6 +50,19 @@ export const cueItemSchema = z.object({
   note: z.string().default(""),
   ok: z.boolean().nullable().optional(),
   value: z.number().nullable().optional(),
+  /** meter: the whole the value is a share of. */
+  max: z.number().nullable().optional(),
+});
+
+/** One sample of a repo's star count. Fetched by the pipeline, never written by the model. */
+export const starPointSchema = z.object({ t: z.string(), v: z.number().int() });
+
+/** The README's own GIF or video, converted to mp4 and staged by the pipeline. */
+export const demoClipSchema = z.object({
+  src: z.string(),
+  w: z.number().int().positive(),
+  h: z.number().int().positive(),
+  seconds: z.number().positive(),
 });
 
 /** A README block captured on its own, lines in the image's own pixels. */
@@ -85,6 +104,8 @@ export const sceneSchema = z.object({
   items: z.array(cueItemSchema).default([]),
   emphasis: z.array(z.string()).default([]),
   section: readmeSectionSchema.nullable().optional(),
+  series: z.array(starPointSchema).optional(),
+  demo: demoClipSchema.nullable().optional(),
 });
 
 export const captionSchema = z.object({

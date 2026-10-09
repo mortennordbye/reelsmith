@@ -4,6 +4,8 @@ import {
   Audio,
   Easing,
   Img,
+  Loop,
+  OffthreadVideo,
   Sequence,
   interpolate,
   spring,
@@ -75,7 +77,7 @@ const saysTitle = (scene: Scene, line: { words: { t: string }[] }) => {
   return shared >= Math.ceil(title.size * 0.6) && spoken.length <= title.size + 3;
 };
 /** Scenes whose device sits high, so the caption goes to the bottom band. */
-const CAPTION_BOTTOM = new Set(["verdict", "command", "terminal", "readme", "screenshot"]);
+const CAPTION_BOTTOM = new Set(["verdict", "command", "terminal", "readme", "screenshot", "demo"]);
 
 const ease = Easing.bezier(0.16, 1, 0.3, 1);
 const clamp = { extrapolateLeft: "clamp", extrapolateRight: "clamp" } as const;
@@ -902,6 +904,293 @@ const DiagramScene: React.FC<SceneProps> = ({ scene, words }) => {
   );
 };
 
+/* ------------------------------------------------- devices of 2026-10-09 */
+
+/** GitHub's own diff colours, so a removed line reads the way it does in a pull request. */
+const diffInk = {
+  del: { bg: "rgba(248,81,73,0.16)", fg: "#ffa198", sign: "#f85149" },
+  add: { bg: "rgba(46,160,67,0.18)", fg: "#7ee787", sign: "#3fb950" },
+  ctx: { bg: "transparent", fg: "#c9d1d9", sign: "#484f58" },
+};
+
+/** A before and after: the removed lines appear and are struck, then the added ones land. */
+const DiffScene: React.FC<SceneProps> = ({ scene }) => {
+  const frame = useCurrentFrame();
+  const lines = (scene.code ?? "").split("\n").slice(0, 8);
+  const size = fit(Math.max(...lines.map((l) => l.length)), 40, 24, 840, 0.6);
+  let added = 0;
+  return (
+    <AbsoluteFill>
+      <div style={{ position: "absolute", left: 80, right: 80, top: 720, borderRadius: 14, overflow: "hidden", background: "#0d1117", outline: `1px solid ${hair}`, opacity: tween(frame, 0, 14), ...noLig }}>
+        <div style={{ height: 56, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 24px", borderBottom: `1px solid ${hair}`, fontFamily: font.mono, fontSize: 22, color: c.inkDim }}>
+          <span>{scene.title ?? "diff"}</span>
+          <span>
+            <span style={{ color: diffInk.add.sign }}>+{lines.filter((l) => l.startsWith("+")).length}</span>{" "}
+            <span style={{ color: diffInk.del.sign }}>-{lines.filter((l) => l.startsWith("-")).length}</span>
+          </span>
+        </div>
+        <div style={{ padding: "14px 0" }}>
+          {lines.map((l, i) => {
+            const kind = l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : "ctx";
+            const ink = diffInk[kind];
+            // Context and removals are the "before", so they arrive first; the
+            // additions land after the removals have been struck through.
+            const at = kind === "add" ? 30 + added++ * 6 : 4 + i * 3;
+            const on = tween(frame, at, 12);
+            const strike = kind === "del" ? tween(frame, 20 + i * 2, 12) : 0;
+            return (
+              <div key={i} style={{ display: "flex", background: ink.bg, opacity: on, transform: `translateX(${(1 - on) * (kind === "add" ? 30 : 0)}px)` }}>
+                <span style={{ width: 54, textAlign: "center", fontFamily: font.mono, fontSize: size, lineHeight: 1.7, color: ink.sign }}>{kind === "ctx" ? " " : l[0]}</span>
+                <span style={{ position: "relative", fontFamily: font.mono, fontSize: size, lineHeight: 1.7, color: ink.fg, whiteSpace: "pre" }}>
+                  {l.slice(1) || " "}
+                  {kind === "del" ? (
+                    <span style={{ position: "absolute", left: 0, right: 0, top: "52%", height: 2, background: ink.sign, transform: `scaleX(${strike})`, transformOrigin: "left" }} />
+                  ) : null}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+/** One ratio on a rail with its scale, filling as the voice names it. */
+const MeterScene: React.FC<SceneProps> = ({ scene, words }) => {
+  const frame = useCurrentFrame();
+  const it = scene.items[0];
+  if (!it) return <StatScene scene={scene} words={words} spec={{} as VideoSpec} hero={null} />;
+  const share = Math.max(0, Math.min(1, (it.value ?? 0) / (it.max || 1)));
+  const at = cueAt(words, scene, it.label, 0, 10, 0);
+  const fill = tween(frame, at, 34);
+  const figure = it.note || `${Math.round(share * 100)}%`;
+  const size = fit(figure.length, 220, 110, 920, 0.55);
+  return (
+    <AbsoluteFill>
+      <div style={{ position: "absolute", left: 80, right: 80, top: 760 }}>
+        <div style={{ fontFamily: font.display, fontSize: size, fontWeight: 200, letterSpacing: -size * 0.05, lineHeight: 1, color: c.ink, opacity: tween(frame, at, 14) }}>{figure}</div>
+        <div style={{ fontFamily: font.display, fontSize: 38, color: c.inkDim, marginTop: 18, opacity: tween(frame, 4, 14) }}>{it.label}</div>
+        <div style={{ position: "relative", height: 120, marginTop: 56 }}>
+          <div style={{ position: "absolute", left: 0, right: 0, top: 40, height: 1, background: hair }} />
+          <div style={{ position: "absolute", left: 0, top: 34, height: 13, width: `${share * fill * 100}%`, background: c.accent }} />
+          <div style={{ position: "absolute", left: `${share * fill * 100}%`, top: 16, width: 2, height: 50, background: c.ink, opacity: fill }} />
+          {[0, 0.25, 0.5, 0.75, 1].map((t) => (
+            <div key={t} style={{ position: "absolute", left: `${t * 100}%`, top: 70, transform: t === 1 ? "translateX(-100%)" : t ? "translateX(-50%)" : undefined, fontFamily: font.mono, fontSize: 22, color: c.inkFaint, opacity: tween(frame, 6, 14) }}>
+              <div style={{ width: 1, height: 10, background: hair, margin: t === 1 ? "0 0 6px auto" : t ? "0 auto 6px" : "0 0 6px" }} />
+              {count(Math.round(t * (it.max ?? 0)))}
+            </div>
+          ))}
+        </div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+const monthOf = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+
+/** The repo's real star curve, drawn on in the star-history shape, ending on today's count. */
+const StarsScene: React.FC<SceneProps> = (props) => {
+  const { scene, spec } = props;
+  const frame = useCurrentFrame();
+  const pts = scene.series ?? [];
+  if (pts.length < 2) return <StatScene {...props} />;
+  const W = 920;
+  const H = 560;
+  const t0 = Date.parse(pts[0].t);
+  const t1 = Math.max(Date.parse(pts[pts.length - 1].t), t0 + 1);
+  const vMax = Math.max(...pts.map((p) => p.v), 1);
+  const xy = pts.map((p) => [((Date.parse(p.t) - t0) / (t1 - t0)) * W, H - (p.v / vMax) * (H - 20)] as const);
+  const line = xy.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
+  const draw = tween(frame, 6, 40);
+  const L = 4000;
+  const last = xy[xy.length - 1];
+  return (
+    <AbsoluteFill>
+      <div style={{ position: "absolute", left: 80, right: 80, top: 640 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", opacity: tween(frame, 0, 12) }}>
+          <Label>{scene.title ?? `${spec.repo.fullName} stars`}</Label>
+          <span style={{ fontFamily: font.display, fontSize: 64, fontWeight: 300, letterSpacing: -2, color: c.ink, opacity: tween(frame, 34, 14) }}>{count(pts[pts.length - 1].v)}</span>
+        </div>
+        <Rule at={0} style={{ margin: "18px 0 40px" }} />
+        <svg width={W} height={H + 60} viewBox={`0 0 ${W} ${H + 60}`} style={{ display: "block", overflow: "visible" }}>
+          <defs>
+            <linearGradient id="stars-fill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor={c.accent} stopOpacity="0.28" />
+              <stop offset="1" stopColor={c.accent} stopOpacity="0" />
+            </linearGradient>
+            <clipPath id="stars-reveal">
+              <rect x={0} y={-20} width={W * draw} height={H + 40} />
+            </clipPath>
+          </defs>
+          {[0.25, 0.5, 0.75].map((g) => (
+            <line key={g} x1={0} x2={W} y1={H - g * (H - 20)} y2={H - g * (H - 20)} stroke={hair} strokeWidth={1} strokeDasharray="4 8" />
+          ))}
+          <line x1={0} x2={W} y1={H} y2={H} stroke={hair} strokeWidth={1} />
+          <path d={`${line} L${W} ${H} L0 ${H} Z`} fill="url(#stars-fill)" clipPath="url(#stars-reveal)" />
+          <path d={line} fill="none" stroke={c.accent} strokeWidth={5} strokeLinejoin="round" strokeLinecap="round" strokeDasharray={L} strokeDashoffset={L * (1 - draw)} />
+          <circle cx={last[0]} cy={last[1]} r={10} fill={c.ink} opacity={tween(frame, 40, 8)} />
+          <text x={0} y={H + 46} fill={c.inkFaint} fontFamily={font.mono} fontSize={24}>{monthOf(pts[0].t)}</text>
+          <text x={W} y={H + 46} fill={c.inkFaint} fontFamily={font.mono} fontSize={24} textAnchor="end">{monthOf(pts[pts.length - 1].t)}</text>
+        </svg>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+/** The README's own demo, playing in a window, looped if it is shorter than the beat. */
+const DemoScene: React.FC<SceneProps> = (props) => {
+  const { scene, spec } = props;
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const d = scene.demo;
+  if (!d) return <HeroScene {...props} />;
+  const maxH = 1060;
+  const w = Math.min(920, (maxH * d.w) / d.h);
+  const h = (w * d.h) / d.w;
+  const appear = tween(frame, 0, 18);
+  return (
+    <AbsoluteFill>
+      <div
+        style={{
+          position: "absolute",
+          left: (1080 - w) / 2,
+          top: 300,
+          width: w,
+          borderRadius: 14,
+          overflow: "hidden",
+          background: "#0d1117",
+          outline: `1px solid ${hair}`,
+          boxShadow: "0 40px 100px rgba(0,0,0,0.6)",
+          opacity: appear,
+          transform: `translateY(${(1 - appear) * 40}px)`,
+        }}
+      >
+        <div style={{ height: 56, display: "flex", alignItems: "center", gap: 14, padding: "0 24px", borderBottom: `1px solid ${hair}`, fontFamily: font.mono, fontSize: 22, color: c.inkDim }}>
+          <span>{spec.repo.fullName}</span>
+          <span style={{ color: c.inkFaint }}>demo</span>
+        </div>
+        <div style={{ position: "relative", width: w, height: h }}>
+          <Loop durationInFrames={Math.max(1, Math.round(d.seconds * fps))}>
+            <OffthreadVideo src={staticFile(d.src)} muted style={{ width: w, height: h, display: "block" }} />
+          </Loop>
+        </div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+/** The README hero, dimmed full bleed, as the ground for the two scenes that sit on it. */
+const HeroGround: React.FC<{ src: string | null; blur: number; dim: number }> = ({ src, blur, dim }) => {
+  const frame = useCurrentFrame();
+  if (!src) return null;
+  return (
+    <AbsoluteFill style={{ overflow: "hidden" }}>
+      <Img
+        src={staticFile(src)}
+        style={{
+          position: "absolute",
+          left: -60,
+          top: 200,
+          width: 1200,
+          filter: `blur(${blur}px) brightness(${dim})`,
+          transform: `scale(${1.1 + frame * 0.0006})`,
+          transformOrigin: "50% 30%",
+        }}
+      />
+    </AbsoluteFill>
+  );
+};
+
+/** A corner of the HUD frame: two hairlines meeting, drawn in from the corner. */
+const Bracket: React.FC<{ x: "left" | "right"; y: "top" | "bottom"; t: number }> = ({ x, y, t }) => {
+  const arm = 70 * t;
+  const line = (w: number, h: number): React.CSSProperties => ({ position: "absolute", [x]: 0, [y]: 0, width: w, height: h, background: c.ink });
+  return (
+    <div style={{ position: "absolute", [x]: 0, [y]: 0, width: 70, height: 70 }}>
+      <div style={line(arm, 3)} />
+      <div style={line(3, arm)} />
+    </div>
+  );
+};
+
+/** Readouts in a bracketed frame over the README hero, each scanned in as it is said. */
+const HudScene: React.FC<SceneProps> = ({ scene, words, spec, hero }) => {
+  const frame = useCurrentFrame();
+  const items = scene.items.slice(0, 4);
+  const corners = tween(frame, 2, 18);
+  const top = 660;
+  const rowH = 150;
+  const height = 120 + items.length * rowH;
+  return (
+    <AbsoluteFill>
+      <HeroGround src={scene.imageSrc ?? hero} blur={5} dim={0.22} />
+      <div style={{ position: "absolute", left: 70, right: 70, top, height }}>
+        {/* The README stays legible as texture, never as text competing with the readouts. */}
+        <div style={{ position: "absolute", inset: 0, background: hexA(c.ground, 0.72), opacity: corners }} />
+        <Bracket x="left" y="top" t={corners} />
+        <Bracket x="right" y="top" t={corners} />
+        <Bracket x="left" y="bottom" t={corners} />
+        <Bracket x="right" y="bottom" t={corners} />
+        <div style={{ position: "absolute", left: 44, right: 44, top: 40, display: "flex", justifyContent: "space-between", opacity: tween(frame, 8, 12), ...noLig }}>
+          <Label color={c.ink}>{scene.title ?? spec.repo.fullName}</Label>
+          <Label color={c.accent}>{`${String(items.length).padStart(2, "0")} readouts`}</Label>
+        </div>
+        {items.map((it, i) => {
+          const at = cueAt(words, scene, it.note || it.label, i, 12, 10);
+          const on = tween(frame, at, 12);
+          const scan = tween(frame, at - 4, 14);
+          return (
+            <div key={i} style={{ position: "absolute", left: 44, right: 44, top: 110 + i * rowH, height: rowH - 20 }}>
+              <div style={{ height: 1, background: hexA(c.accent, 0.7), transform: `scaleX(${scan})`, transformOrigin: "left" }} />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", paddingTop: 22, opacity: on }}>
+                <Label>{it.label}</Label>
+                <span style={{ fontFamily: font.display, fontSize: fit(it.note.length, 60, 34, 560, 0.55), fontWeight: 600, letterSpacing: -1.5, color: c.ink }}>{it.note}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+/** Two or three frosted cards over the blurred README hero, each rising as it is said. */
+const GlassScene: React.FC<SceneProps> = ({ scene, words, hero }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const items = scene.items.slice(0, 3);
+  return (
+    <AbsoluteFill>
+      <HeroGround src={scene.imageSrc ?? hero} blur={26} dim={0.55} />
+      <div style={{ position: "absolute", left: 80, right: 80, top: 640, display: "flex", flexDirection: "column", gap: 30 }}>
+        {items.map((it, i) => {
+          const at = cueAt(words, scene, it.label, i, 6, 12);
+          const d = spring({ frame: frame - at, fps, config: { damping: 18, mass: 0.7 }, durationInFrames: 24 });
+          return (
+            <div
+              key={i}
+              style={{
+                padding: "38px 44px",
+                borderRadius: 30,
+                background: "rgba(255,255,255,0.07)",
+                backdropFilter: "blur(28px) saturate(140%)",
+                border: "1px solid rgba(255,255,255,0.16)",
+                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.28), 0 30px 60px rgba(0,0,0,0.35)",
+                opacity: Math.min(1, d * 1.3),
+                transform: `translateY(${(1 - d) * 60}px)`,
+              }}
+            >
+              <div style={{ fontFamily: font.display, fontSize: fit(it.label.length, 58, 38, 840, 0.55), fontWeight: 700, letterSpacing: -1.5, color: c.ink }}>{it.label}</div>
+              {it.note ? <div style={{ fontFamily: font.display, fontSize: 32, color: "#c3ccd9", marginTop: 10 }}>{it.note}</div> : null}
+            </div>
+          );
+        })}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
 const SCENES: Record<string, React.FC<SceneProps>> = {
   screenshot: HeroScene,
   statement: StatementScene,
@@ -918,6 +1207,12 @@ const SCENES: Record<string, React.FC<SceneProps>> = {
   stat: StatScene,
   diagram: DiagramScene,
   repo_card: HeroScene,
+  diff: DiffScene,
+  meter: MeterScene,
+  stars: StarsScene,
+  demo: DemoScene,
+  hud: HudScene,
+  glass: GlassScene,
 };
 
 /* ------------------------------------------------------------ end card */

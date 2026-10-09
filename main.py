@@ -75,9 +75,11 @@ from pipeline import spec as spec_mod
 from pipeline.models import (
     Caption,
     CueKind,
+    DemoClip,
     EpisodeScript,
     ReadmeSection,
     RepoCandidate,
+    StarPoint,
     SubjectCandidate,
     VideoScript,
     VideoSpec,
@@ -737,6 +739,7 @@ def _render_one(
     )
 
     sections = _readme_sections(cfg, repo, script, run_dir, run_key)
+    star_series, demo = _device_data(cfg, repo, script, run_dir, run_key)
 
     audio_src = renderer.stage_asset(audio_path, cfg.video_dir, run_key)
     video_spec: VideoSpec = spec_mod.build_spec(
@@ -745,6 +748,8 @@ def _render_one(
         page_src=page_src,
         page_aspect=page_aspect,
         sections=sections,
+        star_series=star_series,
+        demo=demo,
         # The ask is audio no visual cue was written for, so the spec needs to
         # know its words to give it a scene of its own.
         spoken_cta=cta_line,
@@ -846,6 +851,38 @@ def _readme_sections(
         out[needle] = ReadmeSection(src=src, w=entry["w"], h=entry["h"], lines=entry["lines"])
     console.print(f"  [dim]README sections: {len(out)} of {len(needles)}[/]")
     return out
+
+
+def _device_data(
+    cfg: Settings, repo: RepoCandidate, script: VideoScript, run_dir: Path, run_key: str
+) -> tuple[list[StarPoint], DemoClip | None]:
+    """The real data behind a stars or demo cue, fetched only when one is asked for.
+
+    Cached in the run folder like the README blocks. Either may come back empty,
+    and `build_spec` then draws today's star count or the README hero instead.
+    """
+    kinds = {c.kind for c in script.visual_cues}
+    if cfg.reel_format != "ad" or not kinds & {CueKind.STARS, CueKind.DEMO}:
+        return [], None
+    from pipeline import extras
+
+    series: list[StarPoint] = []
+    if CueKind.STARS in kinds:
+        raw = extras.star_series(cfg.star_history_path, repo.full_name, repo.stars, run_dir)
+        series = [StarPoint(**p) for p in raw]
+    demo = None
+    if CueKind.DEMO in kinds:
+        with console.status("Fetching the README's demo..."):
+            meta = extras.fetch_demo(
+                repo.readme, repo.full_name, run_dir, cfg.video_dir, cfg.github_token
+            )
+        if meta:
+            src = renderer.stage_asset(run_dir / meta["file"], cfg.video_dir, run_key)
+            demo = DemoClip(src=src, w=meta["w"], h=meta["h"], seconds=meta["seconds"])
+    console.print(
+        f"  [dim]star curve: {len(series)} points; demo: {'found' if demo else 'none'}[/]"
+    )
+    return series, demo
 
 
 def _run_batch(

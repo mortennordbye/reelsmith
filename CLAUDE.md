@@ -119,8 +119,9 @@ figures, a typing command). Measure it with `--cohorts recipe`, where
 
 The shape: the README hero under the hook, then one **device** per beat of the
 script, chosen by the scriptwriter from a fixed menu (`statement`, `poster`,
-`verdict`, `compare`, `bars`, `command`, `files`, `readme`, plus the classic
-kinds drawn in the same style), then an end card with the repo's numbers and
+`verdict`, `compare`, `bars`, `command`, `files`, `readme`, and since
+2026-10-09 `diff`, `meter`, `stars`, `demo`, `hud` and `glass`, plus the
+classic kinds drawn in the same style), then an end card with the repo's numbers and
 the brand's `endcard_handle`. `video/src/ad/AdReel.tsx` draws it;
 `VideoScript._check_ad_cues` refuses a cue that would not fit a phone; the menu
 is `_AD_CUES` in `pipeline/scriptwriter.py`.
@@ -150,6 +151,21 @@ Five things about it are load bearing:
 - **Illustrations are allowed, invented numbers are not.** A verdict or a
   compare may show a representative case the README describes; every figure
   must be real. That is the trade Morten chose for an unreviewed format.
+
+**`stars` and `demo` draw data the pipeline fetches, never the model**
+(`pipeline/extras.py`), and each degrades to a plain star count or the README
+hero when the data is missing. Two things about them are not obvious:
+
+- **GitHub no longer lists stargazers.** The REST list answers 404 with any
+  token and GraphQL reports a total of zero (checked 2026-10-09), so the
+  star-history.com sampling trick is gone. The curve is this account's own
+  nightly snapshots from `star_history.json`, which only covers the nights the
+  repo was a candidate.
+- **A README video is a `user-attachments` link that 404s outside a browser.**
+  The README rendered through the API carries the same asset as a signed
+  `private-user-images` URL, which is what gets downloaded. When the host has
+  no system ffmpeg, Remotion's bundled one converts it; it needs its own
+  directory on the loader path and has no `fps` filter.
 
 Two things the first real render (antirez/ds4) got wrong, both fixed and both
 easy to reintroduce: **the ask always splits the timeline in this format**,

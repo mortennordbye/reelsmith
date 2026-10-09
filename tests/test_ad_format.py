@@ -248,3 +248,117 @@ def test_the_ask_always_gets_the_end_card_in_the_ad_format():
     # "Follow" is the ninth word, at 4.0s: frame 120, one second after "Clone".
     assert ad.ctaFromFrame == 120
     assert classic.ctaFromFrame is None
+
+
+# --------------------------------------------------------------------------
+# The devices added 2026-10-09
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("cue", "message"),
+    [
+        ({"kind": "diff", "code": "+ only added"}, "2 to 8 lines"),
+        ({"kind": "diff", "code": "+ a\n+ b"}, "one '-' line"),
+        ({"kind": "diff", "code": "- a\nb"}, "must start with"),
+        ({"kind": "diff", "code": "- a\n+ " + "x" * 50}, "under 44"),
+        ({"kind": "meter", "items": [{"label": "a", "value": 5}]}, "value and max"),
+        ({"kind": "meter", "items": [{"label": "a", "value": 5, "max": 2}]}, "value <= max"),
+        ({"kind": "hud", "items": [{"label": "a"}]}, "2 to 4 items"),
+        ({"kind": "glass", "items": [{"label": c} for c in "abcd"]}, "2 or 3 items"),
+    ],
+)
+def test_a_new_device_outside_its_limits_is_refused(cue, message):
+    with pytest.raises(ValidationError, match=message):
+        ad_script(cue)
+
+
+def test_stars_and_demo_appear_at_most_once():
+    with pytest.raises(ValidationError, match="stars cue at most once"):
+        ad_script({"kind": "stars"}, {"kind": "statement", "title": "x"}, {"kind": "stars"})
+
+
+def _device_spec(series=None, demo=None):
+    from pipeline.models import DemoClip, StarPoint
+
+    s = ad_script(
+        {"kind": "repo_card", "spoken_excerpt": "z y"},
+        {"kind": "stars", "spoken_excerpt": "a b"},
+        {"kind": "demo", "spoken_excerpt": "c d"},
+        {"kind": "glass", "spoken_excerpt": "e f", "items": [{"label": "x"}, {"label": "y"}]},
+        {"kind": "diff", "spoken_excerpt": "g h", "code": "- old()\n+ new()"},
+        {"kind": "meter", "spoken_excerpt": "i j",
+         "items": [{"label": "m", "value": 1, "max": 4}]},
+    )
+    return build_spec(
+        candidate("a/b", stars=1234), s, captions_from("z y a b c d e f g h i j"), 12.0, "v.wav",
+        cfg(), screenshot_src="hero.png",
+        star_series=[StarPoint(**p) for p in series or []],
+        demo=DemoClip(**demo) if demo else None,
+    )
+
+
+def test_fetched_data_rides_on_its_scene():
+    spec = _device_spec(
+        series=[{"t": "2026-01-01", "v": 1}, {"t": "2026-05-01", "v": 600},
+                {"t": "2026-10-09", "v": 1234}],
+        demo={"src": "d.mp4", "w": 800, "h": 600, "seconds": 4.0},
+    )
+    kinds = {s.kind: s for s in spec.scenes}
+    assert kinds[CueKind.STARS].series[-1].v == 1234
+    assert kinds[CueKind.DEMO].demo.src == "d.mp4"
+    assert kinds[CueKind.GLASS].imageSrc == "hero.png"
+
+
+def test_a_device_with_no_data_degrades_rather_than_drawing_nothing():
+    # A curve that could not be read is today's count; a README with no demo
+    # shows its hero. Neither leaves an empty frame.
+    kinds = [s.kind for s in _device_spec().scenes]
+    assert CueKind.STARS not in kinds and CueKind.DEMO not in kinds
+    stat = next(s for s in _device_spec().scenes if s.kind is CueKind.STAT)
+    assert (stat.statValue, stat.statLabel) == ("1,234", "GitHub stars")
+
+
+def test_the_classic_fallback_maps_the_new_devices_too():
+    spec = _device_spec(
+        series=[{"t": "2026-01-01", "v": 1}, {"t": "2026-05-01", "v": 9},
+                {"t": "2026-10-09", "v": 20}],
+        demo={"src": "d.mp4", "w": 800, "h": 600, "seconds": 4.0},
+    )
+    classic = to_classic(spec)
+    classic_kinds = {"repo_card", "code", "stat", "bullets", "terminal", "screenshot", "diagram"}
+    assert {s.kind.value for s in classic.scenes} <= classic_kinds
+    assert all(s.demo is None and not s.series for s in classic.scenes)
+
+
+@pytest.mark.parametrize(
+    ("readme", "want"),
+    [
+        ("![demo](docs/demo.gif)", "https://raw.githubusercontent.com/o/r/HEAD/docs/demo.gif"),
+        ('<img src="https://x.io/a.png"> <video src="https://x.io/b.mp4">', "https://x.io/b.mp4"),
+        ("text\nhttps://github.com/user-attachments/assets/0f4c2a9e-1111-2222-3333-444455556666\n",
+         "https://github.com/user-attachments/assets/0f4c2a9e-1111-2222-3333-444455556666"),
+        ("![logo](logo.png) ![badge](https://img.shields.io/x.svg)", None),
+        ("![d](https://github.com/o/r/blob/main/demo.gif)", "https://github.com/o/r/raw/main/demo.gif"),
+    ],
+)
+def test_the_demo_is_the_first_moving_image_in_the_readme(readme, want):
+    from pipeline.extras import demo_url
+
+    assert demo_url(readme, "o/r") == want
+
+
+def test_the_star_curve_is_the_accounts_own_snapshots_plus_today(tmp_path):
+    import json as _json
+
+    from pipeline.extras import star_series
+
+    history = tmp_path / "star_history.json"
+    history.write_text(_json.dumps({"o/r": {"2026-10-01": 100, "2026-09-30": 40}}))
+    run = tmp_path / "run"
+    run.mkdir()
+    series = star_series(history, "o/r", 250, run)
+    assert [p["v"] for p in series] == [40, 100, 250]
+    # Cached, so a resume draws the same curve whatever the store says later.
+    history.write_text("{}")
+    assert star_series(history, "o/r", 999, run) == series
