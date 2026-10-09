@@ -312,6 +312,41 @@ async def test_a_failed_upload_status_is_terminal(meta):
     assert exc.value.video_created is True
 
 
+async def test_a_reel_meta_cannot_read_back_yet_is_polled_again(meta):
+    """Row 415 on 2026-10-07: the first status read said the video did not
+    exist, the row was failed, and the Reel was live on the Page throughout."""
+    meta.facebook.status_not_found_polls = 2
+
+    async with meta.client() as http:
+        result = await facebook.await_published(
+            http,
+            video_id="fb-video-1",
+            token="page-token",
+            api_version="v23.0",
+            poll_interval_s=0,
+        )
+
+    assert result.video_id == "fb-video-1"
+    assert meta.facebook.phases.count("status") == 3
+
+
+async def test_any_other_status_refusal_is_still_terminal(meta):
+    meta.facebook.status_error = {"code": 190, "message": "Invalid OAuth access token"}
+
+    async with meta.client() as http:
+        with pytest.raises(facebook.PublishError, match="Status check refused") as exc:
+            await facebook.await_published(
+                http,
+                video_id="fb-video-1",
+                token="page-token",
+                api_version="v23.0",
+                poll_interval_s=0,
+            )
+
+    assert exc.value.video_created is True
+    assert meta.facebook.phases.count("status") == 1
+
+
 async def test_a_timeout_does_not_hand_the_slot_back(meta):
     """The Reel may be seconds from going live, and starting again would
     publish it twice."""
