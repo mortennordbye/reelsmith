@@ -1763,6 +1763,39 @@ async def mark_queue_published(
     await conn.commit()
 
 
+async def record_external_post(
+    conn: aiosqlite.Connection,
+    *,
+    account_id: str,
+    media_id: str,
+    permalink: str,
+    published_at: datetime,
+    hook: str = "",
+    recipe: str = "",
+) -> int:
+    """A post made outside the queue, recorded as a published row.
+
+    Only the LinkedIn export import calls this, for posts written by hand
+    before the gateway posted anything. The boards list published queue rows,
+    so a post with no row would have a reading and nowhere to show it. No
+    video, no caption and no link: what the row holds is what is known.
+    Nothing schedules a published row, so it can never be sent again.
+    """
+    when = iso(published_at)
+    async with conn.execute(
+        """
+        INSERT INTO queued_posts
+            (account_id, state, video_name, cover_name, caption, keyword, link,
+             position, media_id, permalink, published_at, created_at, recipe, hook)
+        VALUES (?, ?, '', NULL, '', 'send', '', 0, ?, ?, ?, ?, ?, ?)
+        """,
+        (account_id, QUEUE_PUBLISHED, media_id, permalink, when, when, recipe, hook),
+    ) as cur:
+        queued_id = int(cur.lastrowid or 0)
+    await conn.commit()
+    return queued_id
+
+
 async def resolve_media_id(
     conn: aiosqlite.Connection, queued_id: int, *, media_id: str, permalink: str
 ) -> None:

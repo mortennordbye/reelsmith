@@ -702,8 +702,12 @@ touching it:
   `scripts/authorise.py linkedin` again. `"account"` would have claimed the
   gateway refreshes it, which is false. Post statistics need
   `r_member_postAnalytics`, which is not self-serve, so the numbers come from
-  LinkedIn's own analytics export (an import, not built yet: it waits on a real
-  export to parse) rather than from a sweep. Scraping the analytics pages is
+  LinkedIn's own analytics export, imported on the Performance page
+  (`gateway/linkedin_export.py`), rather than from a sweep. **The export gives
+  impressions and engagements per post and nothing finer**, for at most fifty
+  posts, and its post URLs carry the id the Posts API returned, so a published
+  row is matched on that id. A post made by hand gets a published row with
+  `recipe` `imported` so it shows on the boards. Scraping the analytics pages is
   against LinkedIn's terms on a real person's account and is not built.
 - **A LinkedIn row has no video.** `video_name` is empty, which the queue
   route accepts for a LinkedIn account and refuses for every other platform;

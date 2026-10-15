@@ -52,6 +52,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
@@ -640,7 +641,40 @@ async def performance_page(request: Request, brand: str) -> Any:
         return _home(request)
     sections = await panel.performance(conn, cfg, found, shell["destinations"])
     return _render(
-        request, "performance.html", "performance", shell, brand=found, sections=sections
+        request, "performance.html", "performance", shell, brand=found, sections=sections,
+        imported=request.query_params.get("imported", "")[:200],
+    )
+
+
+@router.post("/b/{brand}/performance/import", name="linkedin_import")
+async def linkedin_import(
+    request: Request, brand: str, file: Annotated[UploadFile, File()]
+) -> Any:
+    """Read LinkedIn's analytics export into this brand's LinkedIn board.
+
+    The only way LinkedIn's numbers arrive, since reading them through the API
+    is not self-serve. Same file twice changes nothing.
+    """
+    from gateway import linkedin_export
+
+    conn = request.app.state.db
+    shell, _ = await _shell(request)
+    found = panel.find_brand(shell["brands"], brand)
+    account = found.on(db.PLATFORM_LINKEDIN) if found else None
+    if account is None:
+        raise HTTPException(status_code=404, detail="this brand has no LinkedIn profile")
+    payload = await file.read()
+    if not payload or len(payload) > _IMPORT_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="the file is empty or over 5 MB")
+    try:
+        export = linkedin_export.parse(payload)
+    except linkedin_export.ExportError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    stored = await linkedin_export.store(conn, str(account["account_id"]), export)
+    log.info("LinkedIn export for %s: %s", found.name, stored.summary())
+    target = request.url_for("performance_page", brand=found.path)
+    return RedirectResponse(
+        f"{target}?imported={quote(stored.summary())}", status_code=303
     )
 
 
@@ -1132,6 +1166,8 @@ async def edit(
 # minus video, since a post here is text with a card or an image.
 _COMPOSE_IMAGES = frozenset({".png", ".jpg", ".jpeg"})
 _COMPOSE_MAX_BYTES = 8 * 1024 * 1024
+# A year's export is about 20 KB.
+_IMPORT_MAX_BYTES = 5 * 1024 * 1024
 
 
 @router.post("/b/{brand}/compose", name="compose")

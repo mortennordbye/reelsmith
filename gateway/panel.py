@@ -178,7 +178,23 @@ def subject_of(row: Any) -> str:
     if repo:
         return repo
     stem = Path(str(row["video_name"] or "")).stem
-    return _DIGEST.sub("", stem) or stem or "untitled"
+    if stem:
+        return _DIGEST.sub("", stem) or stem
+    # A LinkedIn post has no file. What it points at, where it points at
+    # anything, and otherwise how it got here.
+    link = _field(row, "link")
+    if link:
+        return link.split("://", 1)[-1].rstrip("/")
+    if _field(row, "recipe") == "imported":
+        return "posted by hand, imported from the export"
+    return _field(row, "title") or "untitled"
+
+
+def _field(row: Any, key: str) -> str:
+    try:
+        return str(row[key] or "")
+    except (IndexError, KeyError):
+        return ""
 
 
 # --------------------------------------------------------------------------
@@ -1145,14 +1161,11 @@ POST_COLUMNS: dict[str, tuple[Column, ...]] = {
         Column("likes", "Reactions"),
         Column("comments", "Comments"),
     ),
-    # What LinkedIn's analytics export reports per post, filled by the import.
+    # All LinkedIn's analytics export reports per post. From `extra`, so a
+    # post on only one of its two lists is blank in the other, not zero.
     db.PLATFORM_LINKEDIN: (
-        Column("views", "Impressions"),
-        Column("reach", "Reached"),
-        Column("likes", "Reactions"),
-        Column("comments", "Comments"),
-        Column("shares", "Reposts"),
-        Column("saved", "Saves"),
+        Column("impressions", "Impressions"),
+        Column("engagements", "Engagements"),
     ),
     db.PLATFORM_TIKTOK: (
         Column("views", "Views"),
@@ -1242,6 +1255,9 @@ DAY_LABELS = {
     "page_daily_follows_unique": "follows",
     "page_daily_unfollows_unique": "unfollows",
     "page_views_total": "Page views",
+    "impressions": "impressions",
+    "engagements": "engagements",
+    "new_followers": "new followers",
 }
 LIFETIME_LABELS = {"media_count": "posts", "videoCount": "videos", "viewCount": "lifetime views"}
 

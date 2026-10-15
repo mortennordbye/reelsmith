@@ -30,7 +30,9 @@ Three limits that shape everything else:
 - **Reading post statistics is not self-serve.** `memberCreatorPostAnalytics`
   needs `r_member_postAnalytics`, from the Community Management API, which
   needs a vetted application (business email, organisation, Page). So the
-  numbers come from LinkedIn's own analytics export for now. Do not add the
+  numbers come from LinkedIn's own analytics export: on linkedin.com,
+  Analytics, Content, Export, past 365 days, then drop the XLSX on the brand's
+  Performance page. Per post it carries impressions and engagements only. Do not add the
   scope to the consent until it is granted: asking for a scope the app does not
   hold breaks the consent screen rather than being ignored.
 - **The API does not scrape a link card.** The web composer reads Open Graph
