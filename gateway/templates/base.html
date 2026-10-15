@@ -35,6 +35,8 @@
       --good: #56d364; --warn: #d4a72c; --bad: #ef6055;
       --neon: #2ee6d6;
       --ig: #c98ae0; --yt: #ff6b5e; --tt: #4fd1c5; --fb: #7aa2f7;
+      /* Green, because LinkedIn's own blue sits on top of Facebook's here. */
+      --li: #a6d86b;
       --r-sm: 6px; --r-md: 10px;
       --serif: Fraunces, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
       --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
@@ -210,10 +212,12 @@
     .platform.youtube { color: var(--yt); background: #2b1310; border: 1px solid #6b2b24; }
     .platform.tiktok { color: var(--tt); background: #10262b; border: 1px solid #24575e; }
     .platform.facebook { color: var(--fb); background: #101827; border: 1px solid #29406b; }
+    .platform.linkedin { color: var(--li); background: #141c0f; border: 1px solid #3a5226; }
     .dots { display: inline-flex; gap: 4px; vertical-align: middle; }
     .dots i { width: 10px; height: 10px; border-radius: 3px; display: block; }
     .dots i.instagram { background: var(--ig); } .dots i.youtube { background: var(--yt); }
     .dots i.tiktok { background: var(--tt); } .dots i.facebook { background: var(--fb); }
+    .dots i.linkedin { background: var(--li); }
     .dots i.off { background: transparent; box-shadow: inset 0 0 0 1.5px var(--line-2); }
     .dots i.paused { opacity: .3; }
     .dots i.check { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--warn); }
@@ -222,6 +226,7 @@
     .chip { display: inline-flex; align-items: center; gap: 6px; font: 12px/1 var(--mono); padding: 5px 8px 5px 7px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--bg); color: var(--ink); white-space: nowrap; }
     .chip.instagram svg { color: var(--ig); } .chip.youtube svg { color: var(--yt); }
     .chip.tiktok svg { color: var(--tt); } .chip.facebook svg { color: var(--fb); }
+    .chip.linkedin svg { color: var(--li); }
     .chip .st { font: 600 10px/1 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--dim); }
     .chip.st-approved .st { color: var(--good); }
     .chip.st-draft .st { color: var(--warn); }
@@ -256,6 +261,9 @@
     .vrow.play .vbody { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
     .vrow.play .acts { justify-content: flex-start; }
     .player { width: 220px; aspect-ratio: 9 / 16; max-width: 100%; background: #000; border-radius: var(--r-md); border: 1px solid var(--line-2); object-fit: contain; }
+    .compose { display: grid; gap: 8px; max-width: 640px; }
+    .compose input:not([type=checkbox]), .compose textarea { width: 100%; }
+    img.player { aspect-ratio: auto; height: auto; align-self: start; }
     .player.gone { display: flex; align-items: center; justify-content: center; padding: 14px; text-align: center; background: var(--panel); }
     details.chipmenu { position: relative; }
     details.chipmenu > summary { list-style: none; }
@@ -284,6 +292,7 @@
     .bar i { display: block; height: 10px; border-radius: 0 3px 3px 0; min-width: 2px; }
     .bar.instagram i { background: var(--ig); } .bar.youtube i { background: var(--yt); }
     .bar.tiktok i { background: var(--tt); } .bar.facebook i { background: var(--fb); }
+    .bar.linkedin i { background: var(--li); }
     .legend { display: flex; gap: 16px; font-size: 12px; color: var(--dim); margin-bottom: 10px; }
     .legend span { display: inline-flex; align-items: center; gap: 6px; }
     .legend i { width: 10px; height: 10px; border-radius: 3px; }

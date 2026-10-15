@@ -664,7 +664,16 @@ PLATFORM_INSTAGRAM = "instagram"
 PLATFORM_YOUTUBE = "youtube"
 PLATFORM_TIKTOK = "tiktok"
 PLATFORM_FACEBOOK = "facebook"
-PLATFORMS = (PLATFORM_INSTAGRAM, PLATFORM_YOUTUBE, PLATFORM_TIKTOK, PLATFORM_FACEBOOK)
+# A personal profile, posting text and article cards rather than video. Its
+# account key is the OpenID `sub`, and its token sits on the row like a Page's.
+PLATFORM_LINKEDIN = "linkedin"
+PLATFORMS = (
+    PLATFORM_INSTAGRAM,
+    PLATFORM_YOUTUBE,
+    PLATFORM_TIKTOK,
+    PLATFORM_FACEBOOK,
+    PLATFORM_LINKEDIN,
+)
 
 # The order boards and switcher marks are shown in, everywhere. Not
 # alphabetical and not insertion order: it is the order the fan-out writes

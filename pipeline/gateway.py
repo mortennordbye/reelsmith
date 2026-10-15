@@ -676,7 +676,11 @@ def fetch_pending_count(cfg: Settings, *, client: httpx.Client | None = None) ->
     if not _configured(cfg):
         return None
     destination = (
-        cfg.ig_user_id or cfg.youtube_channel_id or cfg.facebook_page_id or cfg.tiktok_open_id
+        cfg.ig_user_id
+        or cfg.youtube_channel_id
+        or cfg.facebook_page_id
+        or cfg.tiktok_open_id
+        or cfg.linkedin_person_id
     )
     params = {"account_id": destination} if destination else {}
     url = f"{cfg.gateway_url.rstrip('/')}/api/queue"

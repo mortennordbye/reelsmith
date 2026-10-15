@@ -30,7 +30,7 @@ from urllib.parse import quote
 
 import aiosqlite
 
-from gateway import db, facebook, publisher, schedule, tiktok, youtube
+from gateway import db, facebook, linkedin, publisher, schedule, tiktok, youtube
 from gateway.config import GatewaySettings
 from gateway.graph import GraphClient
 from gateway.metrics import Metrics
@@ -71,6 +71,7 @@ async def publish_queued(
         db.PLATFORM_YOUTUBE: publish_queued_youtube,
         db.PLATFORM_TIKTOK: publish_queued_tiktok,
         db.PLATFORM_FACEBOOK: publish_queued_facebook,
+        db.PLATFORM_LINKEDIN: publish_queued_linkedin,
     }.get(platform)
 
     if publisher_for is None:
@@ -590,6 +591,109 @@ async def publish_queued_facebook(
         "Published queue %d to Facebook Page %s as %s (%s)",
         queued_id, page_id, result.video_id, result.permalink or "no permalink",
     )
+    return True, False
+
+
+_IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+
+
+async def publish_queued_linkedin(
+    conn: aiosqlite.Connection,
+    graph: GraphClient,
+    cfg: GatewaySettings,
+    metrics: Metrics,
+    *,
+    account: Any,
+    queued: Any,
+) -> tuple[bool, bool]:
+    """Publish one already-claimed row as a post on a personal LinkedIn profile.
+
+    **No video.** `caption` is the post, `link` makes it an article card,
+    `title` names the card and `cover_name` is its thumbnail, or the post's
+    image when there is no link.
+
+    The same two-commit shape as the other four, with the line one step later:
+    the thumbnail upload creates nothing visible, so its failures are retried,
+    and `POST /rest/posts` is the commitment. `set_container` is called with
+    the post urn the moment it exists, which is also what makes a later
+    `cancel` refuse the row.
+    """
+    queued_id = int(queued["id"])
+    person_id = str(account["account_id"])
+    token = account["access_token"]
+    platform = db.PLATFORM_LINKEDIN
+
+    async def fail(reason: str) -> tuple[bool, bool]:
+        await db.set_queue_state(conn, queued_id, db.QUEUE_FAILED, failure=reason)
+        metrics.publish_failures.labels(platform=platform).inc()
+        log.error("Queue %d: %s", queued_id, reason)
+        return False, False
+
+    if not token:
+        return await fail("no LinkedIn token stored")
+    expires = db.parse_iso(account["token_expires_at"])
+    if expires and expires <= db.now():
+        # A self-serve token cannot be refreshed, so a retry cannot fix this
+        # and a row waiting on it would fail at every slot until somebody
+        # walked the consent trip. Said in those words.
+        return await fail(
+            "LinkedIn token expired; walk scripts/authorise.py linkedin again"
+        )
+
+    commentary = str(queued["caption"] or "").strip()
+    if not commentary:
+        return await fail("no post text")
+    if len(commentary) > linkedin.MAX_COMMENTARY:
+        return await fail(
+            f"post text is {len(commentary)} characters, LinkedIn takes {linkedin.MAX_COMMENTARY}"
+        )
+
+    image_urn = ""
+    cover = str(queued["cover_name"] or "")
+    try:
+        if cover:
+            path = Path(cfg.covers_dir) / cover
+            content_type = _IMAGE_TYPES.get(path.suffix.lower())
+            if content_type is None or not path.is_file():
+                return await fail(f"no uploaded image named {cover!r}")
+            image_urn = await linkedin.upload_image(
+                graph.http,
+                token=token,
+                person_id=person_id,
+                payload=path.read_bytes(),
+                content_type=content_type,
+                api_version=cfg.linkedin_api_version,
+            )
+        body = linkedin.post_body(
+            person_id=person_id,
+            commentary=commentary,
+            link=str(queued["link"] or ""),
+            title=str(queued["title"] or ""),
+            image=image_urn,
+        )
+        result = await linkedin.create_post(
+            graph.http, token=token, body=body, api_version=cfg.linkedin_api_version
+        )
+    except linkedin.PublishError as exc:
+        if exc.post_sent:
+            return await fail(f"LinkedIn may have the post: {exc}")
+        attempts = int(queued["attempts"] or 0)
+        exhausted = attempts >= cfg.max_publish_attempts
+        state = db.QUEUE_FAILED if exhausted else db.QUEUE_APPROVED
+        await db.set_queue_state(conn, queued_id, state, failure=str(exc))
+        metrics.publish_failures.labels(platform=platform).inc()
+        log.warning(
+            "Queue %d: LinkedIn post not made (attempt %d/%d): %s",
+            queued_id, attempts, cfg.max_publish_attempts, exc,
+        )
+        return False, not exhausted
+
+    await db.set_container(conn, queued_id, result.post_urn)
+    await db.mark_queue_published(
+        conn, queued_id, media_id=result.post_urn, permalink=result.permalink
+    )
+    metrics.posts_published.labels(platform=platform).inc()
+    log.info("Published queue %d to LinkedIn as %s", queued_id, result.post_urn)
     return True, False
 
 

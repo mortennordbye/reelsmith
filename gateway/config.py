@@ -314,6 +314,15 @@ class GatewaySettings(BaseSettings):
     facebook_publish_timeout_s: int = 300
     facebook_poll_interval_s: int = 5
 
+    # --- LinkedIn ----------------------------------------------------------
+    # The `LinkedIn-Version` header every `/rest` call carries, as YYYYMM.
+    # LinkedIn sunsets a version about a year after it ships, and a sunset
+    # version fails every call with a 426, so this moves forward by hand
+    # roughly once a year. No flag gates LinkedIn, for the YouTube and
+    # Facebook reason: nothing on this path runs unless a slot fires, and a
+    # self-serve token has no refresh to run.
+    linkedin_api_version: str = "202609"
+
     # --- Storage -----------------------------------------------------------
     db_path: Path = Path("gateway/dev.sqlite3")
     covers_dir: Path = Path("gateway/covers")
