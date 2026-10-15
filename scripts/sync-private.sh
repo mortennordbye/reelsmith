@@ -159,6 +159,8 @@ ENV_PROJECTED_KEYS=(
   YOUTUBE_CHANNEL_ID
   TIKTOK_OPEN_ID
   FACEBOOK_PAGE_ID
+  # The LinkedIn profile, which the nightly post drafter needs to queue to.
+  LINKEDIN_PERSON_ID
   # Not an id and not a secret: the name this account's destinations are
   # grouped under in the panel. It crosses so that `--destinations` answers the
   # same on the render host as it does here, which is the machine somebody is

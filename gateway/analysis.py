@@ -64,6 +64,9 @@ _MEASURED = {
     "youtube": ("views", "likes", "comments", "shares"),
     "tiktok": ("views", "likes", "comments", "shares"),
     "facebook": ("views", "likes", "comments"),
+    # LinkedIn's analytics export gives impressions and engagements per post
+    # and nothing else; engagements has no core column and lives in `extra`.
+    "linkedin": ("views",),
 }
 
 

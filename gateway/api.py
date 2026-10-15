@@ -34,6 +34,7 @@ from gateway.models import (
     CoveredSubject,
     CoverUploaded,
     FacebookAccountRegistration,
+    LinkedInAccountRegistration,
     PostRegistration,
     Queued,
     QueueSubmission,
@@ -450,6 +451,32 @@ async def register_facebook_account(
     return Registered(detail=f"stored {body.page_id}")
 
 
+@router.post(
+    "/api/accounts/linkedin", response_model=Registered, dependencies=[Depends(require_token)]
+)
+async def register_linkedin_account(
+    request: Request, body: LinkedInAccountRegistration
+) -> Registered:
+    """Register a personal LinkedIn profile to post to.
+
+    One write, as on Facebook: the token and its expiry are the account row.
+    Nothing here refreshes it, because the self-serve product issues no refresh
+    token; the panel raises the expiry before it lands.
+    """
+    conn = request.app.state.db
+    await db.upsert_account(
+        conn,
+        account_id=body.person_id,
+        access_token=body.access_token,
+        username=body.username,
+        expires_at=db.now() + timedelta(seconds=body.expires_in),
+        platform=db.PLATFORM_LINKEDIN,
+        brand=body.brand,
+    )
+    log.info("Registered the LinkedIn profile %s", body.person_id)
+    return Registered(detail=f"stored {body.person_id}")
+
+
 @router.post("/api/covers", response_model=CoverUploaded, dependencies=[Depends(require_token)])
 async def upload_cover(
     request: Request,
@@ -562,6 +589,14 @@ async def enqueue(request: Request, body: QueueSubmission) -> Queued:
     would fail at publish time, days later, with nobody watching.
     """
     cfg = request.app.state.cfg
+    if not body.video_name:
+        # Text is a LinkedIn shape and nothing else's. Every other publisher
+        # would fail this row at its slot, days from now, for want of a file.
+        account = await db.get_account(request.app.state.db, body.account_id)
+        if account is None or account["platform"] != db.PLATFORM_LINKEDIN:
+            raise HTTPException(
+                status_code=422, detail="video_name is required except on LinkedIn"
+            )
     media_dir = Path(cfg.covers_dir)
     for name in (body.video_name, body.cover_name):
         if name and not (media_dir / name).is_file():
@@ -620,8 +655,14 @@ async def list_queue(
         "queue": [
             {
                 "id": row["id"],
+                "account_id": row["account_id"],
                 "state": row["state"],
                 "video_name": row["video_name"],
+                # The LinkedIn drafter dedupes on the link and varies its
+                # opener against the last caption. Additive, so an older
+                # pipeline reads past both.
+                "link": row["link"],
+                "caption": row["caption"],
                 "repo_full_name": row["repo_full_name"],
                 "keyword": row["keyword"],
                 "media_id": row["media_id"],

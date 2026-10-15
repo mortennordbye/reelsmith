@@ -690,6 +690,48 @@ no way to notice when only one of them did. `platform_name` in `_icons.html` is
 the macro, and the fallback is still Instagram for the reason the account
 readers default to it.
 
+### LinkedIn, a fifth destination that is not video
+
+Built 2026-10-15 for one personal profile, which is all it will ever serve.
+`docs/linkedin-api-setup.md` is the runbook; what is worth knowing before
+touching it:
+
+- **Free, and that decides the shape.** The self-serve *Share on LinkedIn*
+  product posts; it issues a 60 day token and **no refresh token**, so the
+  panel's `token_clock` is `"consent"`, a new value, and renewing is walking
+  `scripts/authorise.py linkedin` again. `"account"` would have claimed the
+  gateway refreshes it, which is false. Post statistics need
+  `r_member_postAnalytics`, which is not self-serve, so the numbers come from
+  LinkedIn's own analytics export, imported on the Performance page
+  (`gateway/linkedin_export.py`), rather than from a sweep. **The export gives
+  impressions and engagements per post and nothing finer**, for at most fifty
+  posts, and its post URLs carry the id the Posts API returned, so a published
+  row is matched on that id. A post made by hand gets a published row with
+  `recipe` `imported` so it shows on the boards. Scraping the analytics pages is
+  against LinkedIn's terms on a real person's account and is not built.
+- **A LinkedIn row has no video.** `video_name` is empty, which the queue
+  route accepts for a LinkedIn account and refuses for every other platform;
+  `caption` is the post, `link` makes it an article card, `title` names the
+  card and `cover_name` is its thumbnail. The Posts API does not scrape a link
+  card, so the thumbnail is uploaded through the Images API at publish.
+- **The retry line is `POST /rest/posts`.** The thumbnail upload creates
+  nothing visible and is retried; a 5xx or a timeout after the post was sent
+  stops the row, because a second copy under somebody's own name is worse
+  than a missed slot.
+- **The drafter reads the published blog, never a checkout**
+  (`pipeline/linkedin.py`, `main.py --linkedin-draft`, `pipeline=linkedin` in
+  a brand's settings for the nightly). A queue row naming the entry's URL in
+  any state means done, so **cancelling a draft is how to say no post for
+  this one**. `linkedin_max_age_days` bounds the first run, which would
+  otherwise draft the whole archive. Drafts wait for review unless the brand's
+  `linkedin_auto_arm` is on.
+- **The style guide is private**, at `accounts/<name>/ref/linkedin-style.md`,
+  because it is one identifiable person's voice and numbers. `ref/` is what
+  `sync-private.sh` already carries. The feed URL is in the account's `.env`
+  for the same reason; nothing in this repo names the blog.
+- **LinkedIn's blue is Facebook's blue here**, so the panel marks LinkedIn in
+  green (`--li`).
+
 ### The public pages, and why they are not on GitHub
 
 `GET /`, `/privacy`, `/terms`, `/tiktok/callback` and `/facebook/callback` are

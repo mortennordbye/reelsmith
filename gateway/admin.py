@@ -52,8 +52,9 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
@@ -640,7 +641,40 @@ async def performance_page(request: Request, brand: str) -> Any:
         return _home(request)
     sections = await panel.performance(conn, cfg, found, shell["destinations"])
     return _render(
-        request, "performance.html", "performance", shell, brand=found, sections=sections
+        request, "performance.html", "performance", shell, brand=found, sections=sections,
+        imported=request.query_params.get("imported", "")[:200],
+    )
+
+
+@router.post("/b/{brand}/performance/import", name="linkedin_import")
+async def linkedin_import(
+    request: Request, brand: str, file: Annotated[UploadFile, File()]
+) -> Any:
+    """Read LinkedIn's analytics export into this brand's LinkedIn board.
+
+    The only way LinkedIn's numbers arrive, since reading them through the API
+    is not self-serve. Same file twice changes nothing.
+    """
+    from gateway import linkedin_export
+
+    conn = request.app.state.db
+    shell, _ = await _shell(request)
+    found = panel.find_brand(shell["brands"], brand)
+    account = found.on(db.PLATFORM_LINKEDIN) if found else None
+    if account is None:
+        raise HTTPException(status_code=404, detail="this brand has no LinkedIn profile")
+    payload = await file.read()
+    if not payload or len(payload) > _IMPORT_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="the file is empty or over 5 MB")
+    try:
+        export = linkedin_export.parse(payload)
+    except linkedin_export.ExportError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    stored = await linkedin_export.store(conn, str(account["account_id"]), export)
+    log.info("LinkedIn export for %s: %s", found.name, stored.summary())
+    target = request.url_for("performance_page", brand=found.path)
+    return RedirectResponse(
+        f"{target}?imported={quote(stored.summary())}", status_code=303
     )
 
 
@@ -1124,6 +1158,76 @@ async def edit(
         link=link.strip() or None,
         slot_override=override,
         clear_override=clear,
+    )
+    return _back(request)
+
+
+# The pictures a LinkedIn post can carry. The same three the media route takes
+# minus video, since a post here is text with a card or an image.
+_COMPOSE_IMAGES = frozenset({".png", ".jpg", ".jpeg"})
+_COMPOSE_MAX_BYTES = 8 * 1024 * 1024
+# A year's export is about 20 KB.
+_IMPORT_MAX_BYTES = 5 * 1024 * 1024
+
+
+@router.post("/b/{brand}/compose", name="compose")
+async def compose(
+    request: Request,
+    brand: str,
+    text: Annotated[str, Form()],
+    link: Annotated[str, Form()] = "",
+    title: Annotated[str, Form()] = "",
+    arm: Annotated[str, Form()] = "",
+    image: Annotated[UploadFile | None, File()] = None,
+) -> Any:
+    """Queue a LinkedIn post written here rather than by the drafter.
+
+    The panel's one upload, and kept to what it needs: the picture is saved
+    where `/api/media` saves, under the same name rule and the same pruning,
+    so a queued post's image is exempt from the sweep exactly as a video is.
+    """
+    from gateway import api  # the upload helpers, without a cycle at import
+
+    conn, cfg = request.app.state.db, request.app.state.cfg
+    shell, _ = await _shell(request)
+    found = panel.find_brand(shell["brands"], brand)
+    account = found.on(db.PLATFORM_LINKEDIN) if found else None
+    if account is None:
+        raise HTTPException(status_code=404, detail="this brand has no LinkedIn profile")
+
+    text, link, title = text.strip(), link.strip(), title.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="the post needs text")
+    if link and not link.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="link must be an http or https URL")
+
+    cover = None
+    if image is not None and image.filename:
+        suffix = Path(image.filename).suffix.lower()
+        if suffix not in _COMPOSE_IMAGES:
+            raise HTTPException(status_code=415, detail="the image must be png or jpg")
+        payload = await image.read()
+        if not payload or len(payload) > _COMPOSE_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="the image is empty or over 8 MB")
+        media_dir = Path(cfg.covers_dir)
+        media_dir.mkdir(parents=True, exist_ok=True)
+        api._prune_media(media_dir, keep=await db.live_media_names(conn))
+        cover = api.safe_cover_name("linkedin", payload).removesuffix(".png") + suffix
+        (media_dir / cover).write_bytes(payload)
+
+    await db.enqueue_post(
+        conn,
+        account_id=str(account["account_id"]),
+        video_name="",
+        cover_name=cover,
+        caption=text,
+        keyword="send",
+        link=link,
+        approved=bool(arm),
+        title=title[:100],
+        # The opening line is what a reader sees above "see more", so it is
+        # what the schedule shows as the row's hook.
+        hook=text.splitlines()[0][:300],
     )
     return _back(request)
 

@@ -59,6 +59,13 @@ _ENV_TEMPLATE = """\
 # TIKTOK_OPEN_ID=
 # FACEBOOK_PAGE_ID=
 
+# --- LinkedIn (a personal profile, posts rather than video) ---
+# LINKEDIN_PERSON_ID is written by `scripts/authorise.py linkedin`. The feed is
+# the blog the drafter writes posts for, and its style guide lives at
+# accounts/{name}/ref/linkedin-style.md.
+# LINKEDIN_PERSON_ID=
+# LINKEDIN_BLOG_FEED=
+
 # --- End card ---
 # What the second niche's episodes sign off with. Public machinery with no
 # identity in it, so these are empty in a fresh checkout.

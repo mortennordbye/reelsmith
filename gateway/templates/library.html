@@ -20,7 +20,7 @@
 
 {% block body %}
 {% set absent_word = {'pending': 'No reading yet', 'none': 'None stored', 'missing': 'No reading'} %}
-{% set units = {'instagram': 'views · skip', 'youtube': 'views · viewed', 'facebook': 'views', 'tiktok': 'views'} %}
+{% set units = {'instagram': 'views · skip', 'youtube': 'views · viewed', 'facebook': 'views', 'tiktok': 'views', 'linkedin': 'impressions'} %}
 {% set base = url_for('library_page', brand=brand.path) %}
 {% set platform_qs = 'platform=' ~ platform ~ '&' if platform else '' %}
 <header class="ph">

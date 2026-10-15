@@ -204,6 +204,29 @@ class Settings(BaseSettings):
     facebook_app_id: str = ""
     facebook_app_secret: str = ""
 
+    # --- LinkedIn (a personal profile) -------------------------------------
+    # The OpenID `sub` of the profile, the id part of `urn:li:person:<id>`.
+    # Written by `scripts/authorise.py linkedin`. Nothing renders for LinkedIn
+    # and the fan-out never queues a video there; this is what the post
+    # drafter and `--destinations` read.
+    linkedin_person_id: str = ""
+    # The LinkedIn app the consent trip authorises through, an app credential
+    # like the Meta pair, so the root `.env` is where it belongs.
+    linkedin_client_id: str = ""
+    linkedin_client_secret: str = ""
+    # The blog's RSS feed, which is what the drafter reads. In the account's
+    # `.env` rather than here, because it names the person.
+    linkedin_blog_feed: str = ""
+    # The private style guide the drafter writes from. Defaults to
+    # `accounts/<name>/ref/linkedin-style.md`, which `sync-private.sh` carries.
+    linkedin_style_path: Path | None = None
+    # How old a blog entry may be and still get a post. Bounds the first run,
+    # which would otherwise draft a post for everything the blog ever had.
+    linkedin_max_age_days: int = 14
+    # Queue drafts armed rather than for review. A brand setting, so turning
+    # it on is a `--brand-settings push` rather than an edit on the render host.
+    linkedin_auto_arm: bool = False
+
     # --- DM gateway (optional) ---------------------------------------------
     # The self-hosted service that answers comments and DMs, and hosts the
     # cover image Meta fetches. Leaving gateway_url empty disables both calls,
@@ -610,6 +633,7 @@ BRAND_SETTING_FIELDS = (
     "chatterbox_exaggeration",
     "chatterbox_cfg_weight",
     "episode_crf",
+    "linkedin_auto_arm",
 )
 
 

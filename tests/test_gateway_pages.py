@@ -30,7 +30,7 @@ BASE = "https://gateway"
 PAGES = ("/", "/privacy", "/terms")
 # One page and two providers. Each platform holds its own URL in its own
 # developer portal, so both have to answer whatever else changes.
-CALLBACKS = ("/tiktok/callback", "/facebook/callback")
+CALLBACKS = ("/tiktok/callback", "/facebook/callback", "/linkedin/callback")
 
 
 async def fetch(cfg, path: str) -> httpx.Response:
@@ -235,7 +235,7 @@ async def test_the_public_pages_still_say_which_platforms(tmp_path):
     able to tell that the policy covers the surface they are reviewing."""
     body = (await fetch(settings(tmp_path), "/privacy")).text
 
-    for platform in ("Instagram", "YouTube", "TikTok", "Facebook"):
+    for platform in ("Instagram", "YouTube", "TikTok", "Facebook", "LinkedIn"):
         assert platform in body
 
 

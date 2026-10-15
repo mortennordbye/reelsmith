@@ -232,6 +232,36 @@ class FacebookAccountRegistration(BaseModel):
         return v
 
 
+class LinkedInAccountRegistration(BaseModel):
+    """A personal LinkedIn profile this gateway posts to.
+
+    Facebook's shape: one token and its expiry on the account row, so one
+    write. `person_id` is the OpenID `sub` from `/v2/userinfo`, the id part of
+    `urn:li:person:<id>`, which is the author every post is made as.
+
+    `expires_in` is required here where it is optional on a Page, because the
+    self-serve token always has a 60 day clock and no refresh token. The panel
+    counts down to it, and an expiry it was never told is a countdown that
+    cannot start.
+    """
+
+    person_id: str = Field(min_length=1)
+    access_token: str = Field(min_length=1)
+    expires_in: int = Field(gt=0)
+    # The profile's display name, for the panel.
+    username: str = ""
+    brand: str = ""
+
+    @field_validator("person_id")
+    @classmethod
+    def _bare_id(cls, v: str) -> str:
+        """The id alone. A pasted URN is trimmed rather than refused."""
+        v = v.strip().removeprefix("urn:li:person:")
+        if not v or ":" in v or "/" in v:
+            raise ValueError("person_id is the `sub` from /v2/userinfo, not a URL")
+        return v
+
+
 class QueueSubmission(BaseModel):
     """A rendered Reel the gateway should publish on the next due slot.
 
@@ -243,7 +273,10 @@ class QueueSubmission(BaseModel):
     model_config = _ACCEPTS_BOTH
 
     account_id: str = Field(min_length=1, validation_alias=_ACCOUNT_KEY)
-    video_name: str = Field(min_length=1)
+    # Empty only for a LinkedIn post, which is text. The route refuses an
+    # empty name for every other platform, so the model does not have to know
+    # which platform an account id belongs to.
+    video_name: str = ""
     cover_name: str | None = None
     caption: str = ""
     # Required by YouTube, meaningless on Instagram, and built on the Mac where
@@ -372,7 +405,7 @@ class BrandSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # Which generator a night runs for this identity.
-    pipeline: Literal["reel", "episode"] | None = None
+    pipeline: Literal["reel", "episode", "linkedin"] | None = None
     # How many videos a night may render, and how deep the queue may be before
     # it renders none. Bounded well past any sane cadence, so a typo of an extra
     # zero is refused rather than queued.
@@ -384,6 +417,8 @@ class BrandSettings(BaseModel):
     chatterbox_exaggeration: float | None = Field(default=None, ge=0, le=2)
     chatterbox_cfg_weight: float | None = Field(default=None, ge=0, le=2)
     episode_crf: int | None = Field(default=None, ge=0, le=51)
+    # A LinkedIn draft is queued armed rather than for review.
+    linkedin_auto_arm: bool | None = None
 
 
 class BrandUpdate(BaseModel):
@@ -447,7 +482,7 @@ class RunReport(BaseModel):
 
     run_id: int | None = Field(default=None, ge=1)
     brand: str = Field(pattern=BRAND_NAME)
-    kind: Literal["batch", "episode", "recover", "all"]
+    kind: Literal["batch", "episode", "linkedin", "recover", "all"]
     host: str = Field(default="", max_length=64)
     started_at: datetime | None = None
     finished_at: datetime | None = None
