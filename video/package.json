@@ -14,11 +14,11 @@
     "@remotion/cli": "4.0.535",
     "@remotion/google-fonts": "4.0.535",
     "@remotion/renderer": "4.0.535",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
     "remotion": "4.0.535",
     "shiki": "4.5.0",
-    "zod": "4.6.5"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/react": "19.3.0",
