@@ -133,6 +133,9 @@ tools/spinoff/motivation/*.py
 tools/spinoff/motivation/*.sh
 tools/spinoff/motivation/*.json
 tools/spinoff/motivation/lessons/*
+# The animated lessons' episode scripts (lines, pauses, sound cues, sources),
+# one directory below the generators, so the same compgen trap again.
+tools/spinoff/motivation/toons/*
 tools/spinoff/motivation/models/*
 .claude/skills/lesson-video/*
 # backup:end
