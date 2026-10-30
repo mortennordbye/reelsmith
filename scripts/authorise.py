@@ -5,6 +5,7 @@
     uv run python scripts/authorise.py tiktok    --account <name>
     uv run python scripts/authorise.py facebook  --account <name>
     uv run python scripts/authorise.py instagram --account <name>
+    uv run python scripts/authorise.py linkedin  --account <name>
 
 Four platforms behind one command, because the thing that does not scale about
 adding an account is not any one OAuth flow. It is that each of them had its
@@ -50,6 +51,7 @@ from scripts import (  # noqa: E402  - after the sys.path insert above
     consent,
     facebook_authorise,
     instagram_authorise,
+    linkedin_authorise,
     tiktok_authorise,
     youtube_authorise,
 )
@@ -62,6 +64,7 @@ FLOWS = {
     "tiktok": tiktok_authorise,
     "facebook": facebook_authorise,
     "instagram": instagram_authorise,
+    "linkedin": linkedin_authorise,
 }
 
 

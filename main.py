@@ -222,7 +222,7 @@ def run(
         str | None,
         typer.Option(
             "--pipeline",
-            help="With --brand-settings push, what a night renders: 'reel' or 'episode'",
+            help="With --brand-settings push, what a night makes: 'reel', 'episode' or 'linkedin'",
         ),
     ] = None,
     repo_full_name: Annotated[
@@ -267,6 +267,17 @@ def run(
         str | None,
         typer.Option("--subject", help="With --episode, name the subject instead of ranking"),
     ] = None,
+    linkedin_draft: Annotated[
+        bool,
+        typer.Option(
+            "--linkedin-draft",
+            help="Draft and queue a LinkedIn post for the newest blog entry that has none",
+        ),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="With --linkedin-draft, write the draft and queue nothing"),
+    ] = False,
     render: Annotated[
         bool,
         typer.Option("--render", help="With --episode, speak it and cut it as well"),
@@ -463,6 +474,11 @@ def run(
         run_dir = _write_episode(cfg, subject, render=render)
         if render and approve:
             _enqueue_run(cfg, run_dir, approved=True)
+        return
+
+    if linkedin_draft:
+        _preflight(need_github=False, need_claude=True)
+        _linkedin_draft(cfg, approve=approve or cfg.linkedin_auto_arm, dry_run=dry_run)
         return
 
     if adopt:
@@ -1232,11 +1248,14 @@ def _night_for(name: str, *, plan: bool) -> str:
         return f"failed: no settings for {cfg.brand} could be read from the gateway"
     settings = row["settings"]
     kind = settings.get("pipeline")
-    if kind not in ("reel", "episode"):
-        return f"failed: {cfg.brand} has pipeline {kind!r}, which is neither reel nor episode"
+    if kind not in ("reel", "episode", "linkedin"):
+        return f"failed: {cfg.brand} has pipeline {kind!r}, which is not reel, episode or linkedin"
     apply_brand_settings(cfg, settings)
     batch = settings.get("batch") or 1
     max_queue = settings.get("max_queue")
+
+    if kind == "linkedin":
+        return _linkedin_night(cfg, plan=plan)
 
     if plan:
         pending = gateway.fetch_pending_count(cfg)
@@ -1284,6 +1303,48 @@ def _night_for(name: str, *, plan: bool) -> str:
     )
     line = f"{outcome}: {rendered} rendered, {len(recovered)} queued"
     return f"{line}; {trouble}" if trouble else line
+
+
+def _linkedin_draft(cfg: Settings, *, approve: bool, dry_run: bool) -> Path | None:
+    """One draft for the newest blog entry without a post, or nothing to do."""
+    from pipeline import linkedin
+
+    try:
+        run_dir = linkedin.draft_next(cfg, approve=approve, dry_run=dry_run)
+    except linkedin.DraftError as exc:
+        console.print(f"[bold red]No LinkedIn draft[/]\n{exc}")
+        raise typer.Exit(1) from exc
+    if run_dir is None:
+        console.print("[bold green]Nothing to draft.[/] [dim]Every recent entry has a post.[/]")
+    elif dry_run:
+        console.print(f"[bold green]Drafted[/] {run_dir / 'draft.json'} [dim](nothing queued)[/]")
+    else:
+        state = "armed" if approve else "a draft, waiting in the panel"
+        console.print(f"[bold green]Queued[/] {run_dir.name} as {state}")
+    return run_dir
+
+
+def _linkedin_night(cfg: Settings, *, plan: bool) -> str:
+    """A LinkedIn brand's night: one draft if the blog has a new entry.
+
+    No snapshot, no render and no recover, because none of them has anything
+    to act on. Drafted for review unless the brand says to arm it.
+    """
+    arm = cfg.linkedin_auto_arm
+    if plan:
+        mode = "armed" if arm else "for review"
+        return f"plan: {cfg.brand} linkedin, one draft if the blog has a new entry, {mode}"
+    host = socket.gethostname()[:64]
+    run_id = gateway.report_run(cfg, "linkedin", host=host)
+    try:
+        _preflight(need_github=False, need_claude=True)
+        run_dir = _linkedin_draft(cfg, approve=arm, dry_run=False)
+    except typer.Exit as exc:
+        gateway.report_run(cfg, "linkedin", outcome="failed", run_id=run_id, host=host)
+        return f"failed: linkedin draft stopped with exit {exc.exit_code}"
+    results = [{"subject": run_dir.name[:200], "outcome": "queued"}] if run_dir else []
+    gateway.report_run(cfg, "linkedin", outcome="ok", run_id=run_id, results=results, host=host)
+    return f"ok: {'1 drafted' if run_dir else 'nothing new on the blog'}"
 
 
 def _reel_night(cfg: Settings, *, batch: int, max_queue: int | None) -> int:
@@ -1395,6 +1456,7 @@ def _show_destinations(cfg: Settings) -> None:
         "tiktok": cfg.tiktok_open_id,
         "facebook": cfg.facebook_page_id,
         "instagram": cfg.ig_user_id,
+        "linkedin": cfg.linkedin_person_id,
     }
     registered = {str(row.get("account_id", "")): row for row in (rows or [])}
 

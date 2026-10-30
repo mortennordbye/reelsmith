@@ -30,6 +30,17 @@
       <path d="M15 8h-1.6a2 2 0 0 0-2 2v9M9.6 13h4.6"
             stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
     </svg>
+  {%- elif platform == 'linkedin' -%}
+    {# "in" in its rounded square, outlined like the Facebook mark so the
+       five sit in one weight. #}
+    <svg viewBox="0 0 24 24" width="{{ size }}" height="{{ size }}" fill="none"
+         aria-hidden="true" focusable="false" style="vertical-align:-2px">
+      <rect x="3" y="3" width="18" height="18" rx="4"
+            stroke="currentColor" stroke-width="2"/>
+      <path d="M8 10.5V16M12 16v-5.5M12 13a2.5 2.5 0 0 1 5 0v3"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="8" cy="7.6" r="1.2" fill="currentColor"/>
+    </svg>
   {%- elif platform == 'tiktok' -%}
     {# A quaver, which is the shape the eye finds at this size. The official
        mark is two offset copies in two colours, which at 13px reads as a
@@ -60,7 +71,7 @@
    account readers default to it: a platform nobody has taught this about
    renders the word that has always been rendered. #}
 {% macro platform_name(platform) -%}
-  {{- {'youtube': 'YouTube', 'tiktok': 'TikTok', 'facebook': 'Facebook'}
+  {{- {'youtube': 'YouTube', 'tiktok': 'TikTok', 'facebook': 'Facebook', 'linkedin': 'LinkedIn'}
       .get(platform, 'Instagram') -}}
 {%- endmacro %}
 

@@ -139,6 +139,22 @@
   </section>
 {% endif %}
 
+{% if 'linkedin' in brand.platforms %}
+<section class="box">
+  <header><h2>Write a LinkedIn post</h2></header>
+  <form class="compose" method="post" enctype="multipart/form-data"
+        action="{{ url_for('compose', brand=brand.path) }}">
+    <textarea name="text" rows="7" required aria-label="Post text"
+              placeholder="The post, as it should read. Hashtags on the last line."></textarea>
+    <label class="small muted">Link, which makes it an article card <input name="link" type="url" placeholder="https://..."></label>
+    <label class="small muted">Card title <input name="title" maxlength="100"></label>
+    <label class="small muted">Image, the card's thumbnail when there is a link <input name="image" type="file" accept=".png,.jpg,.jpeg"></label>
+    <label class="small muted"><input name="arm" type="checkbox" value="1"> Arm it for the next slot rather than saving a draft</label>
+    <button class="primary">Queue it</button>
+  </form>
+</section>
+{% endif %}
+
 <section class="box">
   <header>
     <h2>Upcoming</h2>
@@ -154,8 +170,11 @@
           <video class="player" controls playsinline preload="metadata"
                  src="/media/{{ plan.video_name | urlencode }}"
                  {% if plan.cover %}poster="/media/{{ plan.cover | urlencode }}"{% endif %}></video>
+        {% elif not plan.video_name and plan.cover %}
+          {# A LinkedIn post, whose picture is its card thumbnail or its image. #}
+          <img class="player" src="/media/{{ plan.cover | urlencode }}" alt="">
         {% else %}
-          <p class="player gone small faint">{{ 'The video file is not on the gateway, so there is nothing to play.' if plan.video_name else 'No video file on this row.' }}</p>
+          <p class="player gone small faint">{{ 'The video file is not on the gateway, so there is nothing to play.' if plan.video_name else 'A text post, with no picture.' }}</p>
         {% endif %}
 
         <div class="vbody">

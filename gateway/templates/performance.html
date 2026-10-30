@@ -17,6 +17,19 @@
   </div>
 </header>
 
+{% if 'linkedin' in brand.platforms %}
+<section class="box">
+  <header><h2>LinkedIn numbers</h2></header>
+  {% if imported %}<p class="small good">Imported: {{ imported }}.</p>{% endif %}
+  <p class="small muted">LinkedIn only gives post statistics through its own export. On linkedin.com, open Analytics, then Content, then Export, pick the past 365 days, and drop the file here. The same file twice changes nothing.</p>
+  <form class="inline" method="post" enctype="multipart/form-data"
+        action="{{ url_for('linkedin_import', brand=brand.path) }}">
+    <input name="file" type="file" accept=".xlsx" required>
+    <button class="primary">Import</button>
+  </form>
+</section>
+{% endif %}
+
 {% macro change(n) %}
   {%- if n is none -%}<span class="faint">not yet</span>
   {%- else -%}<span class="{{ 'good' if n > 0 else ('bad' if n < 0 else '') }}">{{ '+' if n > 0 }}{{ '{:,}'.format(n) }}</span>
@@ -28,7 +41,7 @@
     <table class="t">
       <thead>
         <tr>
-          <th>Video</th>
+          <th>Post</th>
           {% for c in t.columns %}<th class="r">{{ c.label }}</th>{% endfor %}
         </tr>
       </thead>
@@ -240,7 +253,7 @@
     <section class="box">
       <header>
         <h2>{{ badge(s.platform) }}
-          {% if s.platform == 'youtube' %}The whole video{% elif s.platform == 'facebook' %}Play time{% else %}Counts only{% endif %}
+          {% if s.platform == 'youtube' %}The whole video{% elif s.platform == 'facebook' %}Play time{% elif s.platform == 'linkedin' %}From the export{% else %}Counts only{% endif %}
         </h2>
         <span class="hint">{{ s.dest.handle }}</span>
       </header>
@@ -258,6 +271,12 @@
             June 2026, so reach is read from the Reel's Page post and is shown only where Meta
             still gives it.
           </p>
+        {% elif s.platform == 'linkedin' %}
+          <p class="sub">
+            LinkedIn's export gives impressions and engagements per post and nothing finer, for
+            at most fifty posts, so these are as fresh as the last file imported above. Posts
+            written by hand before the gateway posted anything are here too.
+          </p>
         {% else %}
           <p class="sub">
             TikTok reports views, likes, comments and shares. There is no retention, watch time or
@@ -267,7 +286,7 @@
 
         {% if s.posts %}
           <div class="stat" style="margin-bottom:12px">
-            {% if s.median_views is not none %}<div><span class="n">{{ s.median_views | round | int }}</span><span class="l">median views</span></div>{% endif %}
+            {% if s.median_views is not none %}<div><span class="n">{{ s.median_views | round | int }}</span><span class="l">median {{ 'impressions' if s.platform == 'linkedin' else 'views' }}</span></div>{% endif %}
             {% if s.platform == 'youtube' and s.median_viewed is not none %}<div><span class="n">{{ '%.1f' | format(s.median_viewed) }}%</span><span class="l">median viewed</span></div>{% endif %}
             {% if s.platform != 'tiktok' and s.median_watch_ms is not none %}<div><span class="n">{{ '%.0f' | format(s.median_watch_ms / 1000) }} s</span><span class="l">median watch</span></div>{% endif %}
             {% if s.platform == 'facebook' and s.median_reach is not none %}<div><span class="n">{{ s.median_reach | round | int }}</span><span class="l">median reach</span></div>{% endif %}

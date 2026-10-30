@@ -39,6 +39,7 @@ PLATFORM_NAMES = {
     db.PLATFORM_YOUTUBE: "YouTube",
     db.PLATFORM_TIKTOK: "TikTok",
     db.PLATFORM_FACEBOOK: "Facebook",
+    db.PLATFORM_LINKEDIN: "LinkedIn",
 }
 
 
@@ -61,8 +62,10 @@ class Caps:
     watch: bool
     # The comment keyword and private reply mechanic, which is Instagram's.
     dm: bool
-    # Where the credential's expiry lives: on the account row, in the TikTok
-    # credentials table, or nowhere because it does not expire.
+    # Where the credential's expiry lives: on the account row and refreshed by
+    # the gateway ("account"), on the account row and renewed only by walking
+    # the consent trip ("consent"), in the TikTok credentials table, or nowhere
+    # because it does not expire.
     token_clock: str
 
 
@@ -73,6 +76,9 @@ CAPS = {
     # Reach is not a fixed capability since Meta retired it for Reels; see
     # `analysis._MEASURED`.
     db.PLATFORM_FACEBOOK: Caps("Facebook", None, "", False, True, False, "none"),
+    # A self-serve LinkedIn token lasts 60 days and comes with no refresh
+    # token, so "account" would claim a refresh that never happens.
+    db.PLATFORM_LINKEDIN: Caps("LinkedIn", None, "", False, False, False, "consent"),
 }
 
 
@@ -97,6 +103,9 @@ def names(platforms: list[str]) -> str:
 TOKEN_BAD_DAYS_LEFT = 7
 # TikTok's refresh token lasts a year and cannot be renewed without consent.
 TIKTOK_WARN_DAYS = 30
+# A LinkedIn token lasts 60 days and cannot be renewed without consent either,
+# so a month's warning would be half its life.
+CONSENT_WARN_DAYS = 14
 # A destination that has published this many posts and stored no reading for
 # any of them has a sweep that is not working, rather than posts that are new.
 NO_READINGS_AFTER = 3
@@ -169,7 +178,23 @@ def subject_of(row: Any) -> str:
     if repo:
         return repo
     stem = Path(str(row["video_name"] or "")).stem
-    return _DIGEST.sub("", stem) or stem or "untitled"
+    if stem:
+        return _DIGEST.sub("", stem) or stem
+    # A LinkedIn post has no file. What it points at, where it points at
+    # anything, and otherwise how it got here.
+    link = _field(row, "link")
+    if link:
+        return link.split("://", 1)[-1].rstrip("/")
+    if _field(row, "recipe") == "imported":
+        return "posted by hand, imported from the export"
+    return _field(row, "title") or "untitled"
+
+
+def _field(row: Any, key: str) -> str:
+    try:
+        return str(row[key] or "")
+    except (IndexError, KeyError):
+        return ""
 
 
 # --------------------------------------------------------------------------
@@ -421,7 +446,8 @@ def _token_issue(dest: Destination, cfg: Any) -> Issue | None:
             f"again: {command}",
             brand, "setup", where,
         )
-    if days < TIKTOK_WARN_DAYS:
+    warn_days = CONSENT_WARN_DAYS if dest.caps.token_clock == "consent" else TIKTOK_WARN_DAYS
+    if days < warn_days:
         return Issue(
             "bad" if days < TOKEN_BAD_DAYS_LEFT else "warn", "Token",
             f"{{where}} authorisation lapses in {int(days)} days",
@@ -530,7 +556,7 @@ async def load_destinations(
             )
             clock = dest.caps.token_clock
             expires = None
-            if clock == "account":
+            if clock in ("account", "consent"):
                 expires = db.parse_iso(row["token_expires_at"])
             elif clock == "tiktok":
                 expires = db.parse_iso(tiktok_expiry.get(account_id))
@@ -1135,6 +1161,12 @@ POST_COLUMNS: dict[str, tuple[Column, ...]] = {
         Column("likes", "Reactions"),
         Column("comments", "Comments"),
     ),
+    # All LinkedIn's analytics export reports per post. From `extra`, so a
+    # post on only one of its two lists is blank in the other, not zero.
+    db.PLATFORM_LINKEDIN: (
+        Column("impressions", "Impressions"),
+        Column("engagements", "Engagements"),
+    ),
     db.PLATFORM_TIKTOK: (
         Column("views", "Views"),
         Column("likes", "Likes"),
@@ -1223,6 +1255,9 @@ DAY_LABELS = {
     "page_daily_follows_unique": "follows",
     "page_daily_unfollows_unique": "unfollows",
     "page_views_total": "Page views",
+    "impressions": "impressions",
+    "engagements": "engagements",
+    "new_followers": "new followers",
 }
 LIFETIME_LABELS = {"media_count": "posts", "videoCount": "videos", "viewCount": "lifetime views"}
 

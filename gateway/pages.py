@@ -128,3 +128,16 @@ async def facebook_callback(request: Request) -> Any:
     return _callback(
         request, platform="Facebook", script="scripts/facebook_authorise.py"
     )
+
+
+@router.get("/linkedin/callback", response_class=HTMLResponse, name="linkedin_callback")
+async def linkedin_callback(request: Request) -> Any:
+    """The LinkedIn consent trip's landing page.
+
+    LinkedIn would take a `localhost` redirect, and this lands here anyway so
+    that every trip ends on the same kind of page. The homelab httproute has to
+    name the path, as it does for the other two.
+    """
+    return _callback(
+        request, platform="LinkedIn", script="scripts/authorise.py linkedin"
+    )

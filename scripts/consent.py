@@ -57,6 +57,7 @@ ENV_KEYS = {
     "youtube": "YOUTUBE_CHANNEL_ID",
     "tiktok": "TIKTOK_OPEN_ID",
     "facebook": "FACEBOOK_PAGE_ID",
+    "linkedin": "LINKEDIN_PERSON_ID",
 }
 
 
