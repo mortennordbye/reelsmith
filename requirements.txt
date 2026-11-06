@@ -2,7 +2,7 @@
 #    uv pip compile pyproject.toml -o requirements.txt --python-version 3.14
 aiohappyeyeballs==2.7.1
     # via aiohttp
-aiohttp==3.14.3
+aiohttp==3.14.4
     # via edge-tts
 aiosignal==1.4.0
     # via aiohttp
@@ -200,5 +200,5 @@ typing-inspection==0.4.2
     #   pydantic-settings
 uritemplate==4.2.0
     # via csvw
-yarl==1.24.5
+yarl==1.25.1
     # via aiohttp
