@@ -1856,8 +1856,8 @@ does not apply to the media type.
 Upkeep is meant to cost no attention. `.github/dependabot.yml` watches all five
 ecosystems: the pipeline's pins, the gateway's pins, `video/`, the workflows,
 and the base image. Patch and minor updates are grouped into one PR per
-ecosystem per week; `dependabot-auto-merge.yml` turns on auto-merge for those
-and for every security update, and holds routine majors back for a human.
+ecosystem per week; `dependabot-automerge.yml` turns on auto-merge for every
+update, majors too. The required checks are the gate.
 
 - **Dependabot does not do routine Python updates, and must not be given
   them back.** Both `requirements.txt` files are `uv pip compile` output, where

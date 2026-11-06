@@ -16,11 +16,8 @@ on:
       - "gateway/**"
       - ".dockerignore"
       - ".github/workflows/build-gateway.yml"
+  # No paths filter: the jobs are required checks, and a filtered check never reports.
   pull_request:
-    paths:
-      - "gateway/**"
-      - ".dockerignore"
-      - ".github/workflows/build-gateway.yml"
   workflow_dispatch:
 
 permissions:
