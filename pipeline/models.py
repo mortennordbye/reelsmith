@@ -466,9 +466,8 @@ class VideoScript(BaseModel):
             elif kind is CueKind.HUD:
                 if not 2 <= len(items) <= 4:
                     raise ValueError(f"a hud cue needs 2 to 4 items, got {len(items)}")
-            elif kind is CueKind.GLASS:
-                if not 2 <= len(items) <= 3:
-                    raise ValueError(f"a glass cue needs 2 or 3 items, got {len(items)}")
+            elif kind is CueKind.GLASS and not 2 <= len(items) <= 3:
+                raise ValueError(f"a glass cue needs 2 or 3 items, got {len(items)}")
             for item in items:
                 if len(item.label) > MAX_ITEM_LABEL_CHARS or len(item.note) > MAX_ITEM_NOTE_CHARS:
                     raise ValueError(
