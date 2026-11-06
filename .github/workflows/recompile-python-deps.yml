@@ -33,6 +33,8 @@ concurrency:
 jobs:
   recompile:
     runs-on: ubuntu-latest
+    env:
+      HAS_APP: ${{ secrets.RELEASE_APP_PRIVATE_KEY != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -73,6 +75,16 @@ jobs:
           uv run ruff check
           uv run pytest
 
+      # The repo does not let GITHUB_TOKEN open PRs. The App token can, and its PR
+      # starts ci.yml on its own.
+      - name: Get App token
+        id: app-token
+        if: steps.diff.outputs.changed == 'true' && env.HAS_APP == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - name: Open PR
         if: steps.diff.outputs.changed == 'true'
         id: cpr
@@ -80,7 +92,7 @@ jobs:
         with:
           # DEPS_PR_TOKEN is optional. See the dispatch step below for what
           # changes when it is absent.
-          token: ${{ secrets.DEPS_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token || secrets.DEPS_PR_TOKEN || secrets.GITHUB_TOKEN }}
           branch: deps/python-recompile
           delete-branch: true
           commit-message: "deps(python): recompile requirements against latest"
@@ -121,6 +133,7 @@ jobs:
       - name: Enable auto-merge
         if: steps.diff.outputs.changed == 'true' && steps.cpr.outputs.pull-request-number != ''
         env:
-          GH_TOKEN: ${{ secrets.DEPS_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.DEPS_PR_TOKEN || secrets.GITHUB_TOKEN }}
           PR: ${{ steps.cpr.outputs.pull-request-number }}
-        run: gh pr merge --auto --squash "$PR" || echo "::warning::Could not enable auto-merge on #$PR"
+        run: |
+          gh pr merge --auto --squash "$PR" || echo "::warning::Could not enable auto-merge on #$PR"
