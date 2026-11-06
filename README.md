@@ -1,4 +1,15 @@
+<div align="center">
+
+<img src="assets/icon.svg" alt="" width="112" height="112">
+
 # reelsmith
+
+### Automated short videos about trending AI and dev tooling.
+
+[![Python](https://img.shields.io/badge/Python-513319?style=flat-square&logo=python&logoColor=white)](https://www.python.org) [![Claude Code](https://img.shields.io/badge/Claude%20Code-513319?style=flat-square&logo=claude&logoColor=white)](https://code.claude.com) [![Remotion](https://img.shields.io/badge/Remotion-513319?style=flat-square)](https://www.remotion.dev) [![Playwright](https://img.shields.io/badge/Playwright-513319?style=flat-square)](https://playwright.dev)<br>
+[![CI](https://img.shields.io/github/actions/workflow/status/mortennordbye/reelsmith/ci.yml?branch=main&style=flat-square&labelColor=513319&label=CI)](https://github.com/mortennordbye/reelsmith/actions/workflows/ci.yml) [![Last commit](https://img.shields.io/github/last-commit/mortennordbye/reelsmith?style=flat-square&labelColor=513319&color=ff8a1f)](https://github.com/mortennordbye/reelsmith/commits/main) [![Stars](https://img.shields.io/github/stars/mortennordbye/reelsmith?style=flat-square&labelColor=513319&color=ff8a1f)](https://github.com/mortennordbye/reelsmith/stargazers)
+
+</div>
 
 Automated short videos about trending AI/dev tooling, on Instagram, YouTube,
 TikTok and Facebook. One command goes from "what's trending on GitHub today" to
