@@ -1,10 +1,8 @@
 # Dependency automation for all five ecosystems in this repo.
 #
 # The goal is that routine upkeep costs no attention: patch and minor updates
-# are grouped into one PR per ecosystem per week and auto-merge themselves once
-# CI is green (see dependabot-auto-merge.yml). Majors always arrive as their
-# own PR and always wait for a human, because a Remotion or FastAPI major is a
-# read-the-changelog event rather than a rubber stamp.
+# are grouped into one PR per ecosystem per week. Every update, majors too,
+# auto-merges once the required checks pass (see dependabot-automerge.yml).
 #
 # Security updates ignore the weekly schedule and open as soon as an advisory
 # lands. They are grouped separately so a security PR is never held up behind a
@@ -33,6 +31,8 @@ updates:
       day: monday
       time: "06:00"
       timezone: Europe/Oslo
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "deps(pipeline)"
     open-pull-requests-limit: 0
@@ -52,6 +52,8 @@ updates:
       day: monday
       time: "06:00"
       timezone: Europe/Oslo
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "deps(gateway)"
     open-pull-requests-limit: 0
@@ -68,6 +70,8 @@ updates:
       day: monday
       time: "06:00"
       timezone: Europe/Oslo
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "deps(video)"
     open-pull-requests-limit: 5
@@ -105,6 +109,8 @@ updates:
       day: monday
       time: "06:00"
       timezone: Europe/Oslo
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "deps(actions)"
     groups:
@@ -127,6 +133,8 @@ updates:
       day: monday
       time: "06:00"
       timezone: Europe/Oslo
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "deps(image)"
     groups:
