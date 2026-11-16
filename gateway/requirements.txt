@@ -2,12 +2,13 @@
 #    uv pip compile gateway/requirements.in -o gateway/requirements.txt --python-version 3.14
 aiosqlite==0.22.1
     # via -r gateway/requirements.in
-annotated-doc==0.0.5
+annotated-doc==0.0.6
     # via fastapi
 annotated-types==0.8.0
     # via pydantic
 anyio==4.16.0
     # via
+    #   fastapi
     #   httpx
     #   starlette
 certifi==2026.10.23
@@ -16,7 +17,7 @@ certifi==2026.10.23
     #   httpx
 click==8.5.1
     # via uvicorn
-fastapi==0.162.2
+fastapi==0.163.1
     # via -r gateway/requirements.in
 h11==0.16.0
     # via
@@ -47,11 +48,11 @@ pydantic==2.14.3
     #   pydantic-settings
 pydantic-core==2.50.4
     # via pydantic
-pydantic-settings==2.16.2
+pydantic-settings==2.16.3
     # via -r gateway/requirements.in
 python-dotenv==1.2.4
     # via pydantic-settings
-python-multipart==0.0.33
+python-multipart==0.0.34
     # via -r gateway/requirements.in
 starlette==1.10.0
     # via fastapi
