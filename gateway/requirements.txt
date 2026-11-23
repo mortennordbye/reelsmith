@@ -2,7 +2,7 @@
 #    uv pip compile gateway/requirements.in -o gateway/requirements.txt --python-version 3.14
 aiosqlite==0.22.1
     # via -r gateway/requirements.in
-annotated-doc==0.0.6
+annotated-doc==0.0.7
     # via fastapi
 annotated-types==0.8.0
     # via pydantic
@@ -11,13 +11,13 @@ anyio==4.16.0
     #   fastapi
     #   httpx
     #   starlette
-certifi==2026.10.23
+certifi==2026.11.20
     # via
     #   httpcore
     #   httpx
 click==8.5.1
     # via uvicorn
-fastapi==0.163.1
+fastapi==0.165.0
     # via -r gateway/requirements.in
 h11==0.16.0
     # via
@@ -41,12 +41,12 @@ opentelemetry-api==1.45.2
     # via fastapi
 prometheus-client==0.26.0
     # via -r gateway/requirements.in
-pydantic==2.14.3
+pydantic==2.14.4
     # via
     #   -r gateway/requirements.in
     #   fastapi
     #   pydantic-settings
-pydantic-core==2.50.4
+pydantic-core==2.50.5
     # via pydantic
 pydantic-settings==2.16.3
     # via -r gateway/requirements.in
