@@ -9,14 +9,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@remotion/bundler": "4.0.541",
-    "@remotion/captions": "4.0.541",
-    "@remotion/cli": "4.0.541",
-    "@remotion/google-fonts": "4.0.541",
-    "@remotion/renderer": "4.0.541",
+    "@remotion/bundler": "4.0.543",
+    "@remotion/captions": "4.0.543",
+    "@remotion/cli": "4.0.543",
+    "@remotion/google-fonts": "4.0.543",
+    "@remotion/renderer": "4.0.543",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "remotion": "4.0.541",
+    "remotion": "4.0.543",
     "shiki": "4.6.0",
     "zod": "4.6.7"
   },
